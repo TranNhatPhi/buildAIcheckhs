@@ -37,7 +37,13 @@ export default async function CaseSummaryPage({
         </p>
       </div>
 
-      <CaseSummary caseId={id} items={data.checklist.items} />
+      <CaseSummary
+        caseId={id}
+        items={data.checklist.items}
+        initialAnalysisStatus={c.aiAnalysisStatus}
+        initialAnalysisSummary={c.aiAnalysisSummary}
+        initialAnalysisError={c.aiAnalysisError}
+      />
     </main>
   );
 }

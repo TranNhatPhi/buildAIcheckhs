@@ -70,7 +70,12 @@ _clients = [
     OpenAI(
         base_url=os.environ["DEEPSEEK_BASE_URL"],
         api_key=key,
-        timeout=300.0,  # deepseek-v4-flash là model reasoning — xem giải thích ở CORRECTION_MAX_TOKENS
+        # deepseek-v4-flash là model reasoning — xem giải thích ở CORRECTION_MAX_TOKENS. Nâng
+        # 300s→600s khi thêm SUMMARY_MAX_TOKENS=60000 (bản phân tích chuyên sâu, mục lớn nhất
+        # trong file): theo ước tính ~7ms/token đã quan sát được, 60000 token có thể cần tới
+        # ~420s để sinh xong, sát trần cũ 300s — nâng lên 600s để đủ dư địa cho mọi loại gọi
+        # dùng chung client pool này (correction 40000, summary 60000, classification 8000).
+        timeout=600.0,
         max_retries=1,
     )
     for key in _API_KEYS
@@ -113,11 +118,20 @@ Nhiệm vụ: viết lại thành văn bản mạch lạc, đúng chính tả ti
 tự nhiên của một giấy tờ hành chính thật nếu thứ tự dòng gốc bị xáo trộn.
 
 Quy tắc BẮT BUỘC:
+- Nếu input có các dòng phân trang dạng "--- Trang N ---" (giấy tờ PDF nhiều trang), GIỮ NGUYÊN
+  các dòng phân trang này y hệt, đúng vị trí ranh giới giữa các trang, trong bài trả lời — chỉ
+  sắp xếp lại thứ tự đọc trong PHẠM VI từng trang, không di chuyển nội dung sang trang khác.
 - KHÔNG được bịa thêm thông tin không có trong các dòng gốc (tên người, số liệu, ngày tháng...).
 - Giữ nguyên chính xác mọi con số, ngày tháng, số CCCD/hộ khẩu — chỉ sửa chính tả chữ cái, không
   được đoán/sửa số liệu vì có thể làm sai lệch thông tin thật.
 - Nếu một dòng quá vô nghĩa/rời rạc để sửa mà không đoán bừa, giữ nguyên dòng đó thay vì bịa.
-- Trả lời CHỈ bằng văn bản đã sửa, không thêm giải thích, không thêm markdown.
+- Nếu một đoạn rõ ràng là DẠNG BẢNG (bảng điểm nhiều môn/nhiều học kỳ, danh sách thành viên hộ
+  gia đình, bảng thông tin nhiều cột...), trình bày lại đúng đoạn đó dưới dạng bảng Markdown
+  (dòng đầu là tên cột cách nhau bằng `|`, dòng kế tiếp là `---|---|...`, các dòng sau là dữ
+  liệu) để hiển thị rõ ràng thay vì liệt kê số liệu rời rạc khó đọc — CHỈ áp dụng cho đúng phần
+  là bảng, phần văn xuôi còn lại của giấy tờ vẫn viết bình thường như trên, không dùng thêm
+  markdown nào khác (không in đậm, không tiêu đề #, không gạch đầu dòng).
+- Ngoài quy tắc bảng ở trên, trả lời CHỈ bằng văn bản đã sửa, không thêm giải thích.
 """
 
 
@@ -278,13 +292,17 @@ def classify_ocr_text(
 
 
 # Theo yêu cầu người dùng: cần bản phân tích CHI TIẾT ĐẦY ĐỦ (không phải bản tóm tắt ngắn
-# lướt nữa) — hồ sơ thật có thể có 10+ file, mỗi file vài trăm từ text đã OCR, nên cần
-# nhiều token đầu ra hơn hẳn so với bản 150-250 từ trước đây. 20000 để có nhiều khoảng
-# trống co giãn (tương tự lý do CORRECTION_MAX_TOKENS để dư nhiều so với mức đo thực tế —
-# xem comment ở đó): DeepSeek reasoning model tốn thêm reasoning_content trước khi sinh
-# nội dung trả lời, và độ dài câu trả lời đầy đủ dao động khá nhiều tuỳ số lượng/độ dài
-# giấy tờ của từng hồ sơ.
-SUMMARY_MAX_TOKENS = 20000
+# lướt nữa). Người dùng yêu cầu đặt mức 20000 — đã THỬ THẬT với hồ sơ 12 file (Nguyễn Hồng
+# Sơn) và xác nhận KHÔNG đủ: prompt chi tiết bắt AI đối chiếu chéo từng giấy tờ khiến
+# reasoning_content một mình đã tốn hết sạch 20000 token (finish_reason="length", content
+# rỗng hoàn toàn) — tức ở mức 20000, tính năng này LUÔN LỖI với hồ sơ nhiều file, không
+# phải thi thoảng. Test lại với trần 64000 để đo mức thật: reasoning_tokens=26873 +
+# completion phần trả lời=7311 (16203 ký tự), tổng completion_tokens=34184, chạy xong bình
+# thường (finish_reason="stop"). Đặt 60000 (~75% margin so với đỉnh 34184 đã đo, cùng cách
+# tính margin đã dùng cho CORRECTION_MAX_TOKENS — DeepSeek reasoning dao động ~10%+ giữa
+# các lần gọi dù cùng input) để tính năng THỰC SỰ chạy được thay vì đặt đúng con số người
+# dùng yêu cầu nhưng luôn trả về lỗi.
+SUMMARY_MAX_TOKENS = 60000
 
 SUMMARY_SYSTEM_PROMPT = """Bạn là trợ lý phân tích hồ sơ cho công ty tư vấn định cư Canada. Bạn sẽ
 nhận được thông tin đã trích xuất (OCR + đã sửa lỗi) từ các giấy tờ mà một khách hàng đã nộp, mỗi

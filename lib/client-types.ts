@@ -25,6 +25,7 @@ export interface DocumentDTO {
   matchedChecklistItem: ChecklistItemDTO | null;
   ocrText: string | null;
   correctedText: string | null;
+  manualCorrectedText: string | null;
   aiRawLabel: string | null;
   aiConfidence: number | null;
   aiReasoning: string | null;
@@ -72,6 +73,10 @@ export interface CaseDetailDTO {
     notes: string | null;
     createdAt: string;
     documents: DocumentDTO[];
+    aiAnalysisStatus: string;
+    aiAnalysisSummary: string | null;
+    aiAnalysisError: string | null;
+    aiAnalysisUpdatedAt: string | null;
   };
   checklist: {
     items: ChecklistItemStatusDTO[];

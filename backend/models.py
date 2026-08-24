@@ -46,6 +46,17 @@ class Case(Base):
     createdAt = Column(DateTime, default=now_utc)
     updatedAt = Column(DateTime, default=now_utc, onupdate=now_utc)
 
+    # Lưu lại kết quả "Phân tích AI chuyên sâu" vào DB (thay vì chỉ giữ trong state React)
+    # — bước phân tích có thể chạy 2-4+ phút với hồ sơ nhiều file, nếu nhân viên bấm F5
+    # giữa chừng thì trước đây mất trắng kết quả dù backend vẫn chạy xong bình thường.
+    # status: "IDLE" | "RUNNING" | "DONE" | "ERROR" — trang tổng hợp dựa vào đây để tự
+    # polling lại đúng tiến trình sau khi tải lại trang, giống cách DocumentList đã làm
+    # với status của từng Document.
+    aiAnalysisStatus = Column(String(191), nullable=False, default="IDLE")
+    aiAnalysisSummary = Column(Text, nullable=True)
+    aiAnalysisError = Column(Text, nullable=True)
+    aiAnalysisUpdatedAt = Column(DateTime, nullable=True)
+
     documents = relationship("Document", back_populates="case", cascade="all, delete-orphan")
 
 
@@ -90,6 +101,12 @@ class Document(Base):
     # Text sau khi LLM sửa chính tả/sắp xếp lại câu cho mạch lạc (giữ nguyên ocrText thô
     # để đối chiếu) — dùng làm input cho bước phân loại DeepSeek vì cho tín hiệu tốt hơn.
     correctedText = Column(Text, nullable=True)
+    # Nhân viên tự sửa tay phần văn bản đã qua DeepSeek (mục 2 ở khung "Xem chi tiết OCR &
+    # AI") khi phát hiện sai sót AI không tự sửa được — giữ RIÊNG với correctedText (không
+    # ghi đè) để vẫn còn bản gốc AI sinh ra làm audit trail. NULL nghĩa là chưa từng chỉnh
+    # tay; khi có giá trị, đây là bản "cuối cùng" được ưu tiên dùng ở mọi nơi hiển thị/phân
+    # tích (xem CaseSummary.tsx và analyze_case) thay vì correctedText.
+    manualCorrectedText = Column(Text, nullable=True)
     aiRawLabel = Column(String(191), nullable=True)
     aiConfidence = Column(Float, nullable=True)
     aiReasoning = Column(Text, nullable=True)

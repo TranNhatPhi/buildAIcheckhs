@@ -1,12 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { FormattedDocumentText } from "@/components/FormattedDocumentText";
 import { API_URL } from "@/lib/format";
-import type { CaseAnalysisResponse, ChecklistItemStatusDTO, DocumentDTO } from "@/lib/client-types";
+import type {
+  CaseAnalysisResponse,
+  CaseDetailDTO,
+  ChecklistItemStatusDTO,
+  DocumentDTO,
+} from "@/lib/client-types";
 
 interface Props {
   caseId: string;
   items: ChecklistItemStatusDTO[];
+  initialAnalysisStatus: string;
+  initialAnalysisSummary: string | null;
+  initialAnalysisError: string | null;
 }
 
 function groupBy(items: ChecklistItemStatusDTO[]) {
@@ -19,28 +28,59 @@ function groupBy(items: ChecklistItemStatusDTO[]) {
   return map;
 }
 
-export function CaseSummary({ caseId, items }: Props) {
+export function CaseSummary({
+  caseId,
+  items,
+  initialAnalysisStatus,
+  initialAnalysisSummary,
+  initialAnalysisError,
+}: Props) {
   const [previewDoc, setPreviewDoc] = useState<DocumentDTO | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [analysis, setAnalysis] = useState<string | null>(null);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [status, setStatus] = useState(initialAnalysisStatus);
+  const [analysis, setAnalysis] = useState(initialAnalysisSummary);
+  const [analysisError, setAnalysisError] = useState(initialAnalysisError);
+  const analyzing = status === "RUNNING";
+
+  const refetchStatus = useCallback(async () => {
+    const res = await fetch(`${API_URL}/cases/${caseId}`, { cache: "no-store" });
+    if (!res.ok) return;
+    const data: CaseDetailDTO = await res.json();
+    setStatus(data.case.aiAnalysisStatus);
+    setAnalysis(data.case.aiAnalysisSummary);
+    setAnalysisError(data.case.aiAnalysisError);
+  }, [caseId]);
+
+  // Bước phân tích chạy 1-4+ phút và được backend lưu vào DB ngay khi xong (kể cả khi
+  // client đã ngắt kết nối giữa chừng — xem comment ở analyze_case trong cases.py) — nếu
+  // trang được tải lại (F5) đúng lúc status đã lưu là RUNNING (từ initialAnalysisStatus,
+  // SSR fetch), tự poll lại định kỳ tới khi xong thay vì hiện lại nút mặc định như thể
+  // chưa bấm gì, đây chính là lỗi trước đây khi F5 làm mất trắng tiến trình đang chạy.
+  useEffect(() => {
+    if (status !== "RUNNING") return;
+    const interval = setInterval(refetchStatus, 4000);
+    return () => clearInterval(interval);
+  }, [status, refetchStatus]);
 
   async function runAnalysis() {
-    setAnalyzing(true);
+    setStatus("RUNNING");
     setAnalysisError(null);
     try {
       const res = await fetch(`${API_URL}/cases/${caseId}/analyze`, { method: "POST" });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
+        setStatus("ERROR");
         setAnalysisError(body?.detail || `Không phân tích được (HTTP ${res.status})`);
         return;
       }
       const data: CaseAnalysisResponse = await res.json();
+      setStatus("DONE");
       setAnalysis(data.summary);
     } catch {
-      setAnalysisError("Mất kết nối tới server trong lúc phân tích — thử bấm lại sau.");
-    } finally {
-      setAnalyzing(false);
+      // Mất kết nối phía trình duyệt (đóng tab, mất mạng...) không có nghĩa backend đã
+      // dừng — request vẫn chạy tiếp trong threadpool riêng và tự lưu kết quả vào DB khi
+      // xong. Refetch để lấy status thật thay vì báo lỗi khi có thể vẫn đang chạy bình
+      // thường; effect polling ở trên sẽ tự tiếp quản nếu refetch cho thấy vẫn RUNNING.
+      await refetchStatus();
     }
   }
 
@@ -73,15 +113,18 @@ export function CaseSummary({ caseId, items }: Props) {
         </button>
         {analyzing && (
           <p className="text-xs text-neutral-400 mt-2">
-            AI đang đọc toàn bộ thông tin đã trích xuất để tóm tắt và đối chiếu chéo giữa các
-            giấy tờ — có thể mất khoảng 30–60 giây, vui lòng chờ...
+            AI đang đọc toàn bộ thông tin đã trích xuất để phân tích chi tiết và đối chiếu chéo
+            giữa các giấy tờ — có thể mất vài phút, cứ để trang mở hoặc tải lại (F5) bất cứ lúc
+            nào cũng không mất tiến trình, vui lòng chờ...
           </p>
         )}
-        {analysisError && <p className="text-sm text-red-600 mt-2">{analysisError}</p>}
+        {status === "ERROR" && analysisError && (
+          <p className="text-sm text-red-600 mt-2">{analysisError}</p>
+        )}
         {analysis && (
           <div className="mt-4 border-2 border-indigo-200 rounded-2xl p-4 bg-indigo-50">
             <p className="text-xs font-bold uppercase tracking-wide text-indigo-600 mb-2">
-              Tóm tắt phân tích AI
+              Phân tích AI chuyên sâu
             </p>
             <p className="text-sm text-neutral-800 leading-relaxed whitespace-pre-wrap">
               {analysis}
@@ -103,7 +146,7 @@ export function CaseSummary({ caseId, items }: Props) {
                   <h4 className="text-sm font-semibold text-neutral-800 mb-2">{s.item.nameVi}</h4>
                   <div className="flex flex-col gap-2">
                     {s.matchedDocuments.map((doc) => {
-                      const text = doc.correctedText || doc.ocrText;
+                      const text = doc.manualCorrectedText || doc.correctedText || doc.ocrText;
                       return (
                         <div key={doc.id} className="border-2 border-neutral-200 rounded-xl p-3.5 bg-white">
                           <div className="flex items-center gap-2 mb-2">
@@ -130,9 +173,11 @@ export function CaseSummary({ caseId, items }: Props) {
                               </span>
                             )}
                           </div>
-                          <pre className="text-sm whitespace-pre-wrap font-sans text-neutral-700 leading-relaxed">
-                            {text || "(không đọc được nội dung text từ file này)"}
-                          </pre>
+                          <FormattedDocumentText
+                            text={text}
+                            emptyLabel="(không đọc được nội dung text từ file này)"
+                            className="text-sm text-neutral-700 leading-relaxed"
+                          />
                         </div>
                       );
                     })}

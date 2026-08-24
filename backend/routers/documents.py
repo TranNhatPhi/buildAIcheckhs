@@ -8,7 +8,7 @@ from classify import classify_ocr_text
 from completeness import is_item_applicable
 from db import get_db
 from models import ChecklistItem, Document
-from schemas import DocumentDTO, PatchDocumentRequest
+from schemas import DocumentDTO, PatchDocumentRequest, UpdateManualCorrectedTextRequest
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -22,6 +22,23 @@ def patch_document(document_id: str, body: PatchDocumentRequest, db: Session = D
     doc.matchedChecklistItemId = body.matchedChecklistItemId
     doc.status = "MANUALLY_SET" if body.matchedChecklistItemId else "NEEDS_REVIEW"
     doc.isManualOverride = True
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+@router.patch("/{document_id}/corrected-text", response_model=DocumentDTO)
+def update_manual_corrected_text(
+    document_id: str, body: UpdateManualCorrectedTextRequest, db: Session = Depends(get_db)
+):
+    """Nhân viên tự sửa tay mục 2 (văn bản sau khi DeepSeek sửa) khi phát hiện AI sửa sai —
+    lưu riêng vào manualCorrectedText, không đụng vào correctedText gốc do AI sinh ra."""
+    doc = db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Không tìm thấy file")
+
+    trimmed = body.manualCorrectedText.strip()
+    doc.manualCorrectedText = trimmed or None
     db.commit()
     db.refresh(doc)
     return doc
@@ -120,6 +137,10 @@ def reclassify_document(document_id: str, db: Session = Depends(get_db)):
 
     doc.ocrText = outcome.ocr_text
     doc.correctedText = outcome.corrected_text
+    # Chạy lại OCR từ đầu sinh ra correctedText hoàn toàn mới — bản chỉnh tay trước đó (nếu
+    # có) được sửa dựa trên correctedText CŨ, giờ không còn khớp với bản mới nữa nên xoá đi
+    # thay vì giữ lại 1 bản chỉnh tay đã lỗi thời, dễ gây nhầm lẫn hơn là hữu ích.
+    doc.manualCorrectedText = None
     doc.status = outcome.status
     doc.matchedChecklistItemId = outcome.matched_checklist_item_id
     doc.aiRawLabel = outcome.ai_raw_label

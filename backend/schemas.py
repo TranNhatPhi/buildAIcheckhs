@@ -26,6 +26,12 @@ class PatchDocumentRequest(BaseModel):
     matchedChecklistItemId: str | None
 
 
+class UpdateManualCorrectedTextRequest(BaseModel):
+    # Rỗng/toàn khoảng trắng nghĩa là nhân viên muốn XOÁ bản chỉnh tay, quay lại dùng
+    # correctedText do AI sinh ra — xem router documents.py.
+    manualCorrectedText: str
+
+
 class ChecklistItemDTO(BaseModel):
     id: str
     order: int
@@ -55,6 +61,7 @@ class DocumentDTO(BaseModel):
     matchedChecklistItem: ChecklistItemDTO | None = None
     ocrText: str | None
     correctedText: str | None
+    manualCorrectedText: str | None
     aiRawLabel: str | None
     aiConfidence: float | None
     aiReasoning: str | None
@@ -108,6 +115,10 @@ class CaseListItemDTO(CaseDTO):
 
 class CaseWithDocumentsDTO(CaseDTO):
     documents: list[DocumentDTO]
+    aiAnalysisStatus: str
+    aiAnalysisSummary: str | None
+    aiAnalysisError: str | None
+    aiAnalysisUpdatedAt: datetime | None
 
 
 class CaseDetailDTO(BaseModel):

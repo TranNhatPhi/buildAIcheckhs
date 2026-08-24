@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { FormattedDocumentText } from "@/components/FormattedDocumentText";
 import { API_URL } from "@/lib/format";
 import type { ChecklistItemDTO, DocumentDTO } from "@/lib/client-types";
 
@@ -34,6 +35,38 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentDTO | null>(null);
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [savingText, setSavingText] = useState(false);
+
+  function startEditingText(doc: DocumentDTO) {
+    setEditingTextId(doc.id);
+    setEditValue(doc.manualCorrectedText ?? doc.correctedText ?? "");
+  }
+
+  function cancelEditingText() {
+    setEditingTextId(null);
+    setEditValue("");
+  }
+
+  async function saveEditedText(docId: string) {
+    setSavingText(true);
+    try {
+      await fetch(`${API_URL}/documents/${docId}/corrected-text`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ manualCorrectedText: editValue }),
+      });
+    } catch {
+      setSavingText(false);
+      alert("Không kết nối được server — không lưu được, thử lại sau.");
+      return;
+    }
+    setSavingText(false);
+    setEditingTextId(null);
+    setEditValue("");
+    onChanged();
+  }
 
   async function reassign(docId: string, checklistItemId: string) {
     try {
@@ -200,17 +233,60 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                   <p className="text-xs font-bold uppercase tracking-wide text-neutral-400 mb-1.5">
                     1. Văn bản OCR trích xuất được
                   </p>
-                  <pre className="text-xs bg-neutral-50 border border-neutral-200 rounded-xl p-3 whitespace-pre-wrap max-h-56 overflow-y-auto font-mono">
-                    {doc.ocrText || "(chưa có / không đọc được nội dung)"}
-                  </pre>
+                  <FormattedDocumentText
+                    text={doc.ocrText}
+                    emptyLabel="(chưa có / không đọc được nội dung)"
+                    className="text-xs bg-neutral-50 border border-neutral-200 rounded-xl p-3 max-h-56 overflow-y-auto font-mono"
+                  />
                 </div>
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-neutral-400 mb-1.5">
-                    2. Văn bản sau khi DeepSeek sửa chính tả & sắp xếp lại
-                  </p>
-                  <pre className="text-xs bg-emerald-50 border border-emerald-200 rounded-xl p-3 whitespace-pre-wrap max-h-56 overflow-y-auto font-mono">
-                    {doc.correctedText || "(chưa sửa được / giữ nguyên văn bản OCR thô)"}
-                  </pre>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <p className="text-xs font-bold uppercase tracking-wide text-neutral-400">
+                      2. Văn bản sau khi DeepSeek sửa chính tả & sắp xếp lại
+                    </p>
+                    {editingTextId !== doc.id && (
+                      <button
+                        onClick={() => startEditingText(doc)}
+                        disabled={isProcessing}
+                        title={isProcessing ? "Đang xử lý OCR/AI, chưa sửa tay được lúc này" : undefined}
+                        className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        ✏️ Sửa
+                      </button>
+                    )}
+                  </div>
+                  {editingTextId === doc.id ? (
+                    <div className="flex flex-col gap-2">
+                      <textarea
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        rows={12}
+                        className="text-xs font-mono w-full border-2 border-neutral-200 rounded-xl p-3 focus:outline-none focus:border-indigo-400"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => saveEditedText(doc.id)}
+                          disabled={savingText}
+                          className="text-xs font-semibold px-3 py-1.5 rounded-full bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                        >
+                          {savingText ? "Đang lưu..." : "Lưu"}
+                        </button>
+                        <button
+                          onClick={cancelEditingText}
+                          disabled={savingText}
+                          className="text-xs font-semibold px-3 py-1.5 rounded-full bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition-colors disabled:opacity-50"
+                        >
+                          Huỷ
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <FormattedDocumentText
+                      text={doc.correctedText}
+                      emptyLabel="(chưa sửa được / giữ nguyên văn bản OCR thô)"
+                      className="text-xs bg-emerald-50 border border-emerald-200 rounded-xl p-3 max-h-56 overflow-y-auto font-mono"
+                    />
+                  )}
                 </div>
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-neutral-400 mb-1.5">
@@ -236,6 +312,18 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                     )}
                   </div>
                 </div>
+                {doc.manualCorrectedText && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-neutral-400 mb-1.5">
+                      4. Văn bản final (đã chỉnh sửa tay)
+                    </p>
+                    <FormattedDocumentText
+                      text={doc.manualCorrectedText}
+                      emptyLabel=""
+                      className="text-xs bg-amber-50 border border-amber-200 rounded-xl p-3 max-h-56 overflow-y-auto font-mono"
+                    />
+                  </div>
+                )}
               </div>
             )}
           </li>

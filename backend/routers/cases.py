@@ -7,7 +7,7 @@ from classify import summarize_case_profile
 from completeness import compute_checklist_summary, compute_financial_threshold_vnd
 from db import get_db
 from mappers import checklist_summary_to_dto, financial_threshold_to_dto
-from models import Case, ChecklistItem
+from models import Case, ChecklistItem, now_utc
 from schemas import (
     CaseAnalysisResponse,
     CaseDetailDTO,
@@ -91,6 +91,10 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
             "notes": case.notes,
             "createdAt": case.createdAt,
             "documents": sorted(case.documents, key=lambda d: d.uploadedAt),
+            "aiAnalysisStatus": case.aiAnalysisStatus,
+            "aiAnalysisSummary": case.aiAnalysisSummary,
+            "aiAnalysisError": case.aiAnalysisError,
+            "aiAnalysisUpdatedAt": case.aiAnalysisUpdatedAt,
         },
         checklist=checklist_summary_to_dto(summary),
         financialThreshold=financial_threshold_to_dto(threshold),
@@ -99,9 +103,12 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
 
 @router.post("/{case_id}/analyze", response_model=CaseAnalysisResponse)
 def analyze_case(case_id: str, db: Session = Depends(get_db)):
-    """Nút "Phân tích AI chuyên sâu" ở trang Tổng hợp thông tin — gộp text đã có sẵn (OCR +
-    đã sửa lỗi) từ mọi file đã phân loại, nhờ DeepSeek viết 1 bản tóm tắt ngắn gọn. Không
-    OCR lại, chỉ tổng hợp dữ liệu đã có trong DB nên nhanh hơn hẳn bước sửa lỗi OCR thô."""
+    # Ghi status/kết quả vào Case NGAY CẢ KHI client đã ngắt kết nối giữa chừng (vd bấm F5)
+    # — hàm `def` thường chạy trong threadpool riêng của request đó, không bị huỷ khi
+    # client đóng kết nối, nên vẫn chạy tới cùng và commit bình thường; GET /cases/{id} từ
+    # lần tải lại trang sau đó sẽ thấy đúng status/kết quả mới nhất thay vì mất trắng như
+    # trước (kết quả trước đây chỉ nằm trong state React, mất theo mỗi lần F5). Có thể mất
+    # 1-4 phút với hồ sơ nhiều file — xem SUMMARY_MAX_TOKENS ở classify.py.
     case = db.get(Case, case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
@@ -120,14 +127,36 @@ def analyze_case(case_id: str, db: Session = Depends(get_db)):
     parts: list[str] = []
     for status in summary.items:
         for doc in status.matched_documents:
-            text = doc.correctedText or doc.ocrText
+            # Ưu tiên bản nhân viên đã tự sửa tay (nếu có) — đây là bản đã được xác nhận
+            # đúng, đáng tin hơn bản AI tự sinh khi phân tích chéo giữa các giấy tờ.
+            text = doc.manualCorrectedText or doc.correctedText or doc.ocrText
             if text and text.strip():
                 parts.append(f"[{status.item.nameVi}] ({doc.originalFilename})\n{text.strip()}")
     documents_text = "\n\n".join(parts)
 
+    if not documents_text.strip():
+        raise HTTPException(
+            status_code=400, detail="Chưa có file nào được phân loại — chưa có dữ liệu để phân tích."
+        )
+
+    case.aiAnalysisStatus = "RUNNING"
+    case.aiAnalysisError = None
+    db.commit()
+
     result, error = summarize_case_profile(case_context, documents_text)
+
     if error:
+        case.aiAnalysisStatus = "ERROR"
+        case.aiAnalysisError = error
+        case.aiAnalysisUpdatedAt = now_utc()
+        db.commit()
         raise HTTPException(status_code=400, detail=error)
+
+    case.aiAnalysisStatus = "DONE"
+    case.aiAnalysisSummary = result
+    case.aiAnalysisError = None
+    case.aiAnalysisUpdatedAt = now_utc()
+    db.commit()
     return CaseAnalysisResponse(summary=result)
 
 
