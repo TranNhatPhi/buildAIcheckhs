@@ -37,7 +37,7 @@ export default async function CaseSummaryPage({
         </p>
       </div>
 
-      <CaseSummary items={data.checklist.items} />
+      <CaseSummary caseId={id} items={data.checklist.items} />
     </main>
   );
 }

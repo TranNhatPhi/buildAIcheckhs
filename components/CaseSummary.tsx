@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { API_URL } from "@/lib/format";
-import type { ChecklistItemStatusDTO, DocumentDTO } from "@/lib/client-types";
+import type { CaseAnalysisResponse, ChecklistItemStatusDTO, DocumentDTO } from "@/lib/client-types";
 
 interface Props {
+  caseId: string;
   items: ChecklistItemStatusDTO[];
 }
 
@@ -18,8 +19,30 @@ function groupBy(items: ChecklistItemStatusDTO[]) {
   return map;
 }
 
-export function CaseSummary({ items }: Props) {
+export function CaseSummary({ caseId, items }: Props) {
   const [previewDoc, setPreviewDoc] = useState<DocumentDTO | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysis, setAnalysis] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  async function runAnalysis() {
+    setAnalyzing(true);
+    setAnalysisError(null);
+    try {
+      const res = await fetch(`${API_URL}/cases/${caseId}/analyze`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setAnalysisError(body?.detail || `Không phân tích được (HTTP ${res.status})`);
+        return;
+      }
+      const data: CaseAnalysisResponse = await res.json();
+      setAnalysis(data.summary);
+    } catch {
+      setAnalysisError("Mất kết nối tới server trong lúc phân tích — thử bấm lại sau.");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
 
   // Chỉ hiện mục ĐÃ có ít nhất 1 file khớp — đây là trang tổng hợp thông tin khách ĐÃ GỬI,
   // khác với trang checklist chính (hiện cả mục còn thiếu).
@@ -37,6 +60,36 @@ export function CaseSummary({ items }: Props) {
 
   return (
     <div className="flex flex-col gap-7">
+      <div>
+        <button
+          onClick={runAnalysis}
+          disabled={analyzing}
+          className="text-sm font-semibold px-4 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+        >
+          {analyzing && (
+            <span className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+          )}
+          🧠 {analyzing ? "Đang phân tích..." : analysis ? "Phân tích lại" : "Phân tích AI chuyên sâu"}
+        </button>
+        {analyzing && (
+          <p className="text-xs text-neutral-400 mt-2">
+            AI đang đọc toàn bộ thông tin đã trích xuất để tóm tắt và đối chiếu chéo giữa các
+            giấy tờ — có thể mất khoảng 30–60 giây, vui lòng chờ...
+          </p>
+        )}
+        {analysisError && <p className="text-sm text-red-600 mt-2">{analysisError}</p>}
+        {analysis && (
+          <div className="mt-4 border-2 border-indigo-200 rounded-2xl p-4 bg-indigo-50">
+            <p className="text-xs font-bold uppercase tracking-wide text-indigo-600 mb-2">
+              Tóm tắt phân tích AI
+            </p>
+            <p className="text-sm text-neutral-800 leading-relaxed whitespace-pre-wrap">
+              {analysis}
+            </p>
+          </div>
+        )}
+      </div>
+
       {[...grouped.entries()].map(([key, statuses]) => {
         const [section, group] = key.split("::");
         return (

@@ -275,3 +275,72 @@ def classify_ocr_text(
             ai_reasoning=None,
             classification_error=f"Lỗi phân loại DeepSeek: {_describe_deepseek_error(e)}",
         )
+
+
+# Theo yêu cầu người dùng: cần bản phân tích CHI TIẾT ĐẦY ĐỦ (không phải bản tóm tắt ngắn
+# lướt nữa) — hồ sơ thật có thể có 10+ file, mỗi file vài trăm từ text đã OCR, nên cần
+# nhiều token đầu ra hơn hẳn so với bản 150-250 từ trước đây. 20000 để có nhiều khoảng
+# trống co giãn (tương tự lý do CORRECTION_MAX_TOKENS để dư nhiều so với mức đo thực tế —
+# xem comment ở đó): DeepSeek reasoning model tốn thêm reasoning_content trước khi sinh
+# nội dung trả lời, và độ dài câu trả lời đầy đủ dao động khá nhiều tuỳ số lượng/độ dài
+# giấy tờ của từng hồ sơ.
+SUMMARY_MAX_TOKENS = 20000
+
+SUMMARY_SYSTEM_PROMPT = """Bạn là trợ lý phân tích hồ sơ cho công ty tư vấn định cư Canada. Bạn sẽ
+nhận được thông tin đã trích xuất (OCR + đã sửa lỗi) từ các giấy tờ mà một khách hàng đã nộp, mỗi
+đoạn được gắn nhãn theo đúng mục checklist mà file đó khớp vào.
+
+Nhiệm vụ: viết một bản PHÂN TÍCH CHI TIẾT VÀ ĐẦY ĐỦ (tiếng Việt) về hồ sơ khách hàng này — đây là
+báo cáo phân tích chuyên sâu cho nhân viên tư vấn đọc kỹ, KHÔNG phải bản tóm tắt lướt nhanh, nên
+không giới hạn độ dài, viết đủ chi tiết để bao quát hết thông tin quan trọng đọc được. Gồm các
+phần sau:
+
+1. THÔNG TIN CÁ NHÂN: liệt kê đầy đủ mọi thông tin cá nhân rút ra được của đương đơn (họ tên, ngày
+   sinh, giới tính, số CCCD/CMND, số hộ chiếu + ngày cấp/hết hạn, quê quán/nơi thường trú...) và
+   của người phụ thuộc nếu có (vợ/chồng, con, cha mẹ) — càng chi tiết càng tốt, không tóm lược.
+2. DANH SÁCH GIẤY TỜ ĐÃ NỘP: điểm qua từng nhóm giấy tờ đã có, với các số liệu/chi tiết quan trọng
+   của từng giấy tờ (số hiệu, ngày cấp, ngày hết hạn, cơ quan cấp...) — liệt kê cụ thể theo từng
+   file, không gộp chung chung.
+3. ĐỐI CHIẾU & ĐIỂM BẤT NHẤT (QUAN TRỌNG NHẤT): rà soát chéo toàn bộ giấy tờ, liệt kê CHI TIẾT
+   từng điểm không khớp phát hiện được — vd tên/ngày sinh/số giấy tờ khác nhau giữa các file, ngày
+   tháng bất thường hoặc không hợp lệ, giấy tờ có vẻ đã hết hạn, thông tin cha/mẹ/vợ/chồng/con
+   không khớp giữa các nguồn. Với MỖI điểm bất nhất, nêu rõ: giá trị bất nhất là gì, xuất hiện ở
+   (những) file/giấy tờ nào. Nếu không phát hiện gì bất thường thì ghi rõ "không phát hiện điểm
+   bất thường".
+4. GHI CHÚ KHÁC: nếu có đoạn OCR mờ/không đọc rõ ảnh hưởng tới việc đọc thông tin, nêu rõ file nào
+   cần nhân viên tự mở lên xem lại bằng mắt để xác nhận.
+
+Quy tắc BẮT BUỘC:
+- CHỈ dựa trên thông tin được cung cấp bên dưới — KHÔNG bịa thêm, KHÔNG suy đoán thông tin không có.
+- Nếu không đọc được thông tin đủ để nói gì về khách hàng, nói thẳng là vậy, không cố suy diễn.
+- Trả lời bằng văn xuôi mạch lạc theo từng phần đánh số như trên, không dùng markdown/bullet phức
+  tạp, có thể xuống dòng giữa các phần cho dễ đọc.
+"""
+
+
+def summarize_case_profile(case_context: str, documents_text: str) -> tuple[str | None, str | None]:
+    """Trả về (summary, error_message) — đúng 1 trong 2 có giá trị. Dùng cho nút "Phân tích AI
+    chuyên sâu" ở trang Tổng hợp thông tin — chỉ tóm tắt dữ liệu ĐÃ CÓ sẵn trong DB (không OCR
+    lại), nên input đã sạch hơn hẳn so với bước sửa lỗi OCR thô, thường nhanh hơn nhiều."""
+    if not documents_text.strip():
+        return None, "Chưa có file nào được phân loại — chưa có dữ liệu để phân tích."
+
+    try:
+        completion = _get_client().chat.completions.create(
+            model=os.environ["DEEPSEEK_MODEL"],
+            max_tokens=SUMMARY_MAX_TOKENS,
+            messages=[
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"{case_context}\n\nThông tin trích xuất từ các giấy tờ đã nộp:\n{documents_text}",
+                },
+            ],
+        )
+        summary = completion.choices[0].message.content
+        if not summary or not summary.strip():
+            return None, "DeepSeek không trả về nội dung tóm tắt — thử lại sau."
+        return summary.strip(), None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Lỗi phân tích AI chuyên sâu: %s", e)
+        return None, _describe_deepseek_error(e)

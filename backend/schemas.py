@@ -114,3 +114,7 @@ class CaseDetailDTO(BaseModel):
     case: CaseWithDocumentsDTO
     checklist: ChecklistSummaryDTO
     financialThreshold: FinancialThresholdDTO
+
+
+class CaseAnalysisResponse(BaseModel):
+    summary: str

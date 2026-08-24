@@ -3,11 +3,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import storage
+from classify import summarize_case_profile
 from completeness import compute_checklist_summary, compute_financial_threshold_vnd
 from db import get_db
 from mappers import checklist_summary_to_dto, financial_threshold_to_dto
 from models import Case, ChecklistItem
-from schemas import CaseDetailDTO, CaseListItemDTO, CreateCaseRequest, UpdateCaseRequest
+from schemas import (
+    CaseAnalysisResponse,
+    CaseDetailDTO,
+    CaseListItemDTO,
+    CreateCaseRequest,
+    UpdateCaseRequest,
+)
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
@@ -88,6 +95,40 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
         checklist=checklist_summary_to_dto(summary),
         financialThreshold=financial_threshold_to_dto(threshold),
     )
+
+
+@router.post("/{case_id}/analyze", response_model=CaseAnalysisResponse)
+def analyze_case(case_id: str, db: Session = Depends(get_db)):
+    """Nút "Phân tích AI chuyên sâu" ở trang Tổng hợp thông tin — gộp text đã có sẵn (OCR +
+    đã sửa lỗi) từ mọi file đã phân loại, nhờ DeepSeek viết 1 bản tóm tắt ngắn gọn. Không
+    OCR lại, chỉ tổng hợp dữ liệu đã có trong DB nên nhanh hơn hẳn bước sửa lỗi OCR thô."""
+    case = db.get(Case, case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+
+    checklist_items = db.scalars(select(ChecklistItem)).all()
+    summary = compute_checklist_summary(
+        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren
+    )
+
+    case_context = (
+        f"Tên khách hàng: {case.clientName}\n"
+        f"Tình trạng hôn nhân: {'Đã kết hôn' if case.maritalStatus == 'MARRIED' else 'Độc thân'}\n"
+        f"Số con: {case.numberOfChildren}"
+    )
+
+    parts: list[str] = []
+    for status in summary.items:
+        for doc in status.matched_documents:
+            text = doc.correctedText or doc.ocrText
+            if text and text.strip():
+                parts.append(f"[{status.item.nameVi}] ({doc.originalFilename})\n{text.strip()}")
+    documents_text = "\n\n".join(parts)
+
+    result, error = summarize_case_profile(case_context, documents_text)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    return CaseAnalysisResponse(summary=result)
 
 
 @router.patch("/{case_id}", response_model=CaseListItemDTO)

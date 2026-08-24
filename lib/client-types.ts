@@ -59,6 +59,10 @@ export interface CaseListItemDTO {
   financialThreshold: FinancialThresholdDTO;
 }
 
+export interface CaseAnalysisResponse {
+  summary: string;
+}
+
 export interface CaseDetailDTO {
   case: {
     id: string;

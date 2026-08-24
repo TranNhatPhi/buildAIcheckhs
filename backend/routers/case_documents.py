@@ -59,7 +59,14 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
     is_pdf = mime_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")
 
     try:
-        ocr_text, page_count, _lines, pages = ocr.extract_text(content, document.originalFilename, mime_type)
+        # try_harder=True cho PDF ngay từ lần upload đầu — đã xác nhận bằng thực nghiệm
+        # trên PDF thật (CCCD scan chèn vào trang A4) là cách xử lý mặc định (1 lần, nhanh)
+        # có thể trả về HOÀN TOÀN RỖNG (0 ký tự) với loại file này, phải dùng "best-of"
+        # (thử nhiều cách tiền xử lý, trong đó có nhị phân hoá) mới đọc được. Ảnh thường
+        # (jpg/png) vẫn dùng cách nhanh mặc định vì không gặp vấn đề này.
+        ocr_text, page_count, _lines, pages = ocr.extract_text(
+            content, document.originalFilename, mime_type, try_harder=is_pdf
+        )
 
         if is_pdf:
             ocr.save_pdf_page_images(case_id, document.id, pages)

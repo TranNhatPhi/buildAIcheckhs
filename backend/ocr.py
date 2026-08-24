@@ -24,6 +24,8 @@ message / trao đổi với người dùng để biết chi tiết thực nghi�
   (CLAHE), khử nhiễu nhẹ, phóng to nếu ảnh độ phân giải thấp — giúp Tesseract đọc chính
   xác hơn trên ảnh scan chất lượng không đều.
 """
+from __future__ import annotations
+
 import io
 import logging
 import os
@@ -410,6 +412,53 @@ def detect_real_mime_type(content: bytes, declared_mime_type: str) -> str:
     return declared_mime_type or "application/octet-stream"
 
 
+def _crop_to_content(pil_img: Image.Image, padding_ratio: float = 0.03) -> Image.Image:
+    """Tự động cắt bỏ lề trắng thừa quanh nội dung thật — cần thiết cho ảnh render từ PDF
+    (ảnh CCCD/giấy tờ được scan/chèn vào 1 trang A4 lớn, phần lớn còn lại là lề trắng).
+
+    Xác nhận bằng thực nghiệm trên PDF thật: 1 trang CCCD chỉ chiếm ~30% chiều cao trang
+    (phần còn lại gần trắng tinh, mật độ điểm ảnh tối < 2%) — Tesseract (mọi PSM tự động dò
+    bố cục) hoàn toàn KHÔNG nhận diện được chữ nào trên toàn trang dù ảnh CCCD tự nó đọc
+    bằng mắt hoàn toàn bình thường, vì thuật toán dò bố cục của Tesseract kỳ vọng khối chữ
+    có kích thước tương xứng với trang, không phải 1 "đảo" nội dung nhỏ giữa vùng trắng
+    rộng lớn. Không dùng cho ảnh chụp/scan trực tiếp (JPG/PNG upload) vì ảnh đó thường đã
+    gần sát nội dung — chỉ áp dụng cho trang PDF render ra."""
+    gray = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    h, w = gray.shape
+
+    # Downsample để tính mật độ nhanh và ổn định hơn (giảm ảnh hưởng nhiễu từng điểm ảnh lẻ).
+    small_w = 200
+    small = cv2.resize(gray, (small_w, max(1, int(small_w * h / w))), interpolation=cv2.INTER_AREA)
+    ink = small < 200  # điểm ảnh tối = có nội dung (chữ/ảnh), điểm ảnh sáng = nền/lề trắng
+
+    def _content_bounds(density: np.ndarray) -> tuple[int, int] | None:
+        threshold = max(float(density.max()) * 0.15, 0.01)  # tương đối theo đỉnh, có sàn tối thiểu
+        indices = np.where(density > threshold)[0]
+        if len(indices) == 0:
+            return None
+        return int(indices[0]), int(indices[-1])
+
+    row_bounds = _content_bounds(ink.mean(axis=1))
+    col_bounds = _content_bounds(ink.mean(axis=0))
+    if row_bounds is None or col_bounds is None:
+        return pil_img  # trang trắng thật/không phát hiện được nội dung — giữ nguyên
+
+    scale_y, scale_x = h / small.shape[0], w / small.shape[1]
+    y1, y2 = int(row_bounds[0] * scale_y), int((row_bounds[1] + 1) * scale_y)
+    x1, x2 = int(col_bounds[0] * scale_x), int((col_bounds[1] + 1) * scale_x)
+
+    pad_y, pad_x = int((y2 - y1) * padding_ratio), int((x2 - x1) * padding_ratio)
+    y1, y2 = max(0, y1 - pad_y), min(h, y2 + pad_y)
+    x1, x2 = max(0, x1 - pad_x), min(w, x2 + pad_x)
+
+    # Vùng nội dung đã chiếm gần hết trang rồi (không có nhiều lề để bỏ) — khỏi crop cho
+    # đỡ tốn công vô ích, tránh rủi ro cắt nhầm khi bbox tính sai trên trang đã kín nội dung.
+    if (x2 - x1) * (y2 - y1) > 0.85 * w * h:
+        return pil_img
+
+    return pil_img.crop((x1, y1, x2, y2))
+
+
 def pdf_to_images(pdf_bytes: bytes) -> list[Image.Image]:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     zoom = PDF_RENDER_DPI / 72
@@ -418,7 +467,7 @@ def pdf_to_images(pdf_bytes: bytes) -> list[Image.Image]:
     for page in doc:
         pix = page.get_pixmap(matrix=matrix)
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        images.append(img)
+        images.append(_crop_to_content(img))
     doc.close()
     return images
 
