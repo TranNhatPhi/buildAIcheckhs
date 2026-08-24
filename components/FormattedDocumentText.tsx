@@ -264,7 +264,7 @@ export function FormattedDocumentText({ text, emptyLabel, className }: Props) {
                     {block.rows.map((row, ri) => (
                       <tr key={ri} className={ri % 2 === 1 ? "bg-neutral-50" : undefined}>
                         <td className="px-2.5 py-1.5 border-b border-neutral-100 font-semibold text-neutral-600 whitespace-nowrap align-top">
-                          {row.key}
+                          {renderInline(row.key)}
                         </td>
                         <td className="px-2.5 py-1.5 border-b border-neutral-100 align-top">
                           {renderInline(row.value)}
@@ -285,7 +285,9 @@ export function FormattedDocumentText({ text, emptyLabel, className }: Props) {
                     <li key={ii} className="text-sm leading-relaxed">
                       {kv ? (
                         <>
-                          <span className="font-semibold text-neutral-600">{kv.key}:</span>{" "}
+                          <span className="font-semibold text-neutral-600">
+                            {renderInline(kv.key)}:
+                          </span>{" "}
                           {renderInline(kv.value)}
                         </>
                       ) : (

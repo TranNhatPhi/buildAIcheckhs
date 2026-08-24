@@ -80,49 +80,58 @@ CHECKLIST_ITEMS = [
     # --- Section A / Giấy tờ chứng minh kinh nghiệm làm việc ---
     dict(id="thu-xac-nhan-kinh-nghiem", order=19, section="A", group=GROUP_A_WORK,
          nameVi="Thư xác nhận kinh nghiệm làm việc"),
-    dict(id="hop-dong-lao-dong", order=20, section="A", group=GROUP_A_WORK, nameVi="Hợp đồng lao động"),
-    dict(id="sao-ke-ngan-hang-phieu-luong", order=21, section="A", group=GROUP_A_WORK,
+    dict(id="thu-tai-tuyen-dung", order=20, section="A", group=GROUP_A_WORK,
+         nameVi="Thư tái tuyển dụng"),
+    dict(id="thu-xac-nhan-ubnd", order=21, section="A", group=GROUP_A_WORK,
+         nameVi="Thư xác nhận từ cơ quan nhà nước (UBND)"),
+    dict(id="hop-dong-lao-dong", order=22, section="A", group=GROUP_A_WORK, nameVi="Hợp đồng lao động"),
+    dict(id="sao-ke-ngan-hang-phieu-luong", order=23, section="A", group=GROUP_A_WORK,
          nameVi="Sao kê ngân hàng / Phiếu lương"),
 
     # --- Section A / Giấy tờ chứng minh tài chính ---
-    dict(id="so-tiet-kiem", order=22, section="A", group=GROUP_A_FINANCE,
-         nameVi="Sổ tiết kiệm và xác nhận số dư sổ tiết kiệm",
+    # Tách "Sổ tiết kiệm và xác nhận số dư sổ tiết kiệm" (1 mục) thành 2 mục riêng — 2 loại
+    # giấy tờ khác nhau (sổ vật lý vs giấy xác nhận của ngân hàng), nhân viên cần theo dõi
+    # đủ/thiếu riêng từng loại thay vì gộp chung 1 mục.
+    dict(id="so-tiet-kiem", order=24, section="A", group=GROUP_A_FINANCE,
+         nameVi="Sổ tiết kiệm", note="Yêu cầu làm bản song ngữ Anh - Việt."),
+    dict(id="xac-nhan-so-du-tiet-kiem", order=25, section="A", group=GROUP_A_FINANCE,
+         nameVi="Giấy xác nhận số dư sổ tiết kiệm",
          note="Yêu cầu làm bản song ngữ Anh - Việt. Độc thân: tối thiểu 100-150 triệu. "
               "Đã kết hôn: tối thiểu 200-300 triệu. Kết hôn có 1 con: 350 triệu. "
               "Kết hôn 2 con: 400 triệu. Thêm 1 người thì tăng thêm 50 triệu.",
          verificationNote="Tuỳ theo khách mà bỏ số dư cho hợp lý."),
-    dict(id="giay-to-nha-dat", order=23, section="A", group=GROUP_A_FINANCE,
+    dict(id="giay-to-nha-dat", order=26, section="A", group=GROUP_A_FINANCE,
          nameVi="Giấy tờ nhà đất / quyền sử dụng đất",
          note="Sao y công chứng tại văn phòng công chứng hoặc cơ quan nhà nước, không quá 1 tháng. "
               "Nếu không đứng tên trên sổ hồng/sổ đỏ thì lấy giấy tờ đất của bố mẹ ruột. "
               "Nếu đang thế chấp ngân hàng thì nhờ ngân hàng photo công chứng 1 bản."),
 
     # --- Section B / Giấy tờ cá nhân (vợ/chồng, con) ---
-    dict(id="passport-vo-chong", order=24, section="B", group=GROUP_B_PERSONAL,
+    dict(id="passport-vo-chong", order=27, section="B", group=GROUP_B_PERSONAL,
          nameVi="Passport vợ/chồng", appliesTo="SPOUSE"),
-    dict(id="cmnd-vo-chong", order=26, section="B", group=GROUP_B_PERSONAL,
+    dict(id="cmnd-vo-chong", order=29, section="B", group=GROUP_B_PERSONAL,
          nameVi="Chứng minh nhân dân vợ/chồng (nếu có)", isOptional=True, appliesTo="SPOUSE"),
-    dict(id="hinh-the-trang-phu-thuoc", order=28, section="B", group=GROUP_B_PERSONAL,
+    dict(id="hinh-the-trang-phu-thuoc", order=31, section="B", group=GROUP_B_PERSONAL,
          nameVi="Hình thẻ trắng (vợ/chồng và từng con)",
          note="Kích thước: 3.5cm x 4.5cm. Chỉ cần gửi file hình, không cần rửa ra ảnh.",
          appliesTo="DEPENDENTS", quantityRule="PER_DEPENDENT"),
-    dict(id="quyet-dinh-ly-hon-vo-chong", order=29, section="B", group=GROUP_B_PERSONAL,
+    dict(id="quyet-dinh-ly-hon-vo-chong", order=32, section="B", group=GROUP_B_PERSONAL,
          nameVi="Giấy quyết định ly hôn (nếu có)", note="Trường hợp vợ/chồng đã từng ly hôn thì bổ sung",
          isOptional=True, appliesTo="SPOUSE"),
-    dict(id="cccd-me-vo-chong", order=30, section="B", group=GROUP_B_PERSONAL,
+    dict(id="cccd-me-vo-chong", order=33, section="B", group=GROUP_B_PERSONAL,
          nameVi="Căn cước công dân mẹ", appliesTo="ALWAYS"),
-    dict(id="cccd-cha-vo-chong", order=31, section="B", group=GROUP_B_PERSONAL,
+    dict(id="cccd-cha-vo-chong", order=34, section="B", group=GROUP_B_PERSONAL,
          nameVi="Căn cước công dân cha", appliesTo="ALWAYS"),
     # Chỉ cần CCCD của 1 người (vợ HOẶC chồng, tuỳ giới tính vợ/chồng của đương đơn) — dùng
     # eitherWithId để hễ 1 trong 2 mục đủ thì coi cả 2 đủ, tránh checklist bị kẹt vĩnh viễn ở
     # mục không thể nộp được (vd đương đơn là nữ thì không thể nào có "CCCD vợ").
-    dict(id="cccd-vo", order=34, section="B", group=GROUP_B_PERSONAL,
+    dict(id="cccd-vo", order=37, section="B", group=GROUP_B_PERSONAL,
          nameVi="Căn cước công dân vợ", appliesTo="SPOUSE", eitherWithId="cccd-chong",
          note="Xác định qua trường Giới tính trên CCCD: Nữ → mục này (vợ)."),
-    dict(id="cccd-chong", order=35, section="B", group=GROUP_B_PERSONAL,
+    dict(id="cccd-chong", order=38, section="B", group=GROUP_B_PERSONAL,
          nameVi="Căn cước công dân chồng", appliesTo="SPOUSE", eitherWithId="cccd-vo",
          note="Xác định qua trường Giới tính trên CCCD: Nam → mục này (chồng)."),
-    dict(id="giay-khai-sinh-con-cai", order=36, section="B", group=GROUP_B_PERSONAL,
+    dict(id="giay-khai-sinh-con-cai", order=39, section="B", group=GROUP_B_PERSONAL,
          nameVi="Giấy khai sinh con cái",
          note="Thu đầy đủ khai sinh của tất cả các con. Bản chính: chỉ cần scan gửi. "
               "Bản sao hoặc bản trích lục: thu bản gốc.",

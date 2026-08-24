@@ -47,6 +47,9 @@ export function CaseDetail({ caseId, initialData }: Props) {
 
   const { case: c, checklist } = data;
   const isComplete = checklist.percent === 100;
+  // Mục bắt buộc còn thiếu — liệt kê ngay đầu trang để nhân viên biết cần làm gì tiếp mà
+  // không phải kéo xuống dò cả checklist dài bên dưới.
+  const missingRequiredItems = checklist.items.filter((s) => !s.item.isOptional && !s.complete);
 
   return (
     <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-10 flex flex-col gap-7">
@@ -93,6 +96,22 @@ export function CaseDetail({ caseId, initialData }: Props) {
           <p className="text-sm text-green-700 font-semibold mt-2">✓ Hồ sơ này đã hoàn thành</p>
         )}
       </div>
+
+      {missingRequiredItems.length > 0 && (
+        <div className="border-2 border-amber-200 bg-amber-50 rounded-2xl p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-2">
+            Còn thiếu {missingRequiredItems.length} mục bắt buộc
+          </p>
+          <ul className="list-disc pl-5 flex flex-col gap-1">
+            {missingRequiredItems.map((s) => (
+              <li key={s.item.id} className="text-sm text-amber-900">
+                {s.item.nameVi}
+                {s.requiredCount > 1 && ` (${s.fulfilledCount}/${s.requiredCount} đã có)`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <GeneralNotesBanner />
 

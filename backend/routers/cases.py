@@ -162,6 +162,21 @@ def analyze_case(case_id: str, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=400, detail=error)
 
+    # Danh sách giấy tờ CHƯA nộp — tính thẳng từ checklist đã có sẵn (summary), KHÔNG nhờ
+    # DeepSeek suy ra, vì model chỉ thấy được text của các file ĐÃ NỘP, không thể biết mục
+    # nào của checklist còn thiếu. Ghép thêm vào cuối bài phân tích để nhân viên có luôn
+    # trong 1 báo cáo, khỏi phải mở lại trang checklist chính để đối chiếu.
+    missing_items = [s for s in summary.items if not s.item.isOptional and not s.complete]
+    if missing_items:
+        missing_lines = "\n".join(
+            f"- {s.item.nameVi}"
+            + (f" ({s.fulfilled_count}/{s.required_count} đã có)" if s.required_count > 1 else "")
+            for s in missing_items
+        )
+    else:
+        missing_lines = "- Đã nộp đủ tất cả mục bắt buộc trong checklist."
+    result = f"{result}\n\n6. GIẤY TỜ CHƯA NỘP THEO CHECKLIST\n{missing_lines}"
+
     case.aiAnalysisStatus = "DONE"
     case.aiAnalysisSummary = result
     case.aiAnalysisError = None
