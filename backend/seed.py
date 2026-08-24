@@ -100,16 +100,8 @@ CHECKLIST_ITEMS = [
     # --- Section B / Giấy tờ cá nhân (vợ/chồng, con) ---
     dict(id="passport-vo-chong", order=24, section="B", group=GROUP_B_PERSONAL,
          nameVi="Passport vợ/chồng", appliesTo="SPOUSE"),
-    dict(id="cccd-vo-chong", order=25, section="B", group=GROUP_B_PERSONAL,
-         nameVi="Căn cước công dân vợ/chồng", note="Nếu con trên 16 tuổi thì bổ sung thêm CCCD của con",
-         appliesTo="SPOUSE"),
     dict(id="cmnd-vo-chong", order=26, section="B", group=GROUP_B_PERSONAL,
          nameVi="Chứng minh nhân dân vợ/chồng (nếu có)", isOptional=True, appliesTo="SPOUSE"),
-    dict(id="giay-khai-sinh-phu-thuoc", order=27, section="B", group=GROUP_B_PERSONAL,
-         nameVi="Giấy khai sinh (vợ/chồng và tất cả các con)",
-         note="Thu đầy đủ khai sinh của vợ/chồng và tất cả các con. Bản chính: chỉ cần scan gửi. "
-              "Bản sao hoặc bản trích lục: thu bản gốc.",
-         appliesTo="DEPENDENTS", quantityRule="PER_DEPENDENT"),
     dict(id="hinh-the-trang-phu-thuoc", order=28, section="B", group=GROUP_B_PERSONAL,
          nameVi="Hình thẻ trắng (vợ/chồng và từng con)",
          note="Kích thước: 3.5cm x 4.5cm. Chỉ cần gửi file hình, không cần rửa ra ảnh.",
@@ -117,6 +109,19 @@ CHECKLIST_ITEMS = [
     dict(id="quyet-dinh-ly-hon-vo-chong", order=29, section="B", group=GROUP_B_PERSONAL,
          nameVi="Giấy quyết định ly hôn (nếu có)", note="Trường hợp vợ/chồng đã từng ly hôn thì bổ sung",
          isOptional=True, appliesTo="SPOUSE"),
+    dict(id="cccd-me-vo-chong", order=30, section="B", group=GROUP_B_PERSONAL,
+         nameVi="Căn cước công dân mẹ", appliesTo="ALWAYS"),
+    dict(id="cccd-cha-vo-chong", order=31, section="B", group=GROUP_B_PERSONAL,
+         nameVi="Căn cước công dân cha", appliesTo="ALWAYS"),
+    dict(id="cccd-vo", order=34, section="B", group=GROUP_B_PERSONAL,
+         nameVi="Căn cước công dân vợ", appliesTo="SPOUSE"),
+    dict(id="cccd-chong", order=35, section="B", group=GROUP_B_PERSONAL,
+         nameVi="Căn cước công dân chồng", appliesTo="SPOUSE"),
+    dict(id="giay-khai-sinh-con-cai", order=36, section="B", group=GROUP_B_PERSONAL,
+         nameVi="Giấy khai sinh con cái",
+         note="Thu đầy đủ khai sinh của tất cả các con. Bản chính: chỉ cần scan gửi. "
+              "Bản sao hoặc bản trích lục: thu bản gốc.",
+         appliesTo="CHILDREN", quantityRule="PER_CHILD"),
 ]
 
 

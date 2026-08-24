@@ -11,14 +11,21 @@ def is_item_applicable(item: ChecklistItem, marital_status: str, number_of_child
         return True
     if item.appliesTo == "SPOUSE":
         return marital_status == "MARRIED"
-    # DEPENDENTS (mục 27, 28): áp dụng khi có vợ/chồng HOẶC có ít nhất 1 con
+    if item.appliesTo == "CHILDREN":
+        # Mục chỉ dành riêng cho con cái (vd giấy khai sinh con cái, tách riêng khỏi
+        # vợ/chồng) — khác DEPENDENTS ở chỗ KHÔNG áp dụng chỉ vì đã kết hôn chưa có con.
+        return number_of_children > 0
+    # DEPENDENTS (mục 28 — hình thẻ trắng): áp dụng khi có vợ/chồng HOẶC có ít nhất 1 con
     return marital_status == "MARRIED" or number_of_children > 0
 
 
 def required_count(item: ChecklistItem, marital_status: str, number_of_children: int) -> int:
+    if item.quantityRule == "PER_CHILD":
+        # Mục chỉ tính theo số con, không cộng thêm cho vợ/chồng (khác PER_DEPENDENT).
+        return number_of_children
     if item.quantityRule != "PER_DEPENDENT":
         return 1
-    # Mục 27/28 cần 1 document cho mỗi người: vợ/chồng (nếu có) + từng con. v1 không
+    # Mục 28 cần 1 document cho mỗi người: vợ/chồng (nếu có) + từng con. v1 không
     # track document nào ứng với người nào cụ thể — chỉ đếm tổng số document đã khớp
     # mục này so với tổng số người kỳ vọng.
     return (1 if marital_status == "MARRIED" else 0) + number_of_children
