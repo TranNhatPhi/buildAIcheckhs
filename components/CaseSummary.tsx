@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FormattedDocumentText } from "@/components/FormattedDocumentText";
 import { API_URL } from "@/lib/format";
 import type {
@@ -41,10 +41,18 @@ export function CaseSummary({
   const [analysisError, setAnalysisError] = useState(initialAnalysisError);
   const analyzing = status === "RUNNING";
 
+  // Không có cách nào huỷ NGANG lệnh gọi DeepSeek đang chạy trong thread ở backend (blocking
+  // I/O, không phải task async có thể cancel) — bấm "Huỷ" chỉ báo backend đừng ghi kết quả
+  // trễ nữa (POST .../analyze/cancel) và bỏ qua ngay tại UI. Cờ này đánh dấu lượt phân tích
+  // hiện tại đã bị huỷ, để khi promise của runAnalysis() cuối cùng cũng resolve (có thể vài
+  // phút sau), không ghi đè state đã trở về trạng thái nghỉ bằng kết quả không còn ai chờ.
+  const cancelledRef = useRef(false);
+
   const refetchStatus = useCallback(async () => {
     const res = await fetch(`${API_URL}/cases/${caseId}`, { cache: "no-store" });
-    if (!res.ok) return;
+    if (!res.ok || cancelledRef.current) return;
     const data: CaseDetailDTO = await res.json();
+    if (cancelledRef.current) return;
     setStatus(data.case.aiAnalysisStatus);
     setAnalysis(data.case.aiAnalysisSummary);
     setAnalysisError(data.case.aiAnalysisError);
@@ -62,10 +70,12 @@ export function CaseSummary({
   }, [status, refetchStatus]);
 
   async function runAnalysis() {
+    cancelledRef.current = false;
     setStatus("RUNNING");
     setAnalysisError(null);
     try {
       const res = await fetch(`${API_URL}/cases/${caseId}/analyze`, { method: "POST" });
+      if (cancelledRef.current) return;
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         setStatus("ERROR");
@@ -76,11 +86,24 @@ export function CaseSummary({
       setStatus("DONE");
       setAnalysis(data.summary);
     } catch {
+      if (cancelledRef.current) return;
       // Mất kết nối phía trình duyệt (đóng tab, mất mạng...) không có nghĩa backend đã
       // dừng — request vẫn chạy tiếp trong threadpool riêng và tự lưu kết quả vào DB khi
       // xong. Refetch để lấy status thật thay vì báo lỗi khi có thể vẫn đang chạy bình
       // thường; effect polling ở trên sẽ tự tiếp quản nếu refetch cho thấy vẫn RUNNING.
       await refetchStatus();
+    }
+  }
+
+  async function cancelAnalysis() {
+    cancelledRef.current = true;
+    setStatus(analysis ? "DONE" : "IDLE");
+    try {
+      await fetch(`${API_URL}/cases/${caseId}/analyze/cancel`, { method: "POST" });
+    } catch {
+      // Không kết nối được để báo huỷ — không sao, UI đã thoát trạng thái chờ ngay tại
+      // đây rồi; backend cứ để lượt phân tích cũ chạy xong tự nhiên (chỉ tốn thêm ít token
+      // gọi API, không ảnh hưởng gì tới nhân viên vì cancelledRef đã chặn không ghi đè UI).
     }
   }
 
@@ -101,16 +124,26 @@ export function CaseSummary({
   return (
     <div className="flex flex-col gap-7">
       <div>
-        <button
-          onClick={runAnalysis}
-          disabled={analyzing}
-          className="text-sm font-semibold px-4 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
-        >
+        <div className="flex items-center gap-2">
+          <button
+            onClick={runAnalysis}
+            disabled={analyzing}
+            className="text-sm font-semibold px-4 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {analyzing && (
+              <span className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+            )}
+            🧠 {analyzing ? "Đang phân tích..." : analysis ? "Phân tích lại" : "Phân tích AI chuyên sâu"}
+          </button>
           {analyzing && (
-            <span className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+            <button
+              onClick={cancelAnalysis}
+              className="text-sm font-semibold px-4 py-2.5 rounded-xl bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition-colors"
+            >
+              Huỷ
+            </button>
           )}
-          🧠 {analyzing ? "Đang phân tích..." : analysis ? "Phân tích lại" : "Phân tích AI chuyên sâu"}
-        </button>
+        </div>
         {analyzing && (
           <p className="text-xs text-neutral-400 mt-2">
             AI đang đọc toàn bộ thông tin đã trích xuất để phân tích chi tiết và đối chiếu chéo
@@ -126,9 +159,11 @@ export function CaseSummary({
             <p className="text-xs font-bold uppercase tracking-wide text-indigo-600 mb-2">
               Phân tích AI chuyên sâu
             </p>
-            <p className="text-sm text-neutral-800 leading-relaxed whitespace-pre-wrap">
-              {analysis}
-            </p>
+            <FormattedDocumentText
+              text={analysis}
+              emptyLabel=""
+              className="text-sm text-neutral-800 leading-relaxed"
+            />
           </div>
         )}
       </div>

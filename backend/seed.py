@@ -113,10 +113,15 @@ CHECKLIST_ITEMS = [
          nameVi="Căn cước công dân mẹ", appliesTo="ALWAYS"),
     dict(id="cccd-cha-vo-chong", order=31, section="B", group=GROUP_B_PERSONAL,
          nameVi="Căn cước công dân cha", appliesTo="ALWAYS"),
+    # Chỉ cần CCCD của 1 người (vợ HOẶC chồng, tuỳ giới tính vợ/chồng của đương đơn) — dùng
+    # eitherWithId để hễ 1 trong 2 mục đủ thì coi cả 2 đủ, tránh checklist bị kẹt vĩnh viễn ở
+    # mục không thể nộp được (vd đương đơn là nữ thì không thể nào có "CCCD vợ").
     dict(id="cccd-vo", order=34, section="B", group=GROUP_B_PERSONAL,
-         nameVi="Căn cước công dân vợ", appliesTo="SPOUSE"),
+         nameVi="Căn cước công dân vợ", appliesTo="SPOUSE", eitherWithId="cccd-chong",
+         note="Xác định qua trường Giới tính trên CCCD: Nữ → mục này (vợ)."),
     dict(id="cccd-chong", order=35, section="B", group=GROUP_B_PERSONAL,
-         nameVi="Căn cước công dân chồng", appliesTo="SPOUSE"),
+         nameVi="Căn cước công dân chồng", appliesTo="SPOUSE", eitherWithId="cccd-vo",
+         note="Xác định qua trường Giới tính trên CCCD: Nam → mục này (chồng)."),
     dict(id="giay-khai-sinh-con-cai", order=36, section="B", group=GROUP_B_PERSONAL,
          nameVi="Giấy khai sinh con cái",
          note="Thu đầy đủ khai sinh của tất cả các con. Bản chính: chỉ cần scan gửi. "
@@ -136,6 +141,7 @@ def main():
             data.setdefault("isOptional", False)
             data.setdefault("appliesTo", "ALWAYS")
             data.setdefault("quantityRule", "FIXED_1")
+            data.setdefault("eitherWithId", None)
 
             existing = db.get(ChecklistItem, data["id"])
             if existing:

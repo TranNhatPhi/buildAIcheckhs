@@ -75,6 +75,9 @@ class ChecklistItem(Base):
     isOptional = Column(Boolean, nullable=False, default=False)
     appliesTo = Column(String(191), nullable=False)  # "ALWAYS" | "SPOUSE" | "DEPENDENTS"
     quantityRule = Column(String(191), nullable=False, default="FIXED_1")
+    # Cặp "chỉ cần 1 trong 2" (vd CCCD vợ / CCCD chồng — 1 hồ sơ chỉ có 1 người, không bao
+    # giờ cần cả 2) — trỏ sang id của mục kia trong cặp. Xem compute_checklist_summary.
+    eitherWithId = Column(String(191), nullable=True)
 
     documents = relationship("Document", back_populates="matchedChecklistItem")
 

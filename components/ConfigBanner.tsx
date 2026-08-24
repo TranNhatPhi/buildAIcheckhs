@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "@/lib/format";
 
 export function ConfigBanner() {
@@ -8,7 +8,7 @@ export function ConfigBanner() {
     null
   );
 
-  useEffect(() => {
+  const checkStatus = useCallback(() => {
     Promise.all([
       fetch(`${API_URL}/health`).then((r) => r.json()),
       fetch(`${API_URL}/config`).then((r) => r.json()),
@@ -18,6 +18,16 @@ export function ConfigBanner() {
       })
       .catch(() => setStatus({ backendUp: false, hasDeepseekKey: false }));
   }, []);
+
+  // Trước đây chỉ check 1 lần lúc mount — nếu tab mở đúng lúc backend đang restart (vd
+  // đang deploy bản mới), banner "không kết nối được" hiện lên rồi bị KẸT VĨNH VIỄN dù
+  // backend đã chạy lại bình thường ngay sau đó, tới khi nhân viên tự F5 mới hết. Poll lại
+  // định kỳ để banner luôn phản ánh đúng trạng thái hiện tại, tự ẩn khi backend hồi phục.
+  useEffect(() => {
+    checkStatus();
+    const interval = setInterval(checkStatus, 5000);
+    return () => clearInterval(interval);
+  }, [checkStatus]);
 
   if (!status) return null;
   if (status.backendUp && status.hasDeepseekKey) return null;

@@ -78,6 +78,15 @@ def compute_checklist_summary(
             )
         )
 
+    # Cặp "chỉ cần 1 trong 2" (vd CCCD vợ / CCCD chồng) — hễ 1 bên đủ thì coi cả 2 đủ, vì
+    # 1 hồ sơ chỉ có đúng 1 người (vợ hoặc chồng), không bao giờ cần cả 2 cùng lúc.
+    by_id = {s.item.id: s for s in statuses}
+    for status in statuses:
+        partner = by_id.get(status.item.eitherWithId) if status.item.eitherWithId else None
+        if partner and (status.complete or partner.complete):
+            status.complete = True
+            partner.complete = True
+
     required_statuses = [s for s in statuses if not s.item.isOptional]
     completed_required_items = sum(1 for s in required_statuses if s.complete)
     total_required_items = len(required_statuses)

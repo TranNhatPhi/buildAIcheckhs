@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 interface TableBlock {
   type: "table";
   headers: string[];
@@ -7,6 +9,16 @@ interface TableBlock {
 interface KeyValueBlock {
   type: "keyvalue";
   rows: { key: string; value: string }[];
+}
+
+interface ListBlock {
+  type: "list";
+  items: string[];
+}
+
+interface HeadingBlock {
+  type: "heading";
+  text: string;
 }
 
 interface TextBlock {
@@ -19,12 +31,28 @@ interface PageDividerBlock {
   label: string;
 }
 
-type Block = TableBlock | KeyValueBlock | PageDividerBlock | TextBlock;
+type Block = TableBlock | KeyValueBlock | ListBlock | HeadingBlock | PageDividerBlock | TextBlock;
 
 // Đánh dấu ranh giới trang do backend chèn khi OCR PDF nhiều trang (xem ocr.py extract_text)
 // — CORRECTION_SYSTEM_PROMPT ở backend/classify.py đã được yêu cầu giữ nguyên dòng này khi
 // sửa OCR, hiển thị thành 1 đường phân cách rõ ràng thay vì lẫn vào giữa văn xuôi.
 const PAGE_DIVIDER_RE = /^\s*-{2,}\s*Trang\s+(\d+)\s*-{2,}\s*$/i;
+
+// Tiêu đề mục đánh số kiểu "1. THÔNG TIN CÁ NHÂN" (SUMMARY_SYSTEM_PROMPT ở classify.py yêu
+// cầu DeepSeek dùng đúng dạng này) — phân biệt với 1 dòng field vô tình bắt đầu bằng số thứ
+// tự (vd "1. Họ và tên: ...") nhờ 2 điều kiện: KHÔNG có dấu ":" và viết HOA toàn bộ.
+const HEADING_RE = /^\s*\d+\.\s+(.+)$/;
+
+function isHeadingLine(line: string): string | null {
+  const m = HEADING_RE.exec(line.trim());
+  if (!m) return null;
+  const rest = m[1].trim();
+  if (!rest || rest.length > 60 || rest.includes(":")) return null;
+  if (rest !== rest.toUpperCase()) return null;
+  return rest;
+}
+
+const LIST_ITEM_RE = /^\s*[-•]\s+(.+)$/;
 
 const SEPARATOR_RE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 
@@ -53,6 +81,23 @@ function tryParseKeyValueLine(line: string): { key: string; value: string } | nu
   const value = m[2].trim();
   if (!key || !value) return null;
   return { key, value };
+}
+
+// DeepSeek bọc các giá trị cần chú ý (bất nhất, cần xác minh...) trong "**...**" (xem
+// SUMMARY_SYSTEM_PROMPT ở backend/classify.py) — tô sáng để nhân viên lướt nhanh là thấy
+// ngay chỗ cần để ý, không phải đọc hết từng câu mới tìm ra.
+function renderInline(text: string): ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+?\*\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return (
+        <mark key={i} className="bg-amber-200/70 text-amber-900 rounded px-0.5 font-semibold">
+          {part.slice(2, -2)}
+        </mark>
+      );
+    }
+    return part;
+  });
 }
 
 // Nhận diện block bảng dạng "|" do DeepSeek chèn vào khi sửa OCR gặp nội dung dạng bảng
@@ -87,6 +132,14 @@ function parseBlocks(text: string): Block[] {
       continue;
     }
 
+    const heading = isHeadingLine(line);
+    if (heading) {
+      flushText();
+      blocks.push({ type: "heading", text: heading });
+      i++;
+      continue;
+    }
+
     const looksLikeHeader = countPipes(line) >= 2 && line.trim().length > 0;
     if (looksLikeHeader) {
       const following: string[] = [];
@@ -104,6 +157,22 @@ function parseBlocks(text: string): Block[] {
         i = j;
         continue;
       }
+    }
+
+    const firstListMatch = LIST_ITEM_RE.exec(line);
+    if (firstListMatch) {
+      const items = [firstListMatch[1]];
+      let j = i + 1;
+      while (j < lines.length) {
+        const m = LIST_ITEM_RE.exec(lines[j]);
+        if (!m) break;
+        items.push(m[1]);
+        j++;
+      }
+      flushText();
+      blocks.push({ type: "list", items });
+      i = j;
+      continue;
     }
 
     const firstKv = tryParseKeyValueLine(line);
@@ -177,7 +246,7 @@ export function FormattedDocumentText({ text, emptyLabel, className }: Props) {
                       <tr key={ri} className={ri % 2 === 1 ? "bg-neutral-50" : undefined}>
                         {row.map((cell, ci) => (
                           <td key={ci} className="px-2.5 py-1.5 border-b border-neutral-100 whitespace-nowrap">
-                            {cell}
+                            {renderInline(cell)}
                           </td>
                         ))}
                       </tr>
@@ -197,12 +266,42 @@ export function FormattedDocumentText({ text, emptyLabel, className }: Props) {
                         <td className="px-2.5 py-1.5 border-b border-neutral-100 font-semibold text-neutral-600 whitespace-nowrap align-top">
                           {row.key}
                         </td>
-                        <td className="px-2.5 py-1.5 border-b border-neutral-100 align-top">{row.value}</td>
+                        <td className="px-2.5 py-1.5 border-b border-neutral-100 align-top">
+                          {renderInline(row.value)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+            );
+          }
+          if (block.type === "list") {
+            return (
+              <ul key={idx} className="list-disc pl-5 flex flex-col gap-1">
+                {block.items.map((item, ii) => {
+                  const kv = tryParseKeyValueLine(item);
+                  return (
+                    <li key={ii} className="text-sm leading-relaxed">
+                      {kv ? (
+                        <>
+                          <span className="font-semibold text-neutral-600">{kv.key}:</span>{" "}
+                          {renderInline(kv.value)}
+                        </>
+                      ) : (
+                        renderInline(item)
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            );
+          }
+          if (block.type === "heading") {
+            return (
+              <p key={idx} className="text-xs font-bold uppercase tracking-wide text-neutral-500 mt-1">
+                {block.text}
+              </p>
             );
           }
           if (block.type === "page") {
@@ -219,7 +318,7 @@ export function FormattedDocumentText({ text, emptyLabel, className }: Props) {
           if (!block.content.trim()) return null;
           return (
             <pre key={idx} className="whitespace-pre-wrap font-sans">
-              {block.content.trim()}
+              {renderInline(block.content.trim())}
             </pre>
           );
         })}

@@ -145,6 +145,16 @@ def analyze_case(case_id: str, db: Session = Depends(get_db)):
 
     result, error = summarize_case_profile(case_context, documents_text)
 
+    # Không có cách nào huỷ NGANG cuộc gọi DeepSeek đang chạy trong thread này (blocking
+    # I/O, không phải async task có thể cancel) — nếu nhân viên đã bấm "Huỷ" trong lúc chờ
+    # (xem /analyze/cancel bên dưới), status trong DB đã bị ghi đè thành CANCELLED từ 1
+    # request khác. refresh() để đọc lại status MỚI NHẤT trước khi quyết định có ghi kết
+    # quả hay không — tránh việc kết quả đến trễ "hồi sinh" lại 1 lượt phân tích nhân viên
+    # đã chủ động huỷ, làm họ bất ngờ thấy kết quả bật ra sau khi tưởng đã huỷ xong.
+    db.refresh(case)
+    if case.aiAnalysisStatus == "CANCELLED":
+        raise HTTPException(status_code=409, detail="Đã huỷ phân tích.")
+
     if error:
         case.aiAnalysisStatus = "ERROR"
         case.aiAnalysisError = error
@@ -158,6 +168,22 @@ def analyze_case(case_id: str, db: Session = Depends(get_db)):
     case.aiAnalysisUpdatedAt = now_utc()
     db.commit()
     return CaseAnalysisResponse(summary=result)
+
+
+@router.post("/{case_id}/analyze/cancel")
+def cancel_analyze_case(case_id: str, db: Session = Depends(get_db)):
+    """Nhân viên bấm "Huỷ" trong lúc đang chờ "Phân tích AI chuyên sâu". CHỈ đổi status
+    trong DB — không (và không thể) chặn cuộc gọi DeepSeek đang chạy trong thread khác,
+    xem comment ở analyze_case về cách kết quả đến trễ được bỏ qua khi status đã CANCELLED."""
+    case = db.get(Case, case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+
+    if case.aiAnalysisStatus == "RUNNING":
+        case.aiAnalysisStatus = "CANCELLED"
+        case.aiAnalysisUpdatedAt = now_utc()
+        db.commit()
+    return {"ok": True}
 
 
 @router.patch("/{case_id}", response_model=CaseListItemDTO)

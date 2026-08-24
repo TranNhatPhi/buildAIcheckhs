@@ -107,7 +107,14 @@ def _get_client() -> OpenAI:
 #     nhiều. Ở trần 28000 gần như không còn margin cho biến động ~10% nói trên. Nâng lên
 #     40000 (~65% margin so với đỉnh 23646 đã đo được) + timeout 240s→300s (thời gian có vẻ
 #     tỉ lệ gần tuyến tính với số token, ~7ms/token từ số liệu đo được).
-CORRECTION_MAX_TOKENS = 40000
+# (3) 40000 → 60000: sau khi thêm quy tắc bảng Markdown + giữ nguyên marker phân trang "---
+#     Trang N ---" vào prompt (khiến model phải suy luận thêm về cấu trúc), 1 lần reclassify
+#     THẬT bị lỗi correctedText=None (rỗng, không log exception — đúng dấu hiệu bị cắt ngang
+#     do hết token). Gọi lặp lại 3 lần CÙNG input để đo lại: 25893, 31662, 23127 reasoning
+#     token — đỉnh 31662 chỉ còn ~20% margin so với trần 40000 cũ, khớp với lỗi vừa gặp. Nâng
+#     lên 60000 (~90% margin so với đỉnh 31662 đã đo) — client timeout đã sẵn 600s (nâng lúc
+#     thêm SUMMARY_MAX_TOKENS=60000) nên không cần đổi thêm.
+CORRECTION_MAX_TOKENS = 60000
 CLASSIFICATION_MAX_TOKENS = 8000
 
 CORRECTION_SYSTEM_PROMPT = """Bạn là trợ lý sửa lỗi văn bản OCR tiếng Việt. Bạn sẽ nhận được các
@@ -308,31 +315,34 @@ SUMMARY_SYSTEM_PROMPT = """Bạn là trợ lý phân tích hồ sơ cho công ty
 nhận được thông tin đã trích xuất (OCR + đã sửa lỗi) từ các giấy tờ mà một khách hàng đã nộp, mỗi
 đoạn được gắn nhãn theo đúng mục checklist mà file đó khớp vào.
 
-Nhiệm vụ: viết một bản PHÂN TÍCH CHI TIẾT VÀ ĐẦY ĐỦ (tiếng Việt) về hồ sơ khách hàng này — đây là
-báo cáo phân tích chuyên sâu cho nhân viên tư vấn đọc kỹ, KHÔNG phải bản tóm tắt lướt nhanh, nên
-không giới hạn độ dài, viết đủ chi tiết để bao quát hết thông tin quan trọng đọc được. Gồm các
-phần sau:
+Nhiệm vụ: viết một bản PHÂN TÍCH cho nhân viên tư vấn — ưu tiên NGẮN GỌN, DỄ LƯỚT (nhân viên cần
+nhìn vào là biết ngay cần làm gì), KHÔNG viết văn xuôi dài dòng. Gồm đúng 5 phần sau, mỗi phần bắt
+đầu bằng dòng tiêu đề số thứ tự (vd "1. THÔNG TIN CÁ NHÂN"):
 
-1. THÔNG TIN CÁ NHÂN: liệt kê đầy đủ mọi thông tin cá nhân rút ra được của đương đơn (họ tên, ngày
-   sinh, giới tính, số CCCD/CMND, số hộ chiếu + ngày cấp/hết hạn, quê quán/nơi thường trú...) và
-   của người phụ thuộc nếu có (vợ/chồng, con, cha mẹ) — càng chi tiết càng tốt, không tóm lược.
-2. DANH SÁCH GIẤY TỜ ĐÃ NỘP: điểm qua từng nhóm giấy tờ đã có, với các số liệu/chi tiết quan trọng
-   của từng giấy tờ (số hiệu, ngày cấp, ngày hết hạn, cơ quan cấp...) — liệt kê cụ thể theo từng
-   file, không gộp chung chung.
-3. ĐỐI CHIẾU & ĐIỂM BẤT NHẤT (QUAN TRỌNG NHẤT): rà soát chéo toàn bộ giấy tờ, liệt kê CHI TIẾT
-   từng điểm không khớp phát hiện được — vd tên/ngày sinh/số giấy tờ khác nhau giữa các file, ngày
-   tháng bất thường hoặc không hợp lệ, giấy tờ có vẻ đã hết hạn, thông tin cha/mẹ/vợ/chồng/con
-   không khớp giữa các nguồn. Với MỖI điểm bất nhất, nêu rõ: giá trị bất nhất là gì, xuất hiện ở
-   (những) file/giấy tờ nào. Nếu không phát hiện gì bất thường thì ghi rõ "không phát hiện điểm
-   bất thường".
-4. GHI CHÚ KHÁC: nếu có đoạn OCR mờ/không đọc rõ ảnh hưởng tới việc đọc thông tin, nêu rõ file nào
-   cần nhân viên tự mở lên xem lại bằng mắt để xác nhận.
+1. THÔNG TIN CÁ NHÂN: liệt kê NGẮN GỌN dưới dạng gạch đầu dòng "- Nhãn: giá trị" (1 dòng/1 thông
+   tin — họ tên, ngày sinh, giới tính, số CCCD/CMND, số hộ chiếu, quê quán...), của đương đơn và
+   người phụ thuộc nếu có. Không viết thành câu văn, không giải thích thêm.
+2. DANH SÁCH GIẤY TỜ ĐÃ NỘP: gạch đầu dòng, MỖI FILE 1 DÒNG NGẮN dạng "- Tên file: loại giấy tờ,
+   số hiệu/ngày cấp chính (nếu có)" — không liệt kê hết mọi trường, chỉ 1-2 chi tiết định danh
+   quan trọng nhất của file đó.
+3. ĐIỂM CẦN SỬA/BẤT NHẤT (QUAN TRỌNG NHẤT): gạch đầu dòng, MỖI ĐIỂM BẤT NHẤT 1 DÒNG NGẮN, format
+   "- [Trường thông tin]: **giá trị A** (nguồn A) vs **giá trị B** (nguồn B)" — không viết đoạn văn
+   giải thích dài, chỉ nêu đúng sự khác biệt và nguồn. BẮT BUỘC in đậm (**...**) đúng các giá trị
+   khác nhau đó. Nếu không phát hiện gì thì ghi 1 dòng "- Không phát hiện điểm bất thường".
+4. GHI CHÚ KHÁC: gạch đầu dòng, mỗi dòng 1 file OCR mờ/không đọc rõ cần nhân viên tự mở xem, format
+   "- **Tên file**: lý do ngắn gọn cần xem lại". Nếu không có thì ghi 1 dòng "- Không có ghi chú
+   khác".
+5. TÓM TẮT CẦN CHỈNH SỬA: đúc kết NGẮN NHẤT có thể từ phần 3 và 4 thành danh sách việc cần làm,
+   gạch đầu dòng, mỗi việc 1 câu ngắn gọn kiểu checklist hành động (vd "- Xác minh số hộ chiếu
+   đúng (P055574825 hay P03537482?)", "- Xem lại bản gốc: Bằng C3.pdf, CCCD mẹ"). Đây là phần
+   nhân viên đọc ĐẦU TIÊN nên phải cô đọng nhất trong cả báo cáo.
 
 Quy tắc BẮT BUỘC:
 - CHỈ dựa trên thông tin được cung cấp bên dưới — KHÔNG bịa thêm, KHÔNG suy đoán thông tin không có.
 - Nếu không đọc được thông tin đủ để nói gì về khách hàng, nói thẳng là vậy, không cố suy diễn.
-- Trả lời bằng văn xuôi mạch lạc theo từng phần đánh số như trên, không dùng markdown/bullet phức
-  tạp, có thể xuống dòng giữa các phần cho dễ đọc.
+- MỌI phần đều dùng gạch đầu dòng "- " như hướng dẫn trên, không viết văn xuôi liền mạch, không
+  dùng markdown khác ngoài "- " để gạch đầu dòng và "**...**" để in đậm (không tiêu đề #, không
+  bảng markdown).
 """
 
 
