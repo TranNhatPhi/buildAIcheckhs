@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-multipart
+pytesseract
+opencv-python-headless
+pymupdf
+pillow
+numpy
+sqlalchemy
+pymysql
+cryptography
+boto3
+openai
+python-dotenv
+eval_type_backport

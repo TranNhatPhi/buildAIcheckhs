@@ -1,0 +1,64 @@
+2026-08-20T07:30:47Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guarantee, are subject to the Cloudflare Online Services Terms of Use (https://www.cloudflare.com/website-terms/), and Cloudflare reserves the right to investigate your use of Tunnels for violations of such terms. If you intend to use Tunnels in production you should use a pre-created named tunnel by following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+2026-08-20T07:30:47Z INF Requesting new quick Tunnel on trycloudflare.com...
+2026-08-20T07:30:53Z INF +--------------------------------------------------------------------------------------------+
+2026-08-20T07:30:53Z INF |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+2026-08-20T07:30:53Z INF |  https://zshops-skins-insulation-beverages.trycloudflare.com                               |
+2026-08-20T07:30:53Z INF +--------------------------------------------------------------------------------------------+
+2026-08-20T07:30:53Z INF Cannot determine default configuration path. No file [config.yml config.yaml] in [~/.cloudflared ~/.cloudflare-warp ~/cloudflare-warp /etc/cloudflared /usr/local/etc/cloudflared]
+2026-08-20T07:30:53Z INF Version 2026.5.2 (Checksum 151a81e06101cfe5a3da280e8e6eb87bf803fcb4175c1c14c2ad70813d708737)
+2026-08-20T07:30:53Z INF GOOS: darwin, GOVersion: go1.26.3, GoArch: arm64
+2026-08-20T07:30:53Z INF Settings: map[ha-connections:1 protocol:quic url:http://localhost:8001]
+2026-08-20T07:30:53Z INF cloudflared will not automatically update if installed by a package manager.
+2026-08-20T07:30:53Z INF Generated Connector ID: 226c607e-075f-479b-b53c-3c5ffad228aa
+2026-08-20T07:30:53Z INF Initial protocol quic
+2026-08-20T07:30:53Z INF ICMP proxy will use 192.168.1.170 as source for IPv4
+2026-08-20T07:30:53Z INF ICMP proxy will use fe80::106f:df78:626e:344c in zone en0 as source for IPv6
+2026-08-20T07:30:53Z INF Created ICMP proxy listening on 192.168.1.170:0
+2026-08-20T07:30:53Z INF ICMP proxy will use 192.168.1.170 as source for IPv4
+2026-08-20T07:30:53Z INF ICMP proxy will use fe80::106f:df78:626e:344c in zone en0 as source for IPv6
+2026-08-20T07:30:53Z INF Starting metrics server on 127.0.0.1:20241/metrics
+2026-08-20T07:30:53Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveID(65074) CurveP256] connIndex=0 event=0 ip=2606:4700:a0::1
+2026-08-20T07:30:53Z INF +-------------------------------------------------------------------------------------+
+2026-08-20T07:30:53Z INF |                               CONNECTIVITY PRE-CHECKS                               |
+2026-08-20T07:30:53Z INF +-------------------------------------------------------------------------------------+
+2026-08-20T07:30:53Z INF |  COMPONENT         TARGET                     STATUS  DETAILS                       |
+2026-08-20T07:30:53Z INF |  DNS Resolution    region1.v2.argotunnel.com  PASS    DNS Resolved successfully     |
+2026-08-20T07:30:53Z INF |  DNS Resolution    region2.v2.argotunnel.com  PASS    DNS Resolved successfully     |
+2026-08-20T07:30:53Z INF |  UDP Connectivity  region1.v2.argotunnel.com  PASS    QUIC connection successful    |
+2026-08-20T07:30:53Z INF |  UDP Connectivity  region2.v2.argotunnel.com  PASS    QUIC connection successful    |
+2026-08-20T07:30:53Z INF |  TCP Connectivity  region1.v2.argotunnel.com  PASS    HTTP/2 connection successful  |
+2026-08-20T07:30:53Z INF |  TCP Connectivity  region2.v2.argotunnel.com  PASS    HTTP/2 connection successful  |
+2026-08-20T07:30:53Z INF |  Cloudflare API    api.cloudflare.com:443     PASS    API is reachable              |
+2026-08-20T07:30:53Z INF |                                                                                     |
+2026-08-20T07:30:53Z INF |  SUMMARY: Environment is healthy. cloudflared will use 'quic' as primary protocol.  |
+2026-08-20T07:30:53Z INF +-------------------------------------------------------------------------------------+
+2026-08-20T07:30:53Z INF precheck component="DNS Resolution" details="DNS Resolved successfully" run_id=731d8ed2-af0b-4f68-9bbd-0d6fffd112dd status=pass target=region1.v2.argotunnel.com
+2026-08-20T07:30:53Z INF precheck component="DNS Resolution" details="DNS Resolved successfully" run_id=731d8ed2-af0b-4f68-9bbd-0d6fffd112dd status=pass target=region2.v2.argotunnel.com
+2026-08-20T07:30:53Z INF precheck component="UDP Connectivity" details="QUIC connection successful" run_id=731d8ed2-af0b-4f68-9bbd-0d6fffd112dd status=pass target=region1.v2.argotunnel.com
+2026-08-20T07:30:53Z INF precheck component="UDP Connectivity" details="QUIC connection successful" run_id=731d8ed2-af0b-4f68-9bbd-0d6fffd112dd status=pass target=region2.v2.argotunnel.com
+2026-08-20T07:30:53Z INF precheck component="TCP Connectivity" details="HTTP/2 connection successful" run_id=731d8ed2-af0b-4f68-9bbd-0d6fffd112dd status=pass target=region1.v2.argotunnel.com
+2026-08-20T07:30:53Z INF precheck component="TCP Connectivity" details="HTTP/2 connection successful" run_id=731d8ed2-af0b-4f68-9bbd-0d6fffd112dd status=pass target=region2.v2.argotunnel.com
+2026-08-20T07:30:53Z INF precheck component="Cloudflare API" details="API is reachable" run_id=731d8ed2-af0b-4f68-9bbd-0d6fffd112dd status=pass target=api.cloudflare.com:443
+2026-08-20T07:30:53Z INF precheck complete hard_fail=false run_id=731d8ed2-af0b-4f68-9bbd-0d6fffd112dd suggested_protocol=quic
+2026-08-20T07:30:53Z INF Registered tunnel connection connIndex=0 connection=b203efd2-685c-4127-a9ec-070a572d3148 event=0 ip=2606:4700:a0::1 location=sin17 protocol=quic
+2026-08-20T07:37:08Z ERR  error="Incoming request ended abruptly: context canceled" connIndex=0 event=1 ingressRule=0 originService=http://localhost:8001
+2026-08-20T07:37:08Z ERR  error="Incoming request ended abruptly: context canceled" connIndex=0 event=1 ingressRule=0 originService=http://localhost:8001
+2026-08-20T07:37:08Z ERR Request failed error="Incoming request ended abruptly: context canceled" connIndex=0 dest=https://zshops-skins-insulation-beverages.trycloudflare.com/cases/cmt12vsyy0000kyrjqd7jnx8z/documents event=0 ip=2606:4700:a0::1 type=http
+2026-08-20T07:37:08Z ERR Request failed error="Incoming request ended abruptly: context canceled" connIndex=0 dest=https://zshops-skins-insulation-beverages.trycloudflare.com/cases/cmt12vsyy0000kyrjqd7jnx8z/documents event=0 ip=2606:4700:a0::1 type=http
+2026-08-20T07:37:31Z ERR  error="Incoming request ended abruptly: context canceled" connIndex=0 event=1 ingressRule=0 originService=http://localhost:8001
+2026-08-20T07:37:31Z ERR Request failed error="Incoming request ended abruptly: context canceled" connIndex=0 dest=https://zshops-skins-insulation-beverages.trycloudflare.com/cases event=0 ip=2606:4700:a0::1 type=http
+2026-08-20T07:41:09Z ERR  error="Incoming request ended abruptly: context canceled" connIndex=0 event=1 ingressRule=0 originService=http://localhost:8001
+2026-08-20T07:41:09Z ERR Request failed error="Incoming request ended abruptly: context canceled" connIndex=0 dest=https://zshops-skins-insulation-beverages.trycloudflare.com/documents/fc88d03fcc574de9a4e81452ea4e10e4/reclassify event=0 ip=2606:4700:a0::1 type=http
+2026-08-20T07:41:36Z ERR  error="Incoming request ended abruptly: context canceled" connIndex=0 event=1 ingressRule=0 originService=http://localhost:8001
+2026-08-20T07:41:36Z ERR Request failed error="Incoming request ended abruptly: context canceled" connIndex=0 dest=https://zshops-skins-insulation-beverages.trycloudflare.com/documents/fc88d03fcc574de9a4e81452ea4e10e4/reclassify event=0 ip=2606:4700:a0::1 type=http
+2026-08-20T07:41:45Z ERR  error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp [::1]:8001: connect: connection refused" connIndex=0 event=1 ingressRule=0 originService=http://localhost:8001
+2026-08-20T07:41:45Z ERR Request failed error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp [::1]:8001: connect: connection refused" connIndex=0 dest=https://zshops-skins-insulation-beverages.trycloudflare.com/cases event=0 ip=2606:4700:a0::1 type=http
+2026-08-20T07:46:29Z INF Initiating graceful shutdown due to signal terminated ...
+2026-08-20T07:46:29Z ERR failed to run the datagram handler error="Application error 0x0 (remote)" connIndex=0 event=0 ip=2606:4700:a0::1
+2026-08-20T07:46:29Z ERR failed to serve tunnel connection error="accept stream listener encountered a failure while serving" connIndex=0 event=0 ip=2606:4700:a0::1
+2026-08-20T07:46:29Z ERR Serve tunnel error error="accept stream listener encountered a failure while serving" connIndex=0 event=0 ip=2606:4700:a0::1
+2026-08-20T07:46:29Z INF Retrying connection in up to 1s connIndex=0 event=0 ip=2606:4700:a0::1
+2026-08-20T07:46:29Z ERR Connection terminated connIndex=0
+2026-08-20T07:46:29Z ERR no more connections active and exiting
+2026-08-20T07:46:29Z INF Tunnel server stopped
+2026-08-20T07:46:29Z INF Metrics server stopped
