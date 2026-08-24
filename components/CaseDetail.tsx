@@ -50,12 +50,20 @@ export function CaseDetail({ caseId, initialData }: Props) {
 
   return (
     <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-10 flex flex-col gap-7">
-      <Link
-        href="/"
-        className="inline-flex items-center gap-1.5 text-sm font-semibold text-neutral-500 hover:text-indigo-600 transition-colors self-start"
-      >
-        ← Quay lại danh sách hồ sơ
-      </Link>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-neutral-500 hover:text-indigo-600 transition-colors"
+        >
+          ← Quay lại danh sách hồ sơ
+        </Link>
+        <Link
+          href={`/cases/${caseId}/summary`}
+          className="inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
+        >
+          📋 Xem tổng hợp thông tin
+        </Link>
+      </div>
 
       {hasProcessingDocs && (
         <div className="flex items-center gap-3 bg-amber-50 border-2 border-amber-200 rounded-xl px-4 py-3">
