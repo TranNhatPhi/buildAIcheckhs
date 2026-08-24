@@ -33,7 +33,10 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
     if len(content) > MAX_FILE_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="File quá lớn (tối đa 20MB)")
 
-    mime_type = file.content_type or "application/octet-stream"
+    # Không tin mù quáng Content-Type client tự khai báo — xác nhận thật ra có file tên
+    # ".webp" nhưng khai báo "image/webp" trong khi nội dung byte thật là JPEG, khiến ảnh
+    # hiển thị lỗi không ổn định phía trình duyệt. Dò lại định dạng thật từ nội dung file.
+    mime_type = ocr.detect_real_mime_type(content, file.content_type or "application/octet-stream")
     key = storage.upload_document(case_id, file.filename or "file", content, mime_type)
 
     document = Document(

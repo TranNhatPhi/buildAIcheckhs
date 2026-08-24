@@ -33,6 +33,7 @@ const STATUS_COLOR: Record<DocumentDTO["status"], string> = {
 export function DocumentList({ documents, applicableItems, onChanged }: Props) {
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<DocumentDTO | null>(null);
 
   async function reassign(docId: string, checklistItemId: string) {
     try {
@@ -86,7 +87,8 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
   }
 
   return (
-    <ul className="flex flex-col gap-3">
+    <>
+      <ul className="flex flex-col gap-3">
       {documents.map((doc) => {
         const isExpanded = expandedId === doc.id;
         // Còn đang chạy OCR/AI — khoá dropdown khớp mục lại: nếu cho chọn tay lúc này,
@@ -96,14 +98,23 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
         return (
           <li key={doc.id} className="border-2 border-neutral-200 rounded-2xl p-4 bg-white">
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              <a
-                href={`${API_URL}/documents/${doc.id}/file`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-sm font-semibold underline decoration-neutral-300 truncate max-w-xs"
-              >
-                {doc.originalFilename}
-              </a>
+              {doc.mimeType.startsWith("image/") ? (
+                <button
+                  onClick={() => setPreviewDoc(doc)}
+                  className="text-sm font-semibold underline decoration-neutral-300 truncate max-w-xs text-left"
+                >
+                  {doc.originalFilename}
+                </button>
+              ) : (
+                <a
+                  href={`${API_URL}/documents/${doc.id}/file`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm font-semibold underline decoration-neutral-300 truncate max-w-xs"
+                >
+                  {doc.originalFilename}
+                </a>
+              )}
               <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLOR[doc.status]}`}>
                 {STATUS_LABEL[doc.status]}
               </span>
@@ -230,6 +241,31 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
           </li>
         );
       })}
-    </ul>
+      </ul>
+
+      {previewDoc && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
+          onClick={() => setPreviewDoc(null)}
+        >
+          <div className="relative max-w-4xl max-h-full" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setPreviewDoc(null)}
+              className="absolute -top-3 -right-3 h-9 w-9 flex items-center justify-center rounded-full bg-white text-neutral-700 shadow-lg hover:bg-neutral-100 text-lg font-bold"
+              aria-label="Đóng"
+            >
+              ×
+            </button>
+            {/* eslint-disable-next-line @next/next/no-img-element -- ảnh từ backend MinIO, không phải asset tĩnh nên không dùng next/image được */}
+            <img
+              src={`${API_URL}/documents/${previewDoc.id}/file`}
+              alt={previewDoc.originalFilename}
+              className="max-w-full max-h-[85vh] rounded-xl shadow-2xl object-contain"
+            />
+            <p className="text-center text-white text-sm mt-2">{previewDoc.originalFilename}</p>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

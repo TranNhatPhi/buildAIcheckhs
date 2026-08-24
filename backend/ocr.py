@@ -391,6 +391,25 @@ def describe_file_read_error(e: Exception) -> str:
     return "File bị hỏng hoặc không đúng định dạng, không đọc được nội dung."
 
 
+def detect_real_mime_type(content: bytes, declared_mime_type: str) -> str:
+    """Không tin mù quáng vào Content-Type do trình duyệt người upload tự khai báo — xác
+    nhận thực tế trên chính hệ thống này: 1 file tên ".webp" khai báo Content-Type
+    "image/webp" nhưng NỘI DUNG BYTE THẬT lại là JPEG (đổi tên file mà không đổi định
+    dạng), khiến <img> phía trình duyệt hiển thị lỗi không ổn định tuỳ trình duyệt (browser
+    tin theo header, không phải lúc nào cũng tự dò lại định dạng thật). Đọc lại định dạng
+    thật từ chính nội dung file thay vì tin tên file/khai báo của client."""
+    if content[:4] == b"%PDF":
+        return "application/pdf"
+    try:
+        with Image.open(io.BytesIO(content)) as img:
+            real_mime = Image.MIME.get(img.format)
+            if real_mime:
+                return real_mime
+    except Exception:  # noqa: BLE001
+        pass
+    return declared_mime_type or "application/octet-stream"
+
+
 def pdf_to_images(pdf_bytes: bytes) -> list[Image.Image]:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     zoom = PDF_RENDER_DPI / 72
