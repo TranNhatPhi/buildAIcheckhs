@@ -45,6 +45,10 @@ class Case(Base):
     notes = Column(Text, nullable=True)
     createdAt = Column(DateTime, default=now_utc)
     updatedAt = Column(DateTime, default=now_utc, onupdate=now_utc)
+    # Xoá mềm — nút "Xoá" ở danh sách hồ sơ chỉ đánh dấu deletedAt (ẩn khỏi danh sách),
+    # KHÔNG xoá thật document/file trên MinIO — chừa chỗ cho giao diện admin sau này khôi
+    # phục lại được. NULL nghĩa là hồ sơ đang hoạt động bình thường.
+    deletedAt = Column(DateTime, nullable=True)
 
     # Lưu lại kết quả "Phân tích AI chuyên sâu" vào DB (thay vì chỉ giữ trong state React)
     # — bước phân tích có thể chạy 2-4+ phút với hồ sơ nhiều file, nếu nhân viên bấm F5

@@ -1,0 +1,7 @@
+node_modules
+.next
+.env
+.env.local
+backend
+*.zip
+Nguyễn Hồng Sơn*

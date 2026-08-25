@@ -102,6 +102,9 @@ class CaseDTO(BaseModel):
     numberOfChildren: int
     notes: str | None
     createdAt: datetime
+    # None ở các endpoint bình thường (hồ sơ đang hoạt động) — chỉ có giá trị khi trả về từ
+    # endpoint danh sách hồ sơ đã xoá mềm (GET /cases/deleted), phục vụ giao diện admin sau.
+    deletedAt: datetime | None = None
 
     class Config:
         from_attributes = True

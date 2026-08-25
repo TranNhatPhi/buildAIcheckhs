@@ -143,6 +143,12 @@ export function CaseSummary({
               Huỷ
             </button>
           )}
+          <a
+            href={`${API_URL}/cases/${caseId}/download-all`}
+            className="text-sm font-semibold px-4 py-2.5 rounded-xl bg-neutral-100 text-neutral-700 hover:bg-neutral-200 transition-colors"
+          >
+            ⬇️ Tải tất cả hồ sơ
+          </a>
         </div>
         {analyzing && (
           <p className="text-xs text-neutral-400 mt-2">

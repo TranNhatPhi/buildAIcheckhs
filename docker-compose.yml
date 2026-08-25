@@ -17,6 +17,19 @@ services:
       timeout: 5s
       retries: 10
 
+  phpmyadmin:
+    image: phpmyadmin:latest
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: root
+      PMA_PASSWORD: CanadaChecklistRoot2026!
+    ports:
+      - "8080:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
   minio:
     image: minio/minio:latest
     restart: unless-stopped

@@ -1,7 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+import io
+import re
+import urllib.parse
+import zipfile
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import pdf_export
 import storage
 from classify import summarize_case_profile
 from completeness import compute_checklist_summary, compute_financial_threshold_vnd
@@ -21,7 +27,9 @@ router = APIRouter(prefix="/cases", tags=["cases"])
 
 @router.get("", response_model=list[CaseListItemDTO])
 def list_cases(db: Session = Depends(get_db)):
-    cases = db.scalars(select(Case).order_by(Case.createdAt.desc())).all()
+    cases = db.scalars(
+        select(Case).where(Case.deletedAt.is_(None)).order_by(Case.createdAt.desc())
+    ).all()
     checklist_items = db.scalars(select(ChecklistItem)).all()
 
     result = []
@@ -70,10 +78,74 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/deleted", response_model=list[CaseListItemDTO])
+def list_deleted_cases(db: Session = Depends(get_db)):
+    """Danh sách hồ sơ đã xoá mềm — dành cho giao diện admin (khôi phục) sau này. Đặt route
+    literal "/deleted" TRƯỚC route "/{case_id}" bên dưới, nếu không FastAPI sẽ hiểu nhầm
+    "deleted" là 1 case_id thay vì khớp đúng route này."""
+    cases = db.scalars(
+        select(Case).where(Case.deletedAt.is_not(None)).order_by(Case.deletedAt.desc())
+    ).all()
+    checklist_items = db.scalars(select(ChecklistItem)).all()
+
+    result = []
+    for c in cases:
+        summary = compute_checklist_summary(checklist_items, c.documents, c.maritalStatus, c.numberOfChildren)
+        threshold = compute_financial_threshold_vnd(c.maritalStatus, c.numberOfChildren)
+        result.append(
+            CaseListItemDTO(
+                id=c.id,
+                clientName=c.clientName,
+                maritalStatus=c.maritalStatus,
+                numberOfChildren=c.numberOfChildren,
+                notes=c.notes,
+                createdAt=c.createdAt,
+                deletedAt=c.deletedAt,
+                percent=summary.percent,
+                needsReviewCount=summary.needs_review_count,
+                financialThreshold=financial_threshold_to_dto(threshold),
+            )
+        )
+    return result
+
+
+@router.post("/{case_id}/restore", response_model=CaseListItemDTO)
+def restore_case(case_id: str, db: Session = Depends(get_db)):
+    """Khôi phục hồ sơ đã xoá mềm — chưa có nút trên UI hiện tại, dành cho giao diện admin
+    sau này (xem GET /cases/deleted). Toàn bộ document/file trên MinIO vẫn còn nguyên vì
+    delete_case chỉ đánh dấu deletedAt, không xoá thật gì cả."""
+    case = db.get(Case, case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    if case.deletedAt is None:
+        raise HTTPException(status_code=400, detail="Hồ sơ này chưa bị xoá")
+
+    case.deletedAt = None
+    db.commit()
+    db.refresh(case)
+
+    checklist_items = db.scalars(select(ChecklistItem)).all()
+    summary = compute_checklist_summary(
+        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren
+    )
+    threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
+    return CaseListItemDTO(
+        id=case.id,
+        clientName=case.clientName,
+        maritalStatus=case.maritalStatus,
+        numberOfChildren=case.numberOfChildren,
+        notes=case.notes,
+        createdAt=case.createdAt,
+        percent=summary.percent,
+        needsReviewCount=summary.needs_review_count,
+        financialThreshold=financial_threshold_to_dto(threshold),
+    )
+
+
 @router.get("/{case_id}", response_model=CaseDetailDTO)
 def get_case(case_id: str, db: Session = Depends(get_db)):
     case = db.get(Case, case_id)
-    if not case:
+    if not case or case.deletedAt is not None:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
 
     checklist_items = db.scalars(select(ChecklistItem)).all()
@@ -164,18 +236,35 @@ def analyze_case(case_id: str, db: Session = Depends(get_db)):
 
     # Danh sách giấy tờ CHƯA nộp — tính thẳng từ checklist đã có sẵn (summary), KHÔNG nhờ
     # DeepSeek suy ra, vì model chỉ thấy được text của các file ĐÃ NỘP, không thể biết mục
-    # nào của checklist còn thiếu. Ghép thêm vào cuối bài phân tích để nhân viên có luôn
-    # trong 1 báo cáo, khỏi phải mở lại trang checklist chính để đối chiếu.
+    # nào của checklist còn thiếu. In đậm tên từng mục (giống cách DeepSeek tô sáng giá trị
+    # cần chú ý ở mục 3/4) để nhân viên lướt nhanh là thấy ngay.
     missing_items = [s for s in summary.items if not s.item.isOptional and not s.complete]
     if missing_items:
         missing_lines = "\n".join(
-            f"- {s.item.nameVi}"
+            f"- **{s.item.nameVi}**"
             + (f" ({s.fulfilled_count}/{s.required_count} đã có)" if s.required_count > 1 else "")
             for s in missing_items
         )
     else:
         missing_lines = "- Đã nộp đủ tất cả mục bắt buộc trong checklist."
-    result = f"{result}\n\n6. GIẤY TỜ CHƯA NỘP THEO CHECKLIST\n{missing_lines}"
+    missing_section = f"3. GIẤY TỜ CHƯA NỘP THEO CHECKLIST\n{missing_lines}"
+
+    # Chèn ngay sau mục 2 (danh sách giấy tờ ĐÃ nộp) thay vì để cuối bài — nhân viên đọc 2
+    # danh sách "đã nộp"/"chưa nộp" liền nhau dễ đối chiếu hơn. Đổi số thứ tự các mục còn
+    # lại của DeepSeek (3→4, 4→5, 5→6) để nhường chỗ — đổi THEO THỨ TỰ NGƯỢC (5 trước, 3
+    # sau) để không bị đè số vừa đổi (đổi 3→4 trước thì bước đổi 4→5 sẽ ăn nhầm luôn mục
+    # vừa đổi thành 5→6 sai).
+    renumbered = re.sub(r"(?m)^5\.", "6.", result)
+    renumbered = re.sub(r"(?m)^4\.", "5.", renumbered)
+    renumbered = re.sub(r"(?m)^3\.", "4.", renumbered)
+    insertion_marker = re.search(r"(?m)^4\.\s", renumbered)
+    if insertion_marker:
+        idx = insertion_marker.start()
+        result = f"{renumbered[:idx]}{missing_section}\n\n{renumbered[idx:]}"
+    else:
+        # DeepSeek không theo đúng format tiêu đề mong đợi (hiếm) — vẫn đảm bảo thông tin
+        # không mất, đành nối vào cuối như trước thay vì chèn giữa.
+        result = f"{result}\n\n{missing_section}"
 
     case.aiAnalysisStatus = "DONE"
     case.aiAnalysisSummary = result
@@ -199,6 +288,82 @@ def cancel_analyze_case(case_id: str, db: Session = Depends(get_db)):
         case.aiAnalysisUpdatedAt = now_utc()
         db.commit()
     return {"ok": True}
+
+
+def _dedupe_filename(name: str, used_names: set[str]) -> str:
+    if name not in used_names:
+        used_names.add(name)
+        return name
+    stem, dot, ext = name.rpartition(".")
+    counter = 1
+    while True:
+        candidate = f"{stem} ({counter}).{ext}" if dot else f"{name} ({counter})"
+        if candidate not in used_names:
+            used_names.add(candidate)
+            return candidate
+        counter += 1
+
+
+@router.get("/{case_id}/download-all")
+def download_all_documents(case_id: str, db: Session = Depends(get_db)):
+    """Nút "Tải tất cả hồ sơ" ở trang Tổng hợp thông tin — gộp toàn bộ file gốc (PDF/ảnh)
+    khách hàng đã upload cùng bản "Phân tích AI chuyên sâu" (nếu đã chạy) thành 1 file ZIP
+    duy nhất để nhân viên tải về máy cá nhân, khỏi phải tải tay từng file một."""
+    case = db.get(Case, case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+
+    buffer = io.BytesIO()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for doc in sorted(case.documents, key=lambda d: d.uploadedAt):
+            try:
+                content = storage.get_document_bytes(doc.storedPath)
+            except Exception:  # noqa: BLE001
+                continue
+            name = _dedupe_filename(doc.originalFilename or "file", used_names)
+            zf.writestr(name, content)
+
+        if case.aiAnalysisSummary:
+            pdf_bytes = pdf_export.render_text_to_pdf(
+                case.aiAnalysisSummary, f"Phân tích AI chuyên sâu — {case.clientName}"
+            )
+        else:
+            pdf_bytes = None
+
+        if pdf_bytes is not None:
+            zf.writestr(_dedupe_filename("Phan tich AI chuyen sau.pdf", used_names), pdf_bytes)
+        else:
+            # Không tìm được font Unicode để xuất PDF (xem pdf_export.py), hoặc chưa từng
+            # chạy phân tích — fallback về .txt thay vì làm hỏng cả lượt tải ZIP.
+            if case.aiAnalysisSummary:
+                # Bỏ dấu "**...**" (dùng để tô sáng khi hiển thị trên web) vì .txt không
+                # render markdown — để nguyên chỉ thấy dấu sao thừa, gây rối mắt.
+                analysis_text = re.sub(r"\*\*(.+?)\*\*", r"\1", case.aiAnalysisSummary)
+            else:
+                analysis_text = (
+                    'Chưa có bản phân tích AI chuyên sâu — vào trang Tổng hợp thông tin và bấm '
+                    'nút "Phân tích AI chuyên sâu" trước khi tải.'
+                )
+            zf.writestr(
+                _dedupe_filename("Phan tich AI chuyen sau.txt", used_names), analysis_text
+            )
+
+    # Header HTTP chỉ encode được latin-1 — tên khách hàng tiếng Việt có dấu (vd "ễ", "ồ")
+    # không hợp lệ nếu nhét thẳng vào filename= thường (đã xác nhận: UnicodeEncodeError khi
+    # test thật). Dùng filename= ASCII an toàn làm fallback + filename*=UTF-8'' theo đúng
+    # chuẩn RFC 5987/6266 để trình duyệt hiện đúng tên tiếng Việt lúc tải về.
+    ascii_fallback = re.sub(r"[^\x00-\x7f]", "_", case.clientName).strip() or "ho-so"
+    utf8_name = urllib.parse.quote(f"{case.clientName}.zip")
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_fallback}.zip"; filename*=UTF-8\'\'{utf8_name}'
+            )
+        },
+    )
 
 
 @router.patch("/{case_id}", response_model=CaseListItemDTO)
@@ -237,16 +402,13 @@ def update_case(case_id: str, body: UpdateCaseRequest, db: Session = Depends(get
 
 @router.delete("/{case_id}")
 def delete_case(case_id: str, db: Session = Depends(get_db)):
+    """Xoá MỀM — chỉ đánh dấu deletedAt (ẩn khỏi danh sách chính GET /cases), KHÔNG xoá
+    Case/Document trong DB và KHÔNG xoá file trên MinIO. Chừa dữ liệu nguyên vẹn để giao
+    diện admin sau này khôi phục lại được qua POST /cases/{case_id}/restore."""
     case = db.get(Case, case_id)
-    if not case:
+    if not case or case.deletedAt is not None:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
 
-    # Xoá file trên MinIO của từng document trước — xoá Case ở DB sẽ cascade xoá các
-    # Document row (đã cấu hình cascade="all, delete-orphan" trong models.py), nhưng
-    # không tự xoá được file thật trên MinIO nên phải làm tay ở đây.
-    for doc in case.documents:
-        storage.delete_document(doc.storedPath)
-
-    db.delete(case)
+    case.deletedAt = now_utc()
     db.commit()
     return {"ok": True}

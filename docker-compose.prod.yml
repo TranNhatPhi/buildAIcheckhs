@@ -1,0 +1,97 @@
+# Compose PRODUCTION — chạy trên VM GCP, gộp cả app (frontend/backend) lẫn hạ tầng
+# (mysql/minio) thành 1 stack duy nhất. Tách riêng khỏi docker-compose.yml (chỉ có
+# mysql/minio/phpmyadmin, dùng cho dev cục bộ — frontend/backend dev chạy trực tiếp trên
+# máy qua `npm run dev`/`uvicorn`, không qua Docker) để không xáo trộn workflow dev hiện tại.
+#
+# Chạy: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# Xem hướng dẫn đầy đủ (tạo VM, DNS, HTTPS...) trong tài liệu deploy đi kèm.
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: canada_checklist
+      MYSQL_USER: canada_checklist_app
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # KHÔNG mở port 3306 ra ngoài host — backend/phpMyAdmin (nếu cần) truy cập qua mạng nội
+    # bộ Docker bằng tên service "mysql", không cần expose ra internet.
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Tương tự mysql — không expose port ra host, backend gọi qua tên service "minio".
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql://canada_checklist_app:${MYSQL_PASSWORD}@mysql:3306/canada_checklist
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: canada-checklist-docs
+      DEEPSEEK_BASE_URL: https://api.deepseek.com
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEEPSEEK_MODEL: deepseek-v4-flash
+      CONFIDENCE_THRESHOLD: "0.6"
+      CORS_ORIGINS: https://${APP_DOMAIN}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    # Không expose port ra host — chỉ Caddy (reverse proxy) mới cần thấy backend, qua tên
+    # service "backend" trong mạng nội bộ Docker.
+
+  frontend:
+    build:
+      context: .
+      args:
+        # Bake vào JS bundle lúc build — PHẢI là domain PUBLIC (https://api.yourdomain.com),
+        # vì đây là URL mà TRÌNH DUYỆT của nhân viên gọi trực tiếp, không phải URL nội bộ
+        # Docker network như backend ở trên.
+        NEXT_PUBLIC_API_URL: https://${API_DOMAIN}
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
+
+volumes:
+  mysql_data:
+  minio_data:
+  caddy_data:
+  caddy_config:

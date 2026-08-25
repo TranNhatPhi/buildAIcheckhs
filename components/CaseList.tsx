@@ -16,7 +16,8 @@ export function CaseList({ initialCases }: Props) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function handleDelete(c: CaseListItemDTO) {
-    if (!confirm(`Xoá hồ sơ "${c.clientName}"? Toàn bộ file đã upload sẽ bị xoá vĩnh viễn.`)) return;
+    if (!confirm(`Xoá hồ sơ "${c.clientName}"? Hồ sơ sẽ bị ẩn khỏi danh sách này (không xoá vĩnh viễn).`))
+      return;
     setDeletingId(c.id);
     const res = await fetch(`${API_URL}/cases/${c.id}`, { method: "DELETE" });
     setDeletingId(null);
