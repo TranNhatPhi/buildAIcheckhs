@@ -23,4 +23,6 @@ COPY . .
 
 EXPOSE 8001
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+# --workers khớp số vCPU của VM (e2-medium = 2 vCPU) — OCR (Tesseract) là CPU-bound nên
+# 1 process duy nhất không tận dụng hết multi-core; đổi VM lớn hơn thì tăng số này tương ứng.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2"]
