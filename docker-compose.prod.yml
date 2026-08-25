@@ -22,6 +22,11 @@ x-backend-common: &backend-common
     MINIO_BUCKET: canada-checklist-docs
     DEEPSEEK_BASE_URL: https://api.deepseek.com
     DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+    # Key dự phòng cho round-robin (backend/classify.py:59-67) — optional, thiếu thì code tự
+    # bỏ qua (os.getenv, không phải os.environ), pool chỉ còn lại DEEPSEEK_API_KEY.
+    LLM_API_KEY_2: ${LLM_API_KEY_2:-}
+    LLM_API_KEY_3: ${LLM_API_KEY_3:-}
+    LLM_API_KEY_4: ${LLM_API_KEY_4:-}
     DEEPSEEK_MODEL: deepseek-v4-flash
     CONFIDENCE_THRESHOLD: "0.6"
     CORS_ORIGINS: https://${APP_DOMAIN}
