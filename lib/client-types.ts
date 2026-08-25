@@ -53,6 +53,7 @@ export interface CaseListItemDTO {
   clientName: string;
   maritalStatus: string;
   numberOfChildren: number;
+  skillLevel: string;
   notes: string | null;
   createdAt: string;
   // null ở danh sách hồ sơ đang hoạt động — chỉ có giá trị ở /admin/cases (bao gồm cả hồ sơ
@@ -86,6 +87,7 @@ export interface CaseDetailDTO {
     clientName: string;
     maritalStatus: string;
     numberOfChildren: number;
+    skillLevel: string;
     notes: string | null;
     createdAt: string;
     documents: DocumentDTO[];

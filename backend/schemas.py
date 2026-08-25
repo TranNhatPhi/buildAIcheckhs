@@ -10,6 +10,7 @@ class CreateCaseRequest(BaseModel):
     clientName: str = Field(min_length=1)
     maritalStatus: Literal["SINGLE", "MARRIED"]
     numberOfChildren: int = Field(ge=0, le=20)
+    skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] = "LOW_SKILL"
     notes: str | None = None
 
 
@@ -19,6 +20,7 @@ class UpdateCaseRequest(BaseModel):
     clientName: str | None = Field(default=None, min_length=1)
     maritalStatus: Literal["SINGLE", "MARRIED"] | None = None
     numberOfChildren: int | None = Field(default=None, ge=0, le=20)
+    skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] | None = None
     notes: str | None = None
 
 
@@ -100,6 +102,7 @@ class CaseDTO(BaseModel):
     clientName: str
     maritalStatus: str
     numberOfChildren: int
+    skillLevel: str = "LOW_SKILL"
     notes: str | None
     createdAt: datetime
     # None ở các endpoint bình thường (hồ sơ đang hoạt động) — chỉ có giá trị khi trả về từ

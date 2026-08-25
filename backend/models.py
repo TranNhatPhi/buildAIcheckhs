@@ -42,6 +42,7 @@ class Case(Base):
     clientName = Column(String(191), nullable=False)
     maritalStatus = Column(String(191), nullable=False)  # "SINGLE" | "MARRIED"
     numberOfChildren = Column(Integer, nullable=False, default=0)
+    skillLevel = Column(String(191), nullable=False, default="LOW_SKILL")  # "LOW_SKILL" | "HIGH_SKILL"
     notes = Column(Text, nullable=True)
     createdAt = Column(DateTime, default=now_utc)
     updatedAt = Column(DateTime, default=now_utc, onupdate=now_utc)

@@ -29,6 +29,7 @@ def list_all_cases(db: Session = Depends(get_db)):
                 clientName=c.clientName,
                 maritalStatus=c.maritalStatus,
                 numberOfChildren=c.numberOfChildren,
+                skillLevel=c.skillLevel,
                 notes=c.notes,
                 createdAt=c.createdAt,
                 deletedAt=c.deletedAt,

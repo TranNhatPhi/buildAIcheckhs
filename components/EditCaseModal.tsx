@@ -16,6 +16,9 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
     caseItem.maritalStatus as "SINGLE" | "MARRIED",
   );
   const [numberOfChildren, setNumberOfChildren] = useState(caseItem.numberOfChildren);
+  const [skillLevel, setSkillLevel] = useState<"LOW_SKILL" | "HIGH_SKILL">(
+    caseItem.skillLevel as "LOW_SKILL" | "HIGH_SKILL",
+  );
   const [notes, setNotes] = useState(caseItem.notes ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +31,7 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
     const res = await fetch(`${API_URL}/cases/${caseItem.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientName, maritalStatus, numberOfChildren, notes }),
+      body: JSON.stringify({ clientName, maritalStatus, numberOfChildren, skillLevel, notes }),
     });
 
     if (!res.ok) {
@@ -94,6 +97,42 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
                 onChange={() => setMaritalStatus("MARRIED")}
               />
               Đã kết hôn
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold mb-1.5">Trình độ kỹ năng (skill)</label>
+          <div className="flex gap-3">
+            <label
+              className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
+                skillLevel === "LOW_SKILL"
+                  ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                  : "border-neutral-200 text-neutral-500"
+              }`}
+            >
+              <input
+                type="radio"
+                className="hidden"
+                checked={skillLevel === "LOW_SKILL"}
+                onChange={() => setSkillLevel("LOW_SKILL")}
+              />
+              Low Skill
+            </label>
+            <label
+              className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
+                skillLevel === "HIGH_SKILL"
+                  ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                  : "border-neutral-200 text-neutral-500"
+              }`}
+            >
+              <input
+                type="radio"
+                className="hidden"
+                checked={skillLevel === "HIGH_SKILL"}
+                onChange={() => setSkillLevel("HIGH_SKILL")}
+              />
+              High Skill
             </label>
           </div>
         </div>
