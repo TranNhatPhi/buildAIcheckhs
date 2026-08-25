@@ -64,6 +64,10 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Bắt buộc phải có khi Console chạy sau reverse proxy trên domain riêng — thiếu biến
+      # này, Console vẫn đăng nhập được (như đã xác nhận) nhưng trang trắng xoá sau đó vì JS
+      # không biết gọi API vào đâu.
+      MINIO_BROWSER_REDIRECT_URL: https://${STORAGE_DOMAIN}
     volumes:
       - minio_data:/data
     healthcheck:

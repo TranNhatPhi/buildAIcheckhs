@@ -11,10 +11,6 @@ export function GeneralNotesBanner() {
           Giấy tờ nhà đất cần sao y công chứng tại văn phòng công chứng hoặc cơ quan nhà nước,
           không quá 1 tháng tính đến thời điểm nộp.
         </li>
-        <li>
-          Sổ hộ khẩu đã bị nhà nước thu hồi — cần làm giấy xác nhận cư trú (mẫu CT07) ghi đầy đủ
-          thông tin vợ/chồng/con đang cùng địa chỉ.
-        </li>
       </ul>
     </div>
   );
