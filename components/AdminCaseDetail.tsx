@@ -35,7 +35,7 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
     );
   }
 
-  const { case: c, checklist, financialThreshold } = data;
+  const { case: c, checklist } = data;
   const missingRequired = checklist.items.filter((s) => !s.item.isOptional && !s.complete);
 
   return (
@@ -63,7 +63,7 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
               {new Date(c.createdAt).toLocaleDateString("vi-VN")}
             </p>
           </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <InfoPanel
             label="Hoàn thành checklist"
             value={`${checklist.percent}%`}
@@ -75,12 +75,6 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
             value={String(checklist.needsReviewCount)}
             sub="tài liệu"
             color={checklist.needsReviewCount > 0 ? EL.warning : EL.info}
-          />
-          <InfoPanel
-            label="Ngưỡng tài chính"
-            value={`${(financialThreshold.minVND / 1_000_000).toFixed(0)}–${(financialThreshold.maxVND / 1_000_000).toFixed(0)}tr`}
-            sub={financialThreshold.isEstimated ? "Ước tính" : "VNĐ"}
-            color={EL.info}
           />
         </div>
 
