@@ -81,11 +81,11 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 
 # Caddyfile gắn vào container qua bind-mount (không nằm trong image build) — nếu chỉ
 # Caddyfile đổi mà docker-compose.prod.yml không đổi, lệnh "up -d" ở trên KHÔNG tự restart
-# caddy (Compose không thấy service definition thay đổi). Reload tường minh để chắc chắn
-# Caddy luôn đọc lại Caddyfile mới nhất trên đĩa, không phụ thuộc việc container có bị
-# recreate hay không.
-echo "==> Reload Caddy config..."
-docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/caddy/Caddyfile 2>&1 || echo "!! Reload Caddy thất bại — kiểm tra: docker compose -f docker-compose.prod.yml logs caddy --tail 30"
+# caddy (Compose không thấy service definition thay đổi). Restart hẳn container (không dùng
+# "caddy reload" — đã xác nhận qua thực tế reload có thể báo thành công nhưng vẫn không áp
+# dụng đúng config mới) để chắc chắn Caddy đọc lại Caddyfile từ đầu.
+echo "==> Restart Caddy để áp dụng Caddyfile mới nhất..."
+docker compose -f docker-compose.prod.yml --env-file .env.prod restart caddy
 
 echo "==> Trạng thái container:"
 docker compose -f docker-compose.prod.yml ps
