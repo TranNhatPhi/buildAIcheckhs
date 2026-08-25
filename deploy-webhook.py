@@ -17,7 +17,7 @@ import os
 import subprocess
 import threading
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Đường dẫn TUYỆT ĐỐI khớp đúng với đường dẫn thật trên HOST (không phải trong container) —
 # bắt buộc cho Docker-outside-of-Docker: lệnh "docker compose" gọi qua socket mount thực thi
@@ -47,6 +47,10 @@ def run_deploy():
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Timeout đọc socket — nếu 1 kết nối gửi header xong nhưng "treo" không gửi nốt body (hết
+    # hạn, lỗi mạng giữa chừng, hay bất kỳ client bất thường nào), tự đóng thay vì giữ mãi.
+    timeout = 15
+
     def _respond(self, code: int, message: bytes):
         self.send_response(code)
         self.end_headers()
@@ -83,6 +87,12 @@ if __name__ == "__main__":
     # ownership" thay vì pull. Khai rõ REPO_DIR là an toàn, 1 lần lúc container khởi động.
     subprocess.run(["git", "config", "--global", "--add", "safe.directory", REPO_DIR])
 
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    # ThreadingHTTPServer (không phải HTTPServer thường) — HTTPServer xử lý TỪNG kết nối
+    # TUẦN TỰ trên 1 luồng duy nhất, nên 1 request treo (kết nối bất thường không gửi hết
+    # body, hoặc container đang mid-restart lúc code webhook tự đổi) làm MỌI request sau đó
+    # phải xếp hàng chờ — chính là nguyên nhân nghi vấn cho lỗi timeout GitHub gặp phải lúc
+    # test thật đầu tiên (xem "Recent Deliveries" trên GitHub). Threading + timeout ở trên
+    # đảm bảo 1 kết nối có vấn đề không chặn các request khác.
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"Deploy webhook listening on :{PORT}, REPO_DIR={REPO_DIR}", flush=True)
     server.serve_forever()
