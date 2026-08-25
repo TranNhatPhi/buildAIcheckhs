@@ -78,7 +78,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # Container chạy git bằng UID khác chủ sở hữu thư mục trên host (bind-mount) — git 2.35.2+
+    # mặc định chặn thao tác trên repo "lạ chủ" (an toàn chống CVE-2022-24765), báo "dubious
+    # ownership" thay vì pull. Khai rõ REPO_DIR là an toàn, 1 lần lúc container khởi động.
+    subprocess.run(["git", "config", "--global", "--add", "safe.directory", REPO_DIR])
+
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"Deploy webhook listening on :{PORT}, REPO_DIR={REPO_DIR}", flush=True)
     server.serve_forever()
-# (đánh dấu test webhook — sẽ xoá comment này ở lần sửa sau)
