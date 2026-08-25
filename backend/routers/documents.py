@@ -62,7 +62,10 @@ def get_document_file(document_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Không tìm thấy file")
 
-    content = storage.get_document_bytes(doc.storedPath)
+    try:
+        content = storage.get_document_bytes(doc.storedPath)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail="File không còn tồn tại trên hệ thống lưu trữ") from e
     return Response(
         content=content,
         media_type=doc.mimeType,

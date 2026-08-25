@@ -29,8 +29,6 @@ CHECKLIST_ITEMS = [
     dict(id="cmnd-cu", order=3, section="A", group=GROUP_A_PERSONAL,
          nameVi="Chứng minh nhân dân cũ (nếu có)",
          note="Cung cấp thêm giấy xác nhận đổi CMND (nếu có)", isOptional=True),
-    dict(id="so-ho-khau", order=4, section="A", group=GROUP_A_PERSONAL, nameVi="Sổ Hộ Khẩu",
-         verificationNote="Không dùng nữa (đã bị nhà nước thu hồi)."),
     dict(id="tam-tru-ct07", order=5, section="A", group=GROUP_A_PERSONAL,
          nameVi="Sổ tạm trú / giấy xác nhận tạm trú / CT07",
          verificationNote="Phải có đầy đủ thành viên trong gia đình (ba mẹ, anh chị em... con "
