@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# bản copy không-ẩn-file của .env.prod để tiện upload qua SSH-in-browser (chứa secret thật)
+env-*-upload.txt
 
 # vercel
 .vercel
