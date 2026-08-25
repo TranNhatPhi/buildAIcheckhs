@@ -9,6 +9,8 @@ load_dotenv(".env.local")
 load_dotenv("../.env.local")
 load_dotenv("../.env")
 
+from sqlalchemy import select
+
 from db import SessionLocal, engine
 from models import Base, ChecklistItem
 
@@ -156,6 +158,18 @@ def main():
                     setattr(existing, k, v)
             else:
                 db.add(ChecklistItem(**data))
+
+        # Dọn các mục cũ đã bị bỏ khỏi CHECKLIST_ITEMS (vd "Sổ Hộ Khẩu" — không dùng nữa) —
+        # để seed.py thực sự idempotent theo đúng nghĩa (state khớp với danh sách hiện tại,
+        # không chỉ cộng dồn/cập nhật), tránh phải nhớ chạy thêm lệnh DELETE tay mỗi lần bỏ
+        # 1 mục. Document.matchedChecklistItemId có ondelete="SET NULL" nên an toàn khi xoá.
+        current_ids = {data["id"] for data in CHECKLIST_ITEMS}
+        stale = db.scalars(select(ChecklistItem).where(ChecklistItem.id.notin_(current_ids))).all()
+        for item in stale:
+            db.delete(item)
+        if stale:
+            print(f"Removed {len(stale)} stale checklist item(s): {[i.id for i in stale]}")
+
         db.commit()
         print(f"Seeded {len(CHECKLIST_ITEMS)} checklist items.")
     finally:
