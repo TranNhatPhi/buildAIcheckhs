@@ -21,7 +21,7 @@ const STAGE_LABEL: Partial<Record<DocumentDTO["status"], string>> = {
 interface FileProgress {
   id: string;
   name: string;
-  status: "uploading" | "done" | "error";
+  status: "uploading" | "done" | "error" | "cancelled";
   error?: string;
 }
 
@@ -31,9 +31,15 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
   const [queue, setQueue] = useState<FileProgress[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Chỉ chặn các file CHƯA bắt đầu upload (chưa gọi fetch) — file đang xử lý dở (đã gửi lên
+  // backend, đang OCR/phân loại) vẫn để chạy tiếp tự nhiên, vì không có endpoint huỷ upload
+  // giữa chừng (khác với huỷ phân tích AI ở CaseSummary.tsx) — dừng nửa chừng dễ để lại
+  // document kẹt ở trạng thái OCR_RUNNING/CLASSIFYING mãi mãi.
+  const cancelledRef = useRef(false);
 
   const uploadFiles = useCallback(
     async (files: FileList | File[]) => {
+      cancelledRef.current = false;
       const list = Array.from(files);
       const entries: FileProgress[] = list.map((f, i) => ({
         id: `${Date.now()}-${i}-${f.name}`,
@@ -44,7 +50,7 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
 
       let cursor = 0;
       async function worker() {
-        while (cursor < list.length) {
+        while (cursor < list.length && !cancelledRef.current) {
           const index = cursor++;
           const file = list[index];
           const entry = entries[index];
@@ -80,14 +86,25 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
       }
 
       await Promise.all(Array.from({ length: MAX_CONCURRENT }, worker));
+
+      if (cancelledRef.current) {
+        setQueue((prev) =>
+          prev.map((q) => (q.status === "uploading" ? { ...q, status: "cancelled" } : q))
+        );
+      }
     },
     [caseId, onUploaded]
   );
+
+  const stopUpload = useCallback(() => {
+    cancelledRef.current = true;
+  }, []);
 
   const pendingCount = useMemo(() => queue.filter((q) => q.status === "uploading").length, [queue]);
   const doneCount = useMemo(() => queue.filter((q) => q.status !== "uploading").length, [queue]);
   const successCount = useMemo(() => queue.filter((q) => q.status === "done").length, [queue]);
   const errorCount = useMemo(() => queue.filter((q) => q.status === "error").length, [queue]);
+  const cancelledCount = useMemo(() => queue.filter((q) => q.status === "cancelled").length, [queue]);
   const isProcessing = pendingCount > 0;
 
   // Hiện popup thông báo kết quả khi vừa xử lý xong 1 đợt upload (chuyển từ đang xử lý ->
@@ -144,33 +161,41 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
       {isProcessing && (
         <div className="mt-3 flex items-center gap-3 bg-amber-50 border-2 border-amber-200 rounded-xl px-4 py-3">
           <span className="h-4 w-4 shrink-0 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
-          <p className="text-sm text-amber-800">
+          <p className="text-sm text-amber-800 flex-1">
             <span className="font-semibold">
               Đang xử lý {doneCount}/{queue.length} file...
             </span>{" "}
             Mỗi file cần chạy OCR + AI phân loại, có thể mất khoảng 30–60 giây (đôi khi lâu hơn)
             — vui lòng chờ một chút, đừng tắt trang.
           </p>
+          <button
+            onClick={stopUpload}
+            className="shrink-0 rounded-full bg-white border border-amber-300 text-amber-800 text-xs font-semibold px-3 py-1.5 hover:bg-amber-100"
+          >
+            Dừng tải lên
+          </button>
         </div>
       )}
 
       {showResult && !isProcessing && (
         <div
           className={`fixed top-6 right-6 z-50 flex items-start gap-3 border-2 rounded-xl px-4 py-3 shadow-lg max-w-sm animate-[fadeIn_0.2s_ease-out] ${
-            errorCount > 0 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200"
+            errorCount > 0 || cancelledCount > 0 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200"
           }`}
         >
-          <span className={errorCount > 0 ? "text-amber-600" : "text-green-600"}>
-            {errorCount > 0 ? "⚠" : "✓"}
+          <span className={errorCount > 0 || cancelledCount > 0 ? "text-amber-600" : "text-green-600"}>
+            {errorCount > 0 || cancelledCount > 0 ? "⚠" : "✓"}
           </span>
-          <p className={`text-sm flex-1 ${errorCount > 0 ? "text-amber-800" : "text-green-800"}`}>
-            {errorCount > 0
+          <p className={`text-sm flex-1 ${errorCount > 0 || cancelledCount > 0 ? "text-amber-800" : "text-green-800"}`}>
+            {cancelledCount > 0
+              ? `Đã dừng — ${successCount}/${queue.length} file đã tải lên xong, ${cancelledCount} file chưa tải (${errorCount} lỗi).`
+              : errorCount > 0
               ? `Đã xử lý xong ${successCount}/${queue.length} file — ${errorCount} file bị lỗi, kiểm tra lại bên dưới.`
               : `Đã tải lên và phân tích xong ${successCount} file thành công.`}
           </p>
           <button
             onClick={() => setShowResult(false)}
-            className={`shrink-0 text-lg leading-none ${errorCount > 0 ? "text-amber-500 hover:text-amber-700" : "text-green-500 hover:text-green-700"}`}
+            className={`shrink-0 text-lg leading-none ${errorCount > 0 || cancelledCount > 0 ? "text-amber-500 hover:text-amber-700" : "text-green-500 hover:text-green-700"}`}
             aria-label="Đóng thông báo"
           >
             ×
@@ -187,6 +212,7 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               )}
               {q.status === "done" && <span className="text-green-600">✓</span>}
               {q.status === "error" && <span className="text-red-600">✗</span>}
+              {q.status === "cancelled" && <span className="text-neutral-400">⏸</span>}
               <span className="truncate">{q.name}</span>
               {q.status === "uploading" && (
                 <span className="text-xs text-neutral-400">
@@ -198,6 +224,9 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
                 </span>
               )}
               {q.status === "error" && <span className="text-red-600 text-xs">{q.error}</span>}
+              {q.status === "cancelled" && (
+                <span className="text-neutral-400 text-xs">đã dừng, chưa tải lên</span>
+              )}
             </li>
           ))}
         </ul>
