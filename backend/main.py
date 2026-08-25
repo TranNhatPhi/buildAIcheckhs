@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import ocr
-from routers import case_documents, cases, documents, ocr_test
+from routers import admin, case_documents, cases, documents, ocr_test
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend")
@@ -33,6 +33,7 @@ app.include_router(cases.router)
 app.include_router(case_documents.router)
 app.include_router(documents.router)
 app.include_router(ocr_test.router)
+app.include_router(admin.router)
 
 
 @app.on_event("startup")

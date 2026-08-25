@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 import pdf_export
 import storage
+from admin_auth import require_admin
 from classify import summarize_case_profile
 from completeness import compute_checklist_summary, compute_financial_threshold_vnd
 from db import get_db
@@ -78,7 +79,7 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/deleted", response_model=list[CaseListItemDTO])
+@router.get("/deleted", response_model=list[CaseListItemDTO], dependencies=[Depends(require_admin)])
 def list_deleted_cases(db: Session = Depends(get_db)):
     """Danh sách hồ sơ đã xoá mềm — dành cho giao diện admin (khôi phục) sau này. Đặt route
     literal "/deleted" TRƯỚC route "/{case_id}" bên dưới, nếu không FastAPI sẽ hiểu nhầm
@@ -109,7 +110,7 @@ def list_deleted_cases(db: Session = Depends(get_db)):
     return result
 
 
-@router.post("/{case_id}/restore", response_model=CaseListItemDTO)
+@router.post("/{case_id}/restore", response_model=CaseListItemDTO, dependencies=[Depends(require_admin)])
 def restore_case(case_id: str, db: Session = Depends(get_db)):
     """Khôi phục hồ sơ đã xoá mềm — chưa có nút trên UI hiện tại, dành cho giao diện admin
     sau này (xem GET /cases/deleted). Toàn bộ document/file trên MinIO vẫn còn nguyên vì

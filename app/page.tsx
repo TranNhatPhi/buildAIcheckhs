@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { CaseList } from "@/components/CaseList";
 import { API_URL } from "@/lib/format";
 import type { CaseListItemDTO } from "@/lib/client-types";
@@ -16,16 +15,7 @@ export default async function CaseListPage() {
 
   return (
     <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-10">
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-semibold">Danh sách hồ sơ</h1>
-        <Link
-          href="/cases/new"
-          className="bg-indigo-600 text-white px-5 py-2.5 rounded-full text-sm font-semibold hover:bg-indigo-700 shadow-sm transition-colors"
-        >
-          + Tạo hồ sơ mới
-        </Link>
-      </div>
-
+      <h1 className="text-2xl font-semibold mb-8">Danh sách hồ sơ</h1>
       <CaseList initialCases={cases} />
     </main>
   );

@@ -55,9 +55,20 @@ export interface CaseListItemDTO {
   numberOfChildren: number;
   notes: string | null;
   createdAt: string;
+  // null ở danh sách hồ sơ đang hoạt động — chỉ có giá trị ở /admin/cases (bao gồm cả hồ sơ
+  // đã xoá mềm) hoặc /cases/deleted.
+  deletedAt: string | null;
   percent: number;
   needsReviewCount: number;
   financialThreshold: FinancialThresholdDTO;
+}
+
+export interface AdminStatsDTO {
+  totalCases: number;
+  activeCases: number;
+  deletedCases: number;
+  needsReviewDocuments: number;
+  errorDocuments: number;
 }
 
 export interface CaseAnalysisResponse {

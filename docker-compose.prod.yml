@@ -30,6 +30,7 @@ x-backend-common: &backend-common
     DEEPSEEK_MODEL: deepseek-v4-flash
     CONFIDENCE_THRESHOLD: "0.6"
     CORS_ORIGINS: https://${APP_DOMAIN}
+    ADMIN_PASSWORD: ${ADMIN_PASSWORD}
   depends_on:
     mysql:
       condition: service_healthy

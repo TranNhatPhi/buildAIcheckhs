@@ -132,3 +132,11 @@ class CaseDetailDTO(BaseModel):
 
 class CaseAnalysisResponse(BaseModel):
     summary: str
+
+
+class AdminStatsDTO(BaseModel):
+    totalCases: int
+    activeCases: int
+    deletedCases: int
+    needsReviewDocuments: int
+    errorDocuments: int
