@@ -81,3 +81,4 @@ if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"Deploy webhook listening on :{PORT}, REPO_DIR={REPO_DIR}", flush=True)
     server.serve_forever()
+# (đánh dấu test webhook — sẽ xoá comment này ở lần sửa sau)
