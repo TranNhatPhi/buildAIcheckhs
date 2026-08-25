@@ -114,6 +114,11 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    # Cho container gọi được webhook listener chạy trên VM host (deploy-webhook.py, systemd,
+    # không phải Docker) qua tên "host.docker.internal" — trên Linux cần khai rõ dòng này
+    # (khác Docker Desktop macOS/Windows đã tự có sẵn).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       APP_DOMAIN: ${APP_DOMAIN}
       API_DOMAIN: ${API_DOMAIN}

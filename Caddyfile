@@ -3,12 +3,21 @@
 }
 
 {$API_DOMAIN} {
-	reverse_proxy backend:8001 backend2:8001 {
-		lb_policy round_robin
-		# health check chủ động — bỏ qua replica đang unhealthy/đang khởi động thay vì
-		# vẫn gửi request round-robin vào nó và trả lỗi cho người dùng.
-		health_uri /health
-		health_interval 10s
+	# Webhook GitHub (push → tự deploy) — chạy trên VM host thật (systemd), không phải trong
+	# Docker, vì cần quyền git/docker CLI của host. Caddy (trong container) với tới host qua
+	# "host.docker.internal" (cần extra_hosts trong docker-compose.prod.yml mới hoạt động
+	# trên Linux). Xem deploy-webhook.py + deploy-webhook.service.
+	handle /_deploy-webhook {
+		reverse_proxy host.docker.internal:9090
+	}
+	handle {
+		reverse_proxy backend:8001 backend2:8001 {
+			lb_policy round_robin
+			# health check chủ động — bỏ qua replica đang unhealthy/đang khởi động thay vì
+			# vẫn gửi request round-robin vào nó và trả lỗi cho người dùng.
+			health_uri /health
+			health_interval 10s
+		}
 	}
 }
 
