@@ -71,7 +71,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    # Tương tự mysql — không expose port ra host, backend gọi qua tên service "minio".
+    # Tương tự mysql — không expose port ra host, backend gọi qua tên service "minio". Console
+    # web (cổng 9001, bật qua --console-address ở command trên) cũng không expose ra host —
+    # Caddy reverse_proxy thẳng vào "minio:9001" qua mạng nội bộ Docker (xem Caddyfile).
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    # Không expose port ra host — chỉ Caddy mới thấy được (basic_auth chặn trước, xem Caddyfile).
 
   backend:
     <<: *backend-common
@@ -98,6 +112,9 @@ services:
     environment:
       APP_DOMAIN: ${APP_DOMAIN}
       API_DOMAIN: ${API_DOMAIN}
+      DB_DOMAIN: ${DB_DOMAIN}
+      STORAGE_DOMAIN: ${STORAGE_DOMAIN}
+      ADMIN_TOOLS_PASSWORD_HASH: ${ADMIN_TOOLS_PASSWORD_HASH}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -106,6 +123,7 @@ services:
       - frontend
       - backend
       - backend2
+      - phpmyadmin
 
 volumes:
   mysql_data:

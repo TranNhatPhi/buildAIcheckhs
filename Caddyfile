@@ -11,3 +11,21 @@
 		health_interval 10s
 	}
 }
+
+# Công cụ quản trị nội bộ (phpMyAdmin, MinIO Console) — khoá bằng basic_auth trước khi tới
+# được ứng dụng thật phía sau, vì đây là công cụ nhạy cảm (thấy toàn bộ dữ liệu) không nên
+# để hở trên IP public không mật khẩu. Hash mật khẩu (bcrypt) đọc từ .env.prod, không commit
+# vào git — tạo hash bằng: docker run --rm caddy:2-alpine caddy hash-password --plaintext '...'
+{$DB_DOMAIN} {
+	basic_auth {
+		admin {$ADMIN_TOOLS_PASSWORD_HASH}
+	}
+	reverse_proxy phpmyadmin:80
+}
+
+{$STORAGE_DOMAIN} {
+	basic_auth {
+		admin {$ADMIN_TOOLS_PASSWORD_HASH}
+	}
+	reverse_proxy minio:9001
+}
