@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { API_URL } from "@/lib/format";
 
 export function ConfigBanner() {
+  const pathname = usePathname();
   const [status, setStatus] = useState<{ backendUp: boolean; hasDeepseekKey: boolean } | null>(
     null
   );
@@ -23,12 +25,16 @@ export function ConfigBanner() {
   // đang deploy bản mới), banner "không kết nối được" hiện lên rồi bị KẸT VĨNH VIỄN dù
   // backend đã chạy lại bình thường ngay sau đó, tới khi nhân viên tự F5 mới hết. Poll lại
   // định kỳ để banner luôn phản ánh đúng trạng thái hiện tại, tự ẩn khi backend hồi phục.
+  const isAdmin = pathname.startsWith("/admin");
+
   useEffect(() => {
+    if (isAdmin) return; // Trang /admin tách biệt hoàn toàn, không dùng banner này.
     checkStatus();
     const interval = setInterval(checkStatus, 5000);
     return () => clearInterval(interval);
-  }, [checkStatus]);
+  }, [checkStatus, isAdmin]);
 
+  if (isAdmin) return null;
   if (!status) return null;
   if (status.backendUp && status.hasDeepseekKey) return null;
 

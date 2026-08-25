@@ -8,7 +8,7 @@ from completeness import compute_checklist_summary, compute_financial_threshold_
 from db import get_db
 from mappers import financial_threshold_to_dto
 from models import Case, ChecklistItem, Document
-from schemas import AdminStatsDTO, CaseListItemDTO
+from schemas import AdminDocumentDTO, AdminStatsDTO, CaseListItemDTO, DocumentDTO
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -56,6 +56,21 @@ def get_stats(db: Session = Depends(get_db)):
         needsReviewDocuments=needs_review,
         errorDocuments=errors,
     )
+
+
+@router.get("/documents", response_model=list[AdminDocumentDTO])
+def list_all_documents(db: Session = Depends(get_db)):
+    # Tất cả tài liệu, mọi case (kể cả case đã xoá mềm) — sắp xếp mới nhất trước để nhân
+    # viên thấy ngay hoạt động upload gần đây nhất.
+    documents = db.scalars(select(Document).order_by(Document.uploadedAt.desc())).all()
+    return [
+        AdminDocumentDTO(
+            **DocumentDTO.model_validate(d).model_dump(),
+            caseClientName=d.case.clientName,
+            caseDeletedAt=d.case.deletedAt,
+        )
+        for d in documents
+    ]
 
 
 @router.delete("/cases/{case_id}/permanent")

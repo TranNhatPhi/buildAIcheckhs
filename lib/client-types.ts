@@ -71,6 +71,11 @@ export interface AdminStatsDTO {
   errorDocuments: number;
 }
 
+export interface AdminDocumentDTO extends DocumentDTO {
+  caseClientName: string;
+  caseDeletedAt: string | null;
+}
+
 export interface CaseAnalysisResponse {
   summary: string;
 }

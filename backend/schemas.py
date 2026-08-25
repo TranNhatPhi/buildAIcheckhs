@@ -140,3 +140,10 @@ class AdminStatsDTO(BaseModel):
     deletedCases: int
     needsReviewDocuments: int
     errorDocuments: int
+
+
+class AdminDocumentDTO(DocumentDTO):
+    # Ghép thêm thông tin case vào để tab "Tài liệu" trong /admin không cần gọi thêm request
+    # riêng để tra người nộp là ai — mỗi dòng tài liệu tự đủ thông tin hiển thị.
+    caseClientName: str
+    caseDeletedAt: datetime | None
