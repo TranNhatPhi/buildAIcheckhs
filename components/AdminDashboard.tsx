@@ -225,6 +225,13 @@ export function AdminDashboard() {
                 </div>
               )}
 
+              {(cases.length > 0 || documents.length > 0) && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                  <CaseCompletionChart cases={cases} />
+                  <DocumentStatusChart documents={documents} />
+                </div>
+              )}
+
               {cases.length === 0 ? (
                 <p className="text-neutral-500 text-sm">Chưa có hồ sơ nào.</p>
               ) : (
@@ -490,6 +497,90 @@ function DocumentsTable({ documents }: { documents: AdminDocumentDTO[] }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// So sánh độ lớn (% hoàn thành) giữa các hồ sơ — 1 hue duy nhất (EL.primary) đúng quy tắc
+// "compare magnitude → sequential", không tô màu theo từng case (đó là việc của identity/
+// categorical, không phải việc của biểu đồ này).
+function CaseCompletionChart({ cases }: { cases: CaseListItemDTO[] }) {
+  const rows = cases
+    .filter((c) => !c.deletedAt)
+    .slice()
+    .sort((a, b) => b.percent - a.percent)
+    .slice(0, 8);
+
+  return (
+    <div className="bg-white rounded shadow-sm p-4">
+      <p className="text-sm font-semibold text-neutral-700 mb-4">Tiến độ hồ sơ (% hoàn thành)</p>
+      {rows.length === 0 ? (
+        <p className="text-sm text-neutral-400">Chưa có hồ sơ đang hoạt động.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {rows.map((c) => (
+            <div key={c.id} className="flex items-center gap-3" title={`${c.clientName}: ${c.percent}%`}>
+              <span className="w-28 shrink-0 text-xs text-neutral-600 truncate">{c.clientName}</span>
+              <div className="flex-1 h-5 rounded-full bg-neutral-100 overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${c.percent}%`, backgroundColor: EL.primary }}
+                />
+              </div>
+              <span className="w-10 shrink-0 text-xs font-semibold text-neutral-600 text-right">
+                {c.percent}%
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Đếm tài liệu theo trạng thái — màu theo đúng bảng "status palette" đã dùng cho Tag ở nơi
+// khác trong khu vực admin (không phải màu categorical tự do), luôn có nhãn tên trạng thái
+// đi kèm nên không phụ thuộc màu sắc để phân biệt (bù cho việc vài cặp màu Element UI khá
+// gần nhau với người mù màu — đã kiểm tra bằng script validate_palette.js).
+function DocumentStatusChart({ documents }: { documents: AdminDocumentDTO[] }) {
+  const counts = new Map<AdminDocumentDTO["status"], number>();
+  for (const d of documents) {
+    counts.set(d.status, (counts.get(d.status) ?? 0) + 1);
+  }
+  const rows = Array.from(counts.entries())
+    .map(([status, count]) => ({ status, count }))
+    .sort((a, b) => b.count - a.count);
+  const max = Math.max(1, ...rows.map((r) => r.count));
+
+  return (
+    <div className="bg-white rounded shadow-sm p-4">
+      <p className="text-sm font-semibold text-neutral-700 mb-4">Tài liệu theo trạng thái</p>
+      {rows.length === 0 ? (
+        <p className="text-sm text-neutral-400">Chưa có tài liệu nào.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {rows.map((r) => (
+            <div
+              key={r.status}
+              className="flex items-center gap-3"
+              title={`${STATUS_LABEL[r.status]}: ${r.count}`}
+            >
+              <span className="w-28 shrink-0 text-xs text-neutral-600 truncate">
+                {STATUS_LABEL[r.status]}
+              </span>
+              <div className="flex-1 h-5 rounded-full bg-neutral-100 overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${(r.count / max) * 100}%`, backgroundColor: STATUS_COLOR[r.status] }}
+                />
+              </div>
+              <span className="w-10 shrink-0 text-xs font-semibold text-neutral-600 text-right">
+                {r.count}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
