@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Webhook nghe sự kiện "push" từ GitHub, tự động `git pull && ./deploy.sh` — chạy như systemd
-service TRỰC TIẾP TRÊN VM (không phải trong Docker), vì cần quyền truy cập thật vào git
-checkout + Docker CLI của host giống hệt lúc chạy tay. Chỉ bind localhost (127.0.0.1) — không
-lộ ra internet trực tiếp, Caddy (chạy trong Docker, xem Caddyfile + docker-compose.prod.yml
-"extra_hosts: host.docker.internal") reverse_proxy vào đây qua cổng nội bộ.
+Webhook nghe sự kiện "push" từ GitHub, tự động `git pull && ./deploy.sh` — chạy như 1
+container Docker (dịch vụ "deploy-webhook" trong docker-compose.prod.yml), KHÔNG phải
+systemd trên host (tài khoản VM không có quyền sudo để cài systemd service). Container này
+điều khiển Docker CỦA HOST qua socket mount ("Docker-outside-of-Docker") — không tự chạy
+Docker riêng bên trong.
 
 Bảo mật: xác thực chữ ký HMAC-SHA256 (X-Hub-Signature-256) bằng WEBHOOK_SECRET dùng chung với
 GitHub — chỉ GitHub (biết secret) mới kích hoạt được deploy thật, không phải bất kỳ ai gọi
@@ -19,7 +19,13 @@ import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+# Đường dẫn TUYỆT ĐỐI khớp đúng với đường dẫn thật trên HOST (không phải trong container) —
+# bắt buộc cho Docker-outside-of-Docker: lệnh "docker compose" gọi qua socket mount thực thi
+# bởi Docker daemon THẬT của host, daemon đó hiểu mọi bind-mount tương đối (vd "./Caddyfile")
+# theo hệ thống file CỦA HOST — nếu container này mount repo vào chỗ khác host (vd /repo),
+# đường dẫn sẽ lệch và daemon tìm không thấy file. Set qua biến môi trường REPO_DIR trong
+# docker-compose.prod.yml, không suy ra từ vị trí file này (khác thư mục sau khi build image).
+REPO_DIR = os.environ["REPO_DIR"]
 SECRET = os.environ["WEBHOOK_SECRET"].encode()
 LOG_FILE = os.path.join(REPO_DIR, "deploy-webhook.log")
 PORT = 9090
@@ -37,7 +43,7 @@ def run_deploy():
         f.write(f"\n=== Deploy triggered {datetime.now(timezone.utc).isoformat()} ===\n")
         f.flush()
         subprocess.run(["git", "pull"], cwd=REPO_DIR, stdout=f, stderr=subprocess.STDOUT)
-        subprocess.run(["./deploy.sh"], cwd=REPO_DIR, stdout=f, stderr=subprocess.STDOUT)
+        subprocess.run(["bash", "./deploy.sh"], cwd=REPO_DIR, stdout=f, stderr=subprocess.STDOUT)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -68,10 +74,10 @@ class Handler(BaseHTTPRequestHandler):
         self._respond(200, b"Deploy triggered")
 
     def log_message(self, format, *args):
-        pass  # tắt access log mặc định in ra stdout — systemd journal đã đủ ồn
+        pass  # tắt access log mặc định in ra stdout — docker logs sẽ đủ ồn nếu bật lại
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"Deploy webhook listening on 127.0.0.1:{PORT}")
+    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    print(f"Deploy webhook listening on :{PORT}, REPO_DIR={REPO_DIR}", flush=True)
     server.serve_forever()

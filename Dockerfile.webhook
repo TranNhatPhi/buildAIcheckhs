@@ -1,0 +1,9 @@
+# Image cho service "deploy-webhook" — dựa trên docker:cli (có sẵn CLI docker + plugin
+# compose) để container này gọi điều khiển Docker CỦA HOST qua socket mount, không tự chạy
+# Docker riêng bên trong (Docker-outside-of-Docker — xem deploy-webhook.py, docker-compose.
+# prod.yml). bash cần cho deploy.sh (#!/bin/bash), git cần cho bước "git pull".
+FROM docker:27-cli
+RUN apk add --no-cache python3 git bash
+WORKDIR /app
+COPY deploy-webhook.py .
+CMD ["python3", "deploy-webhook.py"]
