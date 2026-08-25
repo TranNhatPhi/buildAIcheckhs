@@ -23,6 +23,8 @@ COPY . .
 
 EXPOSE 8001
 
-# --workers khớp số vCPU của VM (e2-medium = 2 vCPU) — OCR (Tesseract) là CPU-bound nên
-# 1 process duy nhất không tận dụng hết multi-core; đổi VM lớn hơn thì tăng số này tương ứng.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2"]
+# --workers=1: cơ chế nhân song song là chạy nhiều REPLICA container (xem docker-compose.prod.yml
+# backend + backend2, cân bằng tải qua Caddy) chứ không phải nhiều worker trong 1 container —
+# 2 replica x 1 worker = 2 process tổng, khớp đúng 2 vCPU của e2-medium. Đừng tăng cả 2 chỗ
+# cùng lúc (vd 2 replica x 2 worker = 4 process) trừ khi VM cũng có đủ vCPU tương ứng.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]

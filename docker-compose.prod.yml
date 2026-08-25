@@ -5,6 +5,33 @@
 #
 # Chạy: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 # Xem hướng dẫn đầy đủ (tạo VM, DNS, HTTPS...) trong tài liệu deploy đi kèm.
+#
+# backend chạy 2 replica (backend, backend2) đứng sau Caddy load-balancing (xem Caddyfile) —
+# mỗi replica chỉ 1 uvicorn worker (backend/Dockerfile) để tổng số process (2) khớp đúng số
+# vCPU của e2-medium (2 vCPU). Nâng cấp VM lên nhiều vCPU hơn thì thêm backend3/backend4 vào
+# đây VÀ vào danh sách reverse_proxy trong Caddyfile — 2 chỗ phải sửa cùng lúc.
+
+x-backend-common: &backend-common
+  build: ./backend
+  restart: unless-stopped
+  environment:
+    DATABASE_URL: mysql://canada_checklist_app:${MYSQL_PASSWORD}@mysql:3306/canada_checklist
+    MINIO_ENDPOINT: http://minio:9000
+    MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+    MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    MINIO_BUCKET: canada-checklist-docs
+    DEEPSEEK_BASE_URL: https://api.deepseek.com
+    DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+    DEEPSEEK_MODEL: deepseek-v4-flash
+    CONFIDENCE_THRESHOLD: "0.6"
+    CORS_ORIGINS: https://${APP_DOMAIN}
+  depends_on:
+    mysql:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+  # Không expose port ra host — chỉ Caddy (reverse proxy) mới cần thấy backend, qua tên
+  # service trong mạng nội bộ Docker.
 
 services:
   mysql:
@@ -42,26 +69,10 @@ services:
     # Tương tự mysql — không expose port ra host, backend gọi qua tên service "minio".
 
   backend:
-    build: ./backend
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: mysql://canada_checklist_app:${MYSQL_PASSWORD}@mysql:3306/canada_checklist
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      MINIO_BUCKET: canada-checklist-docs
-      DEEPSEEK_BASE_URL: https://api.deepseek.com
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
-      DEEPSEEK_MODEL: deepseek-v4-flash
-      CONFIDENCE_THRESHOLD: "0.6"
-      CORS_ORIGINS: https://${APP_DOMAIN}
-    depends_on:
-      mysql:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    # Không expose port ra host — chỉ Caddy (reverse proxy) mới cần thấy backend, qua tên
-    # service "backend" trong mạng nội bộ Docker.
+    <<: *backend-common
+
+  backend2:
+    <<: *backend-common
 
   frontend:
     build:
@@ -89,6 +100,7 @@ services:
     depends_on:
       - frontend
       - backend
+      - backend2
 
 volumes:
   mysql_data:
