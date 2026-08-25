@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { adminFetch, AdminUnauthorizedError } from "@/lib/adminApi";
@@ -434,16 +434,87 @@ function CaseDocumentsBrowser({
 }
 
 function DocumentsTable({ documents }: { documents: AdminDocumentDTO[] }) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDownloading, setBulkDownloading] = useState(false);
+  const headerCheckboxRef = useRef<HTMLInputElement>(null);
+  const caseId = documents[0]?.caseId;
+
+  useEffect(() => {
+    if (headerCheckboxRef.current) {
+      headerCheckboxRef.current.indeterminate = selected.size > 0 && selected.size < documents.length;
+    }
+  }, [selected, documents.length]);
+
   if (documents.length === 0) {
     return <p className="text-neutral-500 text-sm">Khách hàng này chưa nộp file nào.</p>;
   }
 
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected((prev) => (prev.size === documents.length ? new Set() : new Set(documents.map((d) => d.id))));
+  }
+
+  async function downloadSelected() {
+    setBulkDownloading(true);
+    for (const d of documents) {
+      if (!selected.has(d.id)) continue;
+      try {
+        await downloadFile(`${API_URL}/documents/${d.id}/file`, d.originalFilename);
+      } catch {
+        alert(`Tải file "${d.originalFilename}" thất bại.`);
+      }
+    }
+    setBulkDownloading(false);
+  }
+
   return (
-    <div className="bg-white rounded shadow-sm overflow-hidden">
+    <div>
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-xs text-neutral-500">
+          {selected.size > 0 ? `Đã chọn ${selected.size}/${documents.length} file` : `${documents.length} file`}
+        </p>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={downloadSelected}
+            disabled={selected.size === 0 || bulkDownloading}
+            className="text-xs font-semibold px-3 py-1.5 rounded text-white disabled:opacity-40 transition-colors"
+            style={{ backgroundColor: EL.primary }}
+          >
+            {bulkDownloading ? "Đang tải..." : `Tải xuống đã chọn (${selected.size})`}
+          </button>
+          {caseId && (
+            <a
+              href={`${API_URL}/cases/${caseId}/download-all`}
+              className="text-xs font-semibold px-3 py-1.5 rounded bg-neutral-100 text-neutral-700 hover:bg-neutral-200 transition-colors"
+            >
+              Tải tất cả (ZIP)
+            </a>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white rounded shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-neutral-50 text-left text-xs font-semibold text-neutral-500 border-b border-neutral-200">
+              <th className="px-4 py-3 w-10">
+                <input
+                  ref={headerCheckboxRef}
+                  type="checkbox"
+                  checked={selected.size === documents.length}
+                  onChange={toggleAll}
+                  className="h-4 w-4 rounded border-neutral-300"
+                />
+              </th>
               <th className="px-4 py-3">Tên file</th>
               <th className="px-4 py-3">Loại giấy tờ</th>
               <th className="px-4 py-3">Trạng thái</th>
@@ -453,7 +524,15 @@ function DocumentsTable({ documents }: { documents: AdminDocumentDTO[] }) {
           </thead>
           <tbody className="divide-y divide-neutral-100">
             {documents.map((d) => (
-              <tr key={d.id} className="hover:bg-neutral-50 transition-colors">
+              <tr key={d.id} className={`hover:bg-neutral-50 transition-colors ${selected.has(d.id) ? "bg-blue-50/40" : ""}`}>
+                <td className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(d.id)}
+                    onChange={() => toggleOne(d.id)}
+                    className="h-4 w-4 rounded border-neutral-300"
+                  />
+                </td>
                 <td className="px-4 py-3">
                   <p className="font-medium text-neutral-800 truncate max-w-xs">{d.originalFilename}</p>
                   <p className="text-xs text-neutral-400 mt-0.5">
@@ -496,6 +575,7 @@ function DocumentsTable({ documents }: { documents: AdminDocumentDTO[] }) {
             ))}
           </tbody>
         </table>
+      </div>
       </div>
     </div>
   );
