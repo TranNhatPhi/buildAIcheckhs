@@ -3,6 +3,7 @@ import re
 import uuid
 
 import boto3
+from botocore.exceptions import ClientError
 
 _s3 = boto3.client(
     "s3",
@@ -13,6 +14,23 @@ _s3 = boto3.client(
 )
 
 BUCKET = os.environ["MINIO_BUCKET"]
+
+
+def _ensure_bucket_exists() -> None:
+    # Trên 1 MinIO instance hoàn toàn mới (vd VM production lần đầu deploy), bucket chưa tồn
+    # tại — put_object sẽ lỗi NoSuchBucket. Local dev không gặp vì bucket đã tạo từ trước và
+    # volume Docker giữ nguyên qua các lần restart. Tự tạo (idempotent, chỉ tạo nếu chưa có)
+    # để không cần thêm bước thủ công nào khi deploy lần đầu.
+    try:
+        _s3.head_bucket(Bucket=BUCKET)
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") in ("404", "NoSuchBucket"):
+            _s3.create_bucket(Bucket=BUCKET)
+        else:
+            raise
+
+
+_ensure_bucket_exists()
 
 
 def _sanitize_filename(name: str) -> str:
