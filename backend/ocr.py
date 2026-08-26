@@ -52,6 +52,13 @@ PDF_RENDER_DPI = 200
 # liệu trong hệ thống là giấy tờ tiếng Việt nên giữ "vie" làm mặc định.
 TESSERACT_LANG = os.getenv("TESSERACT_LANG", "vie")
 TESSERACT_PSM = os.getenv("TESSERACT_PSM", "4")
+# Trước đây KHÔNG đặt timeout cho Tesseract — nếu subprocess treo (ảnh lỗi/quá khổ, hiếm
+# nhưng đã xảy ra), thread xử lý đợi VÔ THỜI HẠN: document đứng vĩnh viễn ở OCR_RUNNING,
+# không tự thoát, không báo lỗi, không cách nào tự phục hồi ngoài can thiệp tay (xem sự cố
+# production — nhiều tài liệu kẹt OCR_RUNNING không rõ nguyên nhân). 90s cho 1 ảnh là rất
+# rộng rãi (OCR 1 trang bình thường chỉ vài giây) — đủ dư địa cho ảnh nặng/máy đang tải cao,
+# nhưng vẫn đảm bảo LUÔN thoát ra được thay vì treo mãi.
+TESSERACT_TIMEOUT_SECONDS = int(os.getenv("TESSERACT_TIMEOUT_SECONDS", "90"))
 MIN_WORD_CONFIDENCE = int(os.getenv("OCR_MIN_WORD_CONFIDENCE", "5"))
 # Đã thử ngưỡng 40 — QUÁ CAO: xác nhận bằng thực nghiệm, tiêu đề "CĂN CƯỚC CÔNG DÂN" trên
 # CCCD thật (chữ in đậm, màu đỏ, khác kiểu chữ phần còn lại) Tesseract đọc ĐÚNG nhưng
@@ -260,9 +267,25 @@ def _ocr_single_image_lines_best_of(img: Image.Image) -> list[OcrLine]:
 def _lines_from_preprocessed(processed: Image.Image) -> list[OcrLine]:
     load_models()
 
-    data = pytesseract.image_to_data(
-        processed, lang=TESSERACT_LANG, config=f"--psm {TESSERACT_PSM}", output_type=Output.DICT
-    )
+    try:
+        data = pytesseract.image_to_data(
+            processed,
+            lang=TESSERACT_LANG,
+            config=f"--psm {TESSERACT_PSM}",
+            output_type=Output.DICT,
+            timeout=TESSERACT_TIMEOUT_SECONDS,
+        )
+    except RuntimeError as e:
+        # pytesseract chỉ raise RuntimeError THUẦN (không phải TesseractError/
+        # TesseractNotFoundError) đúng lúc subprocess bị timeout — đã tự kill process con
+        # (xem pytesseract.pytesseract.timeout_manager), không để lại tiến trình treo trên
+        # máy. Đổi thành ValueError để đi đúng đường lỗi đã có sẵn (extract_text → status=
+        # ERROR, xem case_documents.py/documents.py), thay vì văng lỗi 500 không rõ nguyên
+        # nhân và để document đứng mãi ở OCR_RUNNING.
+        raise ValueError(
+            f"Tesseract xử lý quá {TESSERACT_TIMEOUT_SECONDS}s không xong (có thể do ảnh lỗi "
+            "hoặc quá khổ) — đã huỷ, cần thử lại hoặc kiểm tra lại file gốc."
+        ) from e
 
     # Gộp các từ (word) cùng (block, paragraph, line) thành 1 dòng, bỏ từ có độ tin cậy
     # quá thấp (thường là nhiễu đọc nhầm từ watermark/hoa văn nền, không phải chữ thật).
@@ -497,7 +520,8 @@ def extract_text(
     lần) nên chỉ bật cho "Phân tích lại" (nhân viên chủ động chờ để có kết quả tốt hơn),
     không bật cho lần OCR đầu lúc upload.
 
-    Raise ValueError nếu không đọc được file."""
+    Raise ValueError nếu không đọc được file, hoặc nếu Tesseract xử lý quá
+    TESSERACT_TIMEOUT_SECONDS mà không xong (xem _lines_from_preprocessed)."""
     is_pdf = mime_type == "application/pdf" or filename.lower().endswith(".pdf")
 
     try:
