@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +13,20 @@ from models import ChecklistItem, Document
 from schemas import DocumentDTO, PatchDocumentRequest, UpdateManualCorrectedTextRequest
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def _content_disposition(filename: str) -> str:
+    """Tên file khách hàng đặt luôn có dấu tiếng Việt (vd "Trần Văn Hùng...") — HTTP header
+    bắt buộc ASCII/Latin-1, gửi thẳng UTF-8 làm Starlette CRASH ngay lúc dựng Response
+    (UnicodeEncodeError, xảy ra khi tạo Response nên KHÔNG lọt qua try/except bọc quanh
+    storage.get_document_bytes bên dưới) — xác nhận đây đúng là nguyên nhân lỗi 500 thật gặp
+    trên production (test trực tiếp bằng đúng tên file lỗi, ra đúng UnicodeEncodeError).
+    Dùng chuẩn RFC 5987 (filename*=UTF-8''...): trình duyệt hiện đại ưu tiên đọc filename*
+    (UTF-8, percent-encoded), fallback filename= thuần ASCII (thay ký tự ngoài ASCII bằng
+    "_") cho các client cũ không hiểu filename*."""
+    ascii_fallback = filename.encode("ascii", errors="replace").decode("ascii").replace("?", "_")
+    encoded = quote(filename, safe="")
+    return f'inline; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
 
 
 @router.patch("/{document_id}", response_model=DocumentDTO)
@@ -69,7 +85,7 @@ def get_document_file(document_id: str, db: Session = Depends(get_db)):
     return Response(
         content=content,
         media_type=doc.mimeType,
-        headers={"Content-Disposition": f'inline; filename="{doc.originalFilename}"'},
+        headers={"Content-Disposition": _content_disposition(doc.originalFilename)},
     )
 
 
