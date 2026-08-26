@@ -76,6 +76,23 @@ fi
 echo "==> git pull..."
 git pull
 
+# deploy-webhook (docker-compose.prod.yml) chạy git pull TRỰC TIẾP lên thư mục repo bind-mount
+# chung với host — ép nó chạy đúng UID:GID của tài khoản host đang gọi script này (thay vì mặc
+# định root) để không tạo ra object git thuộc sở hữu root, khiến lần chạy tay tiếp theo (không
+# có sudo) không xoá/ghi đè được. Tính tự động mỗi lần chạy — không hard-code — để đúng bất kể
+# tài khoản/VM nào chạy script.
+#
+# CỐ Ý dùng `stat` (đọc chủ sở hữu file) thay vì `id -u`/`id -g` (đọc UID của TIẾN TRÌNH đang
+# chạy) — script này có thể tự chạy TỪ BÊN TRONG chính container deploy-webhook (khi trigger
+# qua GitHub webhook, xem run_deploy() trong deploy-webhook.py), lúc đó tiến trình vẫn là
+# UID/GID CŨ của container (có thể vẫn là root nếu đây là lần đầu áp dụng fix này) — `id -u`
+# lúc đó sẽ trả về UID SAI (của container, không phải của host). Chủ sở hữu file thư mục repo
+# (bind-mount CHUNG với host) thì luôn phản ánh đúng UID/GID thật trên host dù đọc từ đâu.
+export DEPLOY_UID DEPLOY_GID DOCKER_SOCK_GID
+DEPLOY_UID=$(stat -c '%u' .)
+DEPLOY_GID=$(stat -c '%g' .)
+DOCKER_SOCK_GID=$(stat -c '%g' /var/run/docker.sock)
+
 echo "==> Build & restart container..."
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 

@@ -115,10 +115,25 @@ services:
       context: .
       dockerfile: Dockerfile.webhook
     restart: unless-stopped
+    # QUAN TRỌNG: container này chạy `git pull` trực tiếp lên thư mục repo bind-mount CHUNG
+    # với host (xem comment "volumes" bên dưới) — nếu chạy mặc định (root, UID 0), git tạo
+    # ra object mới trong .git/objects thuộc sở hữu root. Lần sau tài khoản host (không có
+    # sudo) tự chạy ./deploy.sh thủ công sẽ gặp "insufficient permission for adding an
+    # object" vì không ghi đè được lên các file root đã tạo. Ép container chạy đúng UID:GID
+    # của tài khoản host (deploy.sh tự tính bằng `id -u`/`id -g`, KHÔNG hard-code) để mọi
+    # object git tạo ra — dù từ webhook hay từ tay — luôn cùng 1 chủ sở hữu.
+    user: "${DEPLOY_UID}:${DEPLOY_GID}"
+    # group_add (không phải đổi group chính) để vẫn ghi/đọc được /var/run/docker.sock (thuộc
+    # group "docker" của host) mà không làm lệch chủ sở hữu (group) của file git vừa tạo ra.
+    group_add:
+      - "${DOCKER_SOCK_GID}"
     environment:
       WEBHOOK_SECRET: ${WEBHOOK_SECRET}
       # PHẢI khớp đúng đường dẫn thật trên host — xem giải thích chi tiết trong deploy-webhook.py.
       REPO_DIR: /home/nhatphivt2005/buildAIcheckhs
+      # UID tuỳ ý (không có entry trong /etc/passwd của image) không tự suy ra được $HOME —
+      # khai rõ để `git config --global` (deploy-webhook.py) có chỗ ghi ~/.gitconfig.
+      HOME: /tmp
     volumes:
       # Mount TRÙNG đường dẫn tuyệt đối với host (không phải "./:/repo" hay tương tự) — bắt
       # buộc cho Docker-outside-of-Docker, xem giải thích trong deploy-webhook.py.
