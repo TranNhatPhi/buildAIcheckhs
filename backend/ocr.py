@@ -42,7 +42,15 @@ import storage
 
 logger = logging.getLogger("ocr")
 
-PDF_RENDER_DPI = 200
+PDF_RENDER_DPI = 300
+# Từng để 200 — THẤP HƠN chuẩn khuyến nghị ngành cho OCR (300). Xác nhận bằng thực nghiệm
+# trên 1 trang khó thật (Giấy khai sinh có watermark bản đồ dày đặc chồng lên chữ): cùng 1
+# trang, cùng tiền xử lý, chỉ đổi DPI — 200 DPI đọc được 293 ký tự, 300 DPI đọc được 556 ký
+# tự (gần gấp đôi), 400 DPI đọc được 952 ký tự. Chọn 300 (không phải 400) làm điểm cân bằng:
+# đã đạt chuẩn khuyến nghị, cải thiện rõ rệt, mà ảnh chỉ to hơn ~2.25 lần (thay vì ~4 lần ở
+# 400 DPI) — đỡ tốn CPU/thời gian xử lý hơn, quan trọng vì VM còn phải chia tải cho nhiều
+# việc khác (MySQL, MinIO, nhiều request OCR chạy song song).
+#
 # ĐÃ THỬ "vie+eng" (dùng đồng thời 2 gói ngôn ngữ) để đọc tốt hơn nhãn song ngữ Việt/Anh
 # trên CCCD ("Họ và tên / Full name") và CV thuần tiếng Anh — THẤT BẠI: xác nhận bằng A/B
 # test có kiểm soát (cùng 1 ảnh, cùng tiền xử lý, chỉ đổi lang) là "vie+eng" làm MẤT DẤU
@@ -175,11 +183,27 @@ def _preprocess_variants(pil_img: Image.Image) -> dict[str, Image.Image]:
     đoán trước 1 cách cố định như _preprocess() ở trên (dùng cho lần OCR đầu, ưu tiên
     nhanh).
 
-    CHỈ giữ 2 biến thể (trước đây 4) — đo thực nghiệm trên 52 trang tài liệu thật (mọi PDF
-    đang có trong DB): "default" thắng 25/52, "binary" thắng 23/52 (tổng 92%), "no_denoise"
-    chỉ 4/52, "strong_contrast" thắng ĐÚNG 0/52 lần — bỏ 2 biến thể gần như vô dụng đó để
-    giảm ~1 nửa thời gian OCR "Phân tích lại" mà không mất tín hiệu thật (không biến thể nào
-    trong 52 trang cần tới "strong_contrast" mới đọc ra được chữ)."""
+    Từng CHỈ giữ 2 biến thể (trước đây 4) — đo thực nghiệm trên 52 trang tài liệu thật (mọi
+    PDF đang có trong DB): "default" thắng 25/52, "binary" thắng 23/52 (tổng 92%),
+    "no_denoise" chỉ 4/52, "strong_contrast" thắng ĐÚNG 0/52 lần — bỏ 2 biến thể gần như vô
+    dụng đó để giảm ~1 nửa thời gian OCR "Phân tích lại" mà không mất tín hiệu thật.
+
+    ĐÃ THÊM LẠI biến thể thứ 3 "plain" (gray thô sau deskew, KHÔNG denoise, KHÔNG CLAHE) —
+    đo lại trên 218 trang / 86 tài liệu thật: "plain" thắng 88/218 trang (40%, nhiều nhất
+    trong 3), tổng ký tự đọc được +4.5%, và quan trọng nhất là CỨU 4 trang mà cả 2 biến thể
+    cũ đều ra ĐÚNG 0 ký tự — trong đó có 1 CCCD ("2. Phan Huy Di Dan - ID Card.pdf") mà hệ
+    thống trước đây đọc ra HOÀN TOÀN RỖNG cả 2 trang, giờ đọc đúng cả họ tên lẫn số định
+    danh. Đã kiểm tra tận nội dung (không chỉ đếm ký tự) để chắc chắn phần tăng thêm là chữ
+    thật chứ không phải nhiễu thắng oan tiêu chí "nhiều ký tự nhất".
+
+    Lưu ý "plain" KHÁC "no_denoise" đã bị loại trước đây: "no_denoise" vẫn có CLAHE, còn
+    "plain" bỏ luôn CLAHE. Đó chính là điểm mấu chốt — CLAHE (tăng tương phản cục bộ) khuếch
+    đại watermark nhạt màu (hoa văn/bản đồ chìm trên giấy khai sinh, CCCD) lên ngang mức chữ
+    thật, khiến Tesseract dò ra vùng chữ nhưng không đọc nổi ký tự nào (xác nhận: 81 vùng dò
+    được, 0 ký tự đọc được). Giữ CLAHE cho ảnh scan mờ/thiếu sáng (vẫn thắng 67/218), thêm
+    "plain" cho ảnh có watermark — best-of tự chọn đúng cách cho từng ảnh, không phải đánh
+    đổi nhóm này lấy nhóm kia. Cái giá: chậm hơn ~50% cho mỗi lần OCR kỹ (3 lần chạy
+    Tesseract thay vì 2)."""
     if not PREPROCESS_ENABLED:
         base = pil_img.convert("RGB")
         return {"raw": base}
@@ -198,6 +222,11 @@ def _preprocess_variants(pil_img: Image.Image) -> dict[str, Image.Image]:
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 15
     )
     variants["binary"] = _to_rgb_image(binary)
+
+    # plain: gray thô sau deskew, không đụng gì thêm — dành cho ảnh có watermark/hoa văn nền
+    # nhạt màu, nơi chính việc "tăng cường" ảnh ở 2 biến thể trên lại làm nền nổi lên ngang
+    # chữ thật (xem đo đạc chi tiết ở docstring).
+    variants["plain"] = _to_rgb_image(gray)
 
     return variants
 
