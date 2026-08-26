@@ -55,6 +55,8 @@ export function CaseList({ initialCases }: Props) {
                     <p className="text-sm text-neutral-500 mt-0.5">
                       {c.maritalStatus === "MARRIED" ? "Đã kết hôn" : "Độc thân"}
                       {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
+                      {" · "}
+                      {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
                     </p>
                     {isComplete && (
                       <p className="text-sm text-green-700 font-medium mt-1">

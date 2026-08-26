@@ -60,6 +60,8 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
             <p className="text-sm text-neutral-500 mt-0.5">
               {c.maritalStatus === "MARRIED" ? "Đã kết hôn" : "Độc thân"}
               {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
+              {" · "}
+              {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
               {" · Tạo ngày "}
               {new Date(c.createdAt).toLocaleDateString("vi-VN")}
             </p>

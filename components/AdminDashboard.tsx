@@ -268,6 +268,8 @@ export function AdminDashboard() {
                                 <p className="text-xs text-neutral-400 mt-0.5">
                                   {c.maritalStatus === "MARRIED" ? "Đã kết hôn" : "Độc thân"}
                                   {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
+                                  {" · "}
+                                  {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
                                 </p>
                               </td>
                               <td className="px-4 py-3">
@@ -394,6 +396,8 @@ function CaseDocumentsBrowser({
                   <p className="text-xs text-neutral-400 mt-0.5">
                     {c.maritalStatus === "MARRIED" ? "Đã kết hôn" : "Độc thân"}
                     {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
+                    {" · "}
+                    {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
                   </p>
                 </td>
                 <td className="px-4 py-3">

@@ -88,6 +88,8 @@ export function CaseDetail({ caseId, initialData }: Props) {
         <p className="text-sm text-neutral-500 mt-1.5">
           {c.maritalStatus === "MARRIED" ? "Đã kết hôn" : "Độc thân"}
           {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
+          {" · "}
+          {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
           {" · Hoàn thành "}
           <span className={`font-bold ${isComplete ? "text-green-700" : "text-indigo-600"}`}>
             {checklist.percent}%
