@@ -43,6 +43,7 @@ export default async function CaseSummaryPage({
         initialAnalysisStatus={c.aiAnalysisStatus}
         initialAnalysisSummary={c.aiAnalysisSummary}
         initialAnalysisError={c.aiAnalysisError}
+        initialAnalysisUpdatedAt={c.aiAnalysisUpdatedAt}
       />
     </main>
   );

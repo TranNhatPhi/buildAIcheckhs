@@ -224,6 +224,14 @@ def analyze_case(case_id: str, db: Session = Depends(get_db)):
 
     case.aiAnalysisStatus = "RUNNING"
     case.aiAnalysisError = None
+    # Ghi mốc thời gian NGAY LÚC BẮT ĐẦU (không chỉ lúc xong) — frontend cần biết lượt phân
+    # tích này đã chạy được bao lâu để hiện thanh tiến trình + ước tính thời gian còn lại.
+    # Dùng lại đúng cột aiAnalysisUpdatedAt thay vì thêm cột "startedAt" mới: ý nghĩa vẫn
+    # đúng ("lần cập nhật trạng thái gần nhất"), và tránh phải sửa cấu trúc bảng + chạy
+    # migration trên production (schema đang quản lý thủ công — xem models.py). Khi status là
+    # RUNNING thì giá trị này chính là thời điểm bắt đầu; khi DONE/ERROR là thời điểm kết
+    # thúc. Nhờ lưu trong DB (không phải state React), F5 hay mở từ máy khác vẫn tính đúng.
+    case.aiAnalysisUpdatedAt = now_utc()
     db.commit()
 
     result, error = summarize_case_profile(case_context, documents_text)

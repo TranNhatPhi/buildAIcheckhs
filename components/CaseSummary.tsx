@@ -1,8 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedDocumentText } from "@/components/FormattedDocumentText";
-import { API_URL } from "@/lib/format";
+import {
+  API_URL,
+  estimateAnalysisSeconds,
+  formatElapsed,
+  formatRemaining,
+  parseUtcDate,
+} from "@/lib/format";
 import type {
   CaseAnalysisResponse,
   CaseDetailDTO,
@@ -16,6 +22,10 @@ interface Props {
   initialAnalysisStatus: string;
   initialAnalysisSummary: string | null;
   initialAnalysisError: string | null;
+  // Khi status là RUNNING, đây là thời điểm BẮT ĐẦU lượt phân tích (backend ghi ngay lúc
+  // chuyển sang RUNNING — xem analyze_case trong cases.py) — dùng để tính đã chạy bao lâu.
+  // Lấy từ DB chứ không phải state React nên F5 hay mở từ máy khác vẫn tính đúng.
+  initialAnalysisUpdatedAt: string | null;
 }
 
 function groupBy(items: ChecklistItemStatusDTO[]) {
@@ -34,12 +44,30 @@ export function CaseSummary({
   initialAnalysisStatus,
   initialAnalysisSummary,
   initialAnalysisError,
+  initialAnalysisUpdatedAt,
 }: Props) {
   const [previewDoc, setPreviewDoc] = useState<DocumentDTO | null>(null);
   const [status, setStatus] = useState(initialAnalysisStatus);
   const [analysis, setAnalysis] = useState(initialAnalysisSummary);
   const [analysisError, setAnalysisError] = useState(initialAnalysisError);
+  const [startedAt, setStartedAt] = useState(initialAnalysisUpdatedAt);
   const analyzing = status === "RUNNING";
+
+  // Đồng hồ đếm 1s/lần để cập nhật "đã chạy bao lâu / còn khoảng bao lâu". Khởi tạo bằng 0 và
+  // gác mọi phần phụ thuộc thời gian sau cờ `mounted` — KHÔNG dùng Date.now() làm giá trị khởi
+  // tạo: server và client sẽ ra 2 mốc thời gian khác nhau, gây lỗi hydration mismatch (đã gặp
+  // và sửa đúng lỗi này ở CaseDetail.tsx).
+  const [nowTick, setNowTick] = useState(0);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+    setNowTick(Date.now());
+  }, []);
+  useEffect(() => {
+    if (!analyzing) return;
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [analyzing]);
 
   // Không có cách nào huỷ NGANG lệnh gọi DeepSeek đang chạy trong thread ở backend (blocking
   // I/O, không phải task async có thể cancel) — bấm "Huỷ" chỉ báo backend đừng ghi kết quả
@@ -56,6 +84,7 @@ export function CaseSummary({
     setStatus(data.case.aiAnalysisStatus);
     setAnalysis(data.case.aiAnalysisSummary);
     setAnalysisError(data.case.aiAnalysisError);
+    setStartedAt(data.case.aiAnalysisUpdatedAt);
   }, [caseId]);
 
   // Bước phân tích chạy 1-4+ phút và được backend lưu vào DB ngay khi xong (kể cả khi
@@ -73,6 +102,10 @@ export function CaseSummary({
     cancelledRef.current = false;
     setStatus("RUNNING");
     setAnalysisError(null);
+    // Đặt mốc bắt đầu ngay tại client để thanh tiến trình chạy tức thì, không phải đợi tới
+    // lượt polling đầu tiên (4s sau) mới có mốc từ backend. Backend cũng ghi mốc của riêng nó
+    // vào DB và lượt refetch kế tiếp sẽ ghi đè giá trị này — chênh lệch chỉ là độ trễ mạng.
+    setStartedAt(new Date().toISOString());
     try {
       const res = await fetch(`${API_URL}/cases/${caseId}/analyze`, { method: "POST" });
       if (cancelledRef.current) return;
@@ -110,6 +143,20 @@ export function CaseSummary({
   // Chỉ hiện mục ĐÃ có ít nhất 1 file khớp — đây là trang tổng hợp thông tin khách ĐÃ GỬI,
   // khác với trang checklist chính (hiện cả mục còn thiếu).
   const itemsWithDocs = items.filter((s) => s.matchedDocuments.length > 0);
+
+  // Đúng bằng số tài liệu backend thật sự đưa vào phân tích (analyze_case gom text của MỌI
+  // document khớp mục, không phải số mục checklist) — dùng làm đầu vào cho ước tính thời gian.
+  const analysedDocCount = useMemo(
+    () => items.reduce((total, s) => total + s.matchedDocuments.length, 0),
+    [items]
+  );
+  const estimatedSeconds = estimateAnalysisSeconds(analysedDocCount);
+  const elapsedSeconds =
+    mounted && startedAt ? Math.max(0, Math.floor((nowTick - parseUtcDate(startedAt).getTime()) / 1000)) : 0;
+  const remainingSeconds = Math.max(0, estimatedSeconds - elapsedSeconds);
+  // Chặn trần 95%: chỉ có backend mới biết chắc lúc nào xong, nên không bao giờ hiện 100% khi
+  // thực tế còn đang chạy — tránh cảm giác "thanh đầy rồi mà vẫn quay" trông như bị treo.
+  const analysisPercent = Math.min(95, Math.round((elapsedSeconds / Math.max(1, estimatedSeconds)) * 100));
 
   if (itemsWithDocs.length === 0) {
     return (
@@ -155,11 +202,38 @@ export function CaseSummary({
           </a>
         </div>
         {analyzing && (
-          <p className="text-xs text-neutral-400 mt-2">
-            AI đang đọc toàn bộ thông tin đã trích xuất để phân tích chi tiết và đối chiếu chéo
-            giữa các giấy tờ — có thể mất vài phút, cứ để trang mở hoặc tải lại (F5) bất cứ lúc
-            nào cũng không mất tiến trình, vui lòng chờ...
-          </p>
+          <div className="mt-3 border-2 border-indigo-200 rounded-2xl px-4 py-3 bg-indigo-50">
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-indigo-800 flex-1">
+                Đang đối chiếu chéo <strong>{analysedDocCount} tài liệu</strong>
+                {mounted && startedAt && (
+                  <>
+                    {" "}
+                    — đã chạy <strong>{formatElapsed(elapsedSeconds)}</strong>
+                    {", "}
+                    {formatRemaining(remainingSeconds)}
+                  </>
+                )}
+              </p>
+              {mounted && startedAt && (
+                <span className="text-sm font-bold text-indigo-600 shrink-0">{analysisPercent}%</span>
+              )}
+            </div>
+            {mounted && startedAt && (
+              <div className="mt-2 h-2 w-full rounded-full bg-indigo-100 overflow-hidden">
+                <div
+                  className="h-full bg-indigo-500 rounded-full transition-[width] duration-1000 ease-linear"
+                  style={{ width: `${analysisPercent}%` }}
+                />
+              </div>
+            )}
+            <p className="text-xs text-indigo-500/80 mt-2">
+              AI đọc toàn bộ nội dung đã trích xuất, đối chiếu thông tin giữa các giấy tờ (họ tên,
+              ngày sinh, địa chỉ, số giấy tờ...) rồi viết báo cáo. Thời gian tăng nhanh theo số
+              tài liệu vì số cặp phải đối chiếu tăng theo cấp số nhân. Đây là ước tính — cứ để
+              trang mở hoặc tải lại (F5) bất cứ lúc nào cũng không mất tiến trình.
+            </p>
+          </div>
         )}
         {status === "ERROR" && analysisError && (
           <p className="text-sm text-red-600 mt-2">{analysisError}</p>
