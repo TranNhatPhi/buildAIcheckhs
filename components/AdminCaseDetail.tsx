@@ -115,7 +115,14 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-100">
-                    {c.documents.map((d) => (
+                    {[...c.documents]
+                      .sort((a, b) =>
+                        a.originalFilename.localeCompare(b.originalFilename, "vi", {
+                          numeric: true,
+                          sensitivity: "base",
+                        }),
+                      )
+                      .map((d) => (
                       <tr key={d.id} className="hover:bg-neutral-50 transition-colors">
                         <td className="px-4 py-3">
                           <p className="font-medium text-neutral-800 truncate max-w-xs">{d.originalFilename}</p>

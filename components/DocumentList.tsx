@@ -119,10 +119,17 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
     return <p className="text-sm text-neutral-400">Chưa có file nào được upload.</p>;
   }
 
+  // Sắp xếp theo tên file A→Z (không phải theo thứ tự upload như trước) — dễ dò tìm hơn khi
+  // khách đặt tên file có đánh số sẵn (vd "1. ... Passport.pdf", "2. ... ID Card.pdf").
+  // `numeric: true` để "2." đứng trước "10." đúng thứ tự số thay vì so sánh từng ký tự.
+  const sortedDocuments = [...documents].sort((a, b) =>
+    a.originalFilename.localeCompare(b.originalFilename, "vi", { numeric: true, sensitivity: "base" })
+  );
+
   return (
     <>
       <ul className="flex flex-col gap-3">
-      {documents.map((doc) => {
+      {sortedDocuments.map((doc) => {
         const isExpanded = expandedId === doc.id;
         // Còn đang chạy OCR/AI — khoá dropdown khớp mục lại: nếu cho chọn tay lúc này,
         // request OCR/AI đang chạy dở có thể hoàn tất ngay sau đó và ghi đè mất lựa chọn
