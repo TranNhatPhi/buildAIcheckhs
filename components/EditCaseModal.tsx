@@ -117,7 +117,7 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
                 checked={skillLevel === "LOW_SKILL"}
                 onChange={() => setSkillLevel("LOW_SKILL")}
               />
-              Low Skill
+              Low Skilled
             </label>
             <label
               className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
@@ -132,7 +132,7 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
                 checked={skillLevel === "HIGH_SKILL"}
                 onChange={() => setSkillLevel("HIGH_SKILL")}
               />
-              High Skill
+              High Skilled
             </label>
           </div>
         </div>
