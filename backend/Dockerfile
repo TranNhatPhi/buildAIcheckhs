@@ -23,8 +23,9 @@ COPY . .
 
 EXPOSE 8001
 
-# --workers=1: cơ chế nhân song song là chạy nhiều REPLICA container (xem docker-compose.prod.yml
-# backend + backend2, cân bằng tải qua Caddy) chứ không phải nhiều worker trong 1 container —
-# 2 replica x 1 worker = 2 process tổng, khớp đúng 2 vCPU của e2-medium. Đừng tăng cả 2 chỗ
-# cùng lúc (vd 2 replica x 2 worker = 4 process) trừ khi VM cũng có đủ vCPU tương ứng.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
+# --workers=2: nhân song song bằng CẢ 2 cách — nhiều REPLICA container (xem docker-compose.prod.yml
+# backend + backend2, cân bằng tải qua Caddy) VÀ nhiều worker trong mỗi container — 2 replica x 2
+# worker = 4 process tổng. Từng là --workers=1 (2 process) lúc VM chỉ có 2 vCPU (e2-medium); đã
+# nâng VM lên e2-standard-8 (8 vCPU) nên tăng theo, còn dư CPU cho mysql/minio/caddy. Đừng tăng
+# quá số process vượt hẳn số vCPU thật của VM — kiểm tra lại nếu resize VM lần nữa.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2"]
