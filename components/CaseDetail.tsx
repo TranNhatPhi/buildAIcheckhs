@@ -5,8 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { ChecklistSection } from "@/components/ChecklistSection";
 import { DocumentList } from "@/components/DocumentList";
 import { GeneralNotesBanner } from "@/components/GeneralNotesBanner";
-import { UploadDropzone } from "@/components/UploadDropzone";
-import { API_URL } from "@/lib/format";
+import { STAGE_LABEL, UploadDropzone } from "@/components/UploadDropzone";
+import { API_URL, estimateProcessingSeconds, formatRemaining, parseUtcDate } from "@/lib/format";
 import type { CaseDetailDTO } from "@/lib/client-types";
 
 interface Props {
@@ -35,6 +35,44 @@ export function CaseDetail({ caseId, initialData }: Props) {
   const hasProcessingDocs = data
     ? data.case.documents.some((d) => ["PENDING", "OCR_RUNNING", "CLASSIFYING"].includes(d.status))
     : false;
+  // Đồng hồ đếm ngược riêng (1s/lần, KHÔNG gọi lại server — chỉ để tính lại "còn khoảng bao
+  // lâu" mỗi giây cho mượt) — tách khỏi interval refetch 4s ở dưới vì mục đích khác nhau: cái
+  // dưới lấy DỮ LIỆU THẬT, cái này chỉ ép re-render để cập nhật số giây hiển thị.
+  //
+  // QUAN TRỌNG: khởi tạo bằng Date.now() ngay trong useState (vd `useState(() => Date.now())`)
+  // gây lỗi hydration mismatch — server render 1 lúc gọi Date.now(), client hydrate lúc SAU đó
+  // vài trăm ms gọi Date.now() LẦN NỮA ra số khác, khiến text hiển thị (vd "còn khoảng 59s" vs
+  // "1 phút") khác nhau giữa server/client, React coi là lỗi. Khởi tạo bằng giá trị CỐ ĐỊNH
+  // (0) — giống nhau tuyệt đối ở cả server lẫn lần render đầu của client — rồi dùng `mounted`
+  // để CHỈ hiển thị phần đếm giờ SAU khi đã qua khỏi lần hydrate đầu tiên (trong useEffect,
+  // không chạy trên server và không tính vào lần so khớp hydrate).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const [nowTick, setNowTick] = useState(0);
+  useEffect(() => {
+    if (!hasProcessingDocs) return;
+    setNowTick(Date.now());
+    const interval = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [hasProcessingDocs]);
+  // Tiến độ hiển thị = tỉ lệ file ĐÃ xong / tổng số file trong hồ sơ (không chỉ riêng đợt
+  // đang chạy, vì trang này không biết ranh giới "đợt upload" — khác UploadDropzone.tsx tự
+  // theo dõi được đúng đợt vì đang là nơi khởi tạo). Vẫn đủ dùng: thanh sẽ đầy dần lên khi
+  // các file đang xử lý lần lượt xong.
+  const totalTrackedDocs = data?.case.documents.length ?? 0;
+  const processingDocs = data
+    ? data.case.documents.filter((d) => ["PENDING", "OCR_RUNNING", "CLASSIFYING"].includes(d.status))
+    : [];
+  const processedCount = totalTrackedDocs - processingDocs.length;
+  const processedPercent = totalTrackedDocs > 0 ? Math.round((processedCount / totalTrackedDocs) * 100) : 0;
+  // Ước tính tổng thời gian còn lại cho CẢ ĐỢT = thời gian của file LÂU NHẤT (không phải
+  // cộng dồn) — vì các file này đều đang chạy SONG SONG thật sự (mỗi file đã có dòng Document
+  // riêng, backend xử lý qua threadpool), cả đợt chỉ xong khi file chậm nhất xong.
+  const totalRemainingEstimate = processingDocs.reduce((max, d) => {
+    const elapsedSeconds = Math.floor((nowTick - parseUtcDate(d.uploadedAt).getTime()) / 1000);
+    const remaining = Math.max(0, estimateProcessingSeconds(d.pageCount) - elapsedSeconds);
+    return Math.max(max, remaining);
+  }, 0);
 
   useEffect(() => {
     if (!hasProcessingDocs) return;
@@ -73,11 +111,52 @@ export function CaseDetail({ caseId, initialData }: Props) {
       </div>
 
       {hasProcessingDocs && (
-        <div className="flex items-center gap-3 bg-amber-50 border-2 border-amber-200 rounded-xl px-4 py-3">
-          <span className="h-4 w-4 shrink-0 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
-          <p className="text-sm text-amber-800">
-            Đang có file chạy OCR + AI — trang sẽ tự cập nhật khi xong, không cần F5.
-          </p>
+        <div className="bg-amber-50 border-2 border-amber-200 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span className="h-4 w-4 shrink-0 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
+            <p className="text-sm text-amber-800 flex-1">
+              Đang xử lý {processedCount}/{totalTrackedDocs} file — trang sẽ tự cập nhật khi xong, không cần F5.
+              {mounted && totalRemainingEstimate > 0 && (
+                <>
+                  {" "}Dự kiến toàn bộ <span className="font-bold">{formatRemaining(totalRemainingEstimate)}</span>.
+                </>
+              )}
+            </p>
+            <span className="text-xs font-bold text-amber-700 shrink-0">{processedPercent}%</span>
+          </div>
+          <div className="mt-2 h-2 rounded-full bg-amber-100 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-amber-400 transition-all"
+              style={{ width: `${processedPercent}%` }}
+            />
+          </div>
+          {/* Ước tính "còn khoảng bao lâu" chỉ là ƯỚC TÍNH MỀM (xem estimateProcessingSeconds ở
+              lib/format.ts) — thời gian thật đo được dao động từ vài giây đến hơn 7 phút tuỳ độ
+              khó tài liệu, không thể chính xác tuyệt đối. Đếm lùi dần theo giây (nowTick) cho
+              cảm giác trực quan "đang chạy", và tự chuyển sang "sắp xong..." khi ước tính đã hết
+              mà file vẫn chưa xong, thay vì đứng ở số 0 hoặc chạy âm trông như bị lỗi.*/}
+          <ul className="mt-1.5 flex flex-col gap-0.5">
+            {processingDocs.map((d) => {
+              const elapsedSeconds = Math.floor((nowTick - parseUtcDate(d.uploadedAt).getTime()) / 1000);
+              const remaining = Math.max(0, estimateProcessingSeconds(d.pageCount) - elapsedSeconds);
+              return (
+                <li key={d.id} className="text-xs text-amber-700 truncate">
+                  <span className="font-semibold">{d.originalFilename}</span>
+                  {" — "}
+                  {STAGE_LABEL[d.status] ?? "đang chờ xử lý..."}
+                  {mounted && (
+                    <>
+                      {" · "}
+                      <span className="font-semibold">{formatRemaining(remaining)}</span>
+                    </>
+                  )}
+                  {d.pageCount && d.pageCount > 1
+                    ? ` (${d.pageCount} trang — cần phân tích kỹ hơn, có thể lâu hơn các file khác)`
+                    : ""}
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
 

@@ -5,13 +5,35 @@ Port từ lib/classify.ts (Next.js) + bổ sung bước sửa lỗi vì OCR trê
 dấu, viết tay, layout phức tạp) thường đọc sai/xáo trộn thứ tự nhiều hơn hẳn so với ảnh
 test sạch — bước sửa lỗi giúp cả người đọc và bước phân loại có tín hiệu tốt hơn.
 
-Lưu ý quan trọng về model: DEEPSEEK_MODEL hiện cấu hình là model có suy luận (reasoning) —
-đã xác nhận qua thực nghiệm là với input càng lộn xộn/khó hiểu thì model càng "suy nghĩ"
-lâu (test trực tiếp qua curl: có input mất hơn 120s vẫn chưa xong). Tài khoản hiện tại chỉ
-có 2 model (deepseek-v4-flash, deepseek-v4-pro), cả 2 đều reasoning, không có bản thường
-nhanh hơn để đổi sang. Vì vậy có `max_tokens` để chặn việc sinh token vô hạn, và timeout
-đủ lớn để không cắt ngang những trường hợp cần suy luận dài hợp lý.
+Lưu ý quan trọng về model: DEEPSEEK_MODEL cấu hình là model có suy luận (reasoning) — đã
+xác nhận qua thực nghiệm là với input càng lộn xộn/khó hiểu thì model càng "suy nghĩ" lâu
+(test trực tiếp qua curl: có input mất hơn 200s vẫn chưa xong). Tài khoản hiện tại chỉ có
+2 model (deepseek-v4-flash, deepseek-v4-pro), cả 2 đều reasoning theo TÊN model — NHƯNG có
+thể tắt hẳn phần suy luận qua tham số request `extra_body={"thinking": {"type": "disabled"}}`
+(xác nhận qua curl trực tiếp lên api.deepseek.com, không phải đoán).
+
+Đã thực nghiệm để quyết định BƯỚC NÀO được tắt reasoning:
+- SỬA LỖI OCR (correct_ocr_text): tắt reasoning AN TOÀN — chỉ là việc sửa chính tả/sắp xếp
+  lại câu theo quy tắc cố định, không cần phán đoán. Giảm 150-450s xuống 1-10s (nhanh hơn
+  40-150 lần), output kiểm tra bằng tay vẫn mạch lạc, không bịa/sai số liệu.
+- PHÂN LOẠI (classify_ocr_text): ĐÃ THỬ tắt reasoning rồi PHỤC HỒI LẠI vì phát hiện lỗi thật
+  qua thực nghiệm — chạy lặp lại 4 lần cùng 1 file "CCCD của mẹ khách hàng" (tên file có ghi
+  rõ "mother"), 3/4 lần model bỏ qua tín hiệu tên file, khớp nhầm thành mục CCCD của chính
+  đương đơn thay vì mục CCCD của mẹ — với confidence vẫn 0.9-1.0 (tức sẽ TỰ ĐỘNG khớp, không
+  đưa nhân viên soát lại vì confidence cao hơn CONFIDENCE_THRESHOLD). Việc phân biệt "giấy tờ
+  này là của ai trong gia đình" (đương đơn/vợ chồng/cha/mẹ/con) cần suy luận thật, không phải
+  việc máy móc — nên giữ nguyên reasoning bật cho bước này dù chậm hơn.
+- "Phân tích AI chuyên sâu" (summarize_case_profile — đối chiếu chéo nhiều giấy tờ, phát hiện
+  bất nhất): CỐ Ý giữ reasoning bật, vì cần suy luận thật (so sánh nhiều nguồn dữ liệu), theo
+  đúng yêu cầu người dùng "reason chỉ dành cho phân tích chuyên sâu".
+
+Kết quả: 1 file giảm từ ~300-450s (2 lệnh có reasoning) xuống còn ~150-230s (chỉ còn lệnh
+phân loại có reasoning, lệnh sửa lỗi gần như tức thời) — giảm khoảng nửa thời gian AN TOÀN,
+thay vì giảm ~100 lần nhưng có rủi ro sai âm thầm ở các mục dễ nhầm lẫn giữa thành viên gia
+đình. Vẫn giữ `max_tokens` cao + timeout lớn cho client dùng chung (áp dụng cho cả lệnh
+có/không reasoning).
 """
+
 from __future__ import annotations
 
 import json
@@ -25,6 +47,12 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, Authenti
 from models import ChecklistItem
 
 logger = logging.getLogger("classify")
+
+# Tắt suy luận (reasoning) — CHỈ dùng cho correct_ocr_text (sửa chính tả OCR, việc máy móc
+# theo quy tắc cố định). KHÔNG dùng cho classify_ocr_text (đã thử rồi bỏ — cần suy luận thật
+# để phân biệt giấy tờ của thành viên nào trong gia đình) hay summarize_case_profile (phân
+# tích chuyên sâu) — xem giải thích + số liệu thực nghiệm ở docstring đầu file.
+_NO_THINKING = {"thinking": {"type": "disabled"}}
 
 
 def _describe_deepseek_error(e: Exception) -> str:
@@ -157,6 +185,7 @@ def correct_ocr_text(raw_text: str) -> str | None:
         completion = _get_client().chat.completions.create(
             model=os.environ["DEEPSEEK_MODEL"],
             max_tokens=CORRECTION_MAX_TOKENS,
+            extra_body=_NO_THINKING,
             messages=[
                 {"role": "system", "content": CORRECTION_SYSTEM_PROMPT},
                 {"role": "user", "content": raw_text},

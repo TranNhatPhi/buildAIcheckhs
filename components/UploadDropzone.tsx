@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API_URL } from "@/lib/format";
+import { API_URL, estimateProcessingSeconds, formatRemaining, parseUtcDate } from "@/lib/format";
 import type { DocumentDTO } from "@/lib/client-types";
 
 interface Props {
@@ -13,7 +13,8 @@ interface Props {
   onUploaded: () => void;
 }
 
-const STAGE_LABEL: Partial<Record<DocumentDTO["status"], string>> = {
+// Export để CaseDetail.tsx dùng chung — tránh lặp lại chuỗi ở 2 nơi cho cùng 1 khái niệm.
+export const STAGE_LABEL: Partial<Record<DocumentDTO["status"], string>> = {
   OCR_RUNNING: "Bước 1/2 — đang đọc OCR...",
   CLASSIFYING: "Bước 2/2 — đang phân loại AI...",
 };
@@ -106,10 +107,66 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
 
   const pendingCount = useMemo(() => queue.filter((q) => q.status === "uploading").length, [queue]);
   const doneCount = useMemo(() => queue.filter((q) => q.status !== "uploading").length, [queue]);
+  const uploadPercent = queue.length > 0 ? Math.round((doneCount / queue.length) * 100) : 0;
   const successCount = useMemo(() => queue.filter((q) => q.status === "done").length, [queue]);
   const errorCount = useMemo(() => queue.filter((q) => q.status === "error").length, [queue]);
   const cancelledCount = useMemo(() => queue.filter((q) => q.status === "cancelled").length, [queue]);
   const isProcessing = pendingCount > 0;
+
+  // F5/đóng tab giữa chừng sẽ HUỶ NGANG các file CHƯA kịp gửi lên — trình duyệt không giữ
+  // được nội dung file đã chọn (File object) qua 1 lần reload, đây là giới hạn bảo mật của
+  // trình duyệt chứ không phải lỗi code, KHÔNG thể khắc phục hoàn toàn phía frontend (không
+  // có cách "phục hồi" file đã chọn sau reload mà không cần người dùng chọn lại). Các file ĐÃ
+  // gửi lên rồi (đang ở "Bước 1/2"/"Bước 2/2", đã có dòng Document phía backend) thì AN TOÀN
+  // — backend xử lý độc lập với kết nối trình duyệt, F5 xong quay lại trang vẫn thấy chạy tiếp
+  // (banner ở CaseDetail.tsx tự nhận lại đúng các file đó qua dữ liệu server, không cần
+  // queue này). Để tránh mất OAN các file CHƯA kịp gửi, cảnh báo trước khi rời trang.
+  useEffect(() => {
+    if (!isProcessing) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isProcessing]);
+
+  // Đồng hồ đếm ngược riêng (1s/lần) để tính lại "còn khoảng bao lâu" cho từng file — xem
+  // giải thích chi tiết ở CaseDetail.tsx (dùng chung logic, khác chỗ hiển thị). Khởi tạo bằng
+  // 0 (không phải Date.now()) dù component này thực ra không dính lỗi hydration mismatch như
+  // CaseDetail.tsx (isProcessing chỉ true sau khi người dùng tự thao tác upload, luôn xảy ra
+  // SAU khi trang đã hydrate xong) — vẫn giữ cùng pattern an toàn cho nhất quán, tránh rủi ro
+  // nếu sau này component đổi cách dùng.
+  const [nowTick, setNowTick] = useState(0);
+  useEffect(() => {
+    if (!isProcessing) return;
+    setNowTick(Date.now());
+    const interval = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [isProcessing]);
+
+  // Ước tính tổng thời gian còn lại cho CẢ ĐỢT upload — gồm 2 phần: (1) thời gian của file
+  // ĐANG CHẠY lâu nhất (chạy song song, đợt chỉ xong khi file chậm nhất trong nhóm đang chạy
+  // xong), cộng (2) thời gian cho các file CÒN XẾP HÀNG chưa tới lượt (chưa có dòng Document
+  // — nghĩa là chưa có worker nào rảnh để nhận), ước tính theo số "đợt" cần chờ thêm
+  // (waitingCount / MAX_CONCURRENT, làm tròn lên) nhân với thời gian trung bình 1 file.
+  const totalRemainingEstimate = useMemo(() => {
+    let activeMax = 0;
+    let waitingCount = 0;
+    for (const q of queue) {
+      if (q.status !== "uploading") continue;
+      const doc = documents.find((d) => d.originalFilename === q.name);
+      if (doc && STAGE_LABEL[doc.status]) {
+        const elapsedSeconds = Math.floor((nowTick - parseUtcDate(doc.uploadedAt).getTime()) / 1000);
+        const remaining = Math.max(0, estimateProcessingSeconds(doc.pageCount) - elapsedSeconds);
+        activeMax = Math.max(activeMax, remaining);
+      } else {
+        waitingCount++;
+      }
+    }
+    const queueWaves = Math.ceil(waitingCount / MAX_CONCURRENT);
+    return activeMax + queueWaves * estimateProcessingSeconds(null);
+  }, [queue, documents, nowTick]);
 
   // Hiện popup thông báo kết quả khi vừa xử lý xong 1 đợt upload (chuyển từ đang xử lý ->
   // hết), tự ẩn sau 5 giây — không hiện lại nếu trang chỉ re-render bình thường, và tắt
@@ -163,21 +220,35 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
       </div>
 
       {isProcessing && (
-        <div className="mt-3 flex items-center gap-3 bg-amber-50 border-2 border-amber-200 rounded-xl px-4 py-3">
-          <span className="h-4 w-4 shrink-0 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
-          <p className="text-sm text-amber-800 flex-1">
-            <span className="font-semibold">
-              Đang xử lý {doneCount}/{queue.length} file...
-            </span>{" "}
-            Mỗi file cần chạy OCR + AI phân loại, có thể mất khoảng 30–60 giây (đôi khi lâu hơn)
-            — vui lòng chờ một chút, đừng tắt trang.
-          </p>
-          <button
-            onClick={stopUpload}
-            className="shrink-0 rounded-full bg-white border border-amber-300 text-amber-800 text-xs font-semibold px-3 py-1.5 hover:bg-amber-100"
-          >
-            Dừng tải lên
-          </button>
+        <div className="mt-3 bg-amber-50 border-2 border-amber-200 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span className="h-4 w-4 shrink-0 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
+            <p className="text-sm text-amber-800 flex-1">
+              <span className="font-semibold">
+                Đang xử lý {doneCount}/{queue.length} file...
+              </span>{" "}
+              Mỗi file cần chạy OCR + AI phân loại — thời gian tuỳ độ khó từng file, đừng tắt
+              trang, trang sẽ tự cập nhật.
+              {totalRemainingEstimate > 0 && (
+                <>
+                  {" "}Dự kiến toàn bộ <span className="font-bold">{formatRemaining(totalRemainingEstimate)}</span>.
+                </>
+              )}
+            </p>
+            <span className="text-xs font-bold text-amber-700 shrink-0">{uploadPercent}%</span>
+            <button
+              onClick={stopUpload}
+              className="shrink-0 rounded-full bg-white border border-amber-300 text-amber-800 text-xs font-semibold px-3 py-1.5 hover:bg-amber-100"
+            >
+              Dừng tải lên
+            </button>
+          </div>
+          <div className="mt-2 h-2 rounded-full bg-amber-100 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-amber-400 transition-all"
+              style={{ width: `${uploadPercent}%` }}
+            />
+          </div>
         </div>
       )}
 
@@ -222,8 +293,10 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
                 <span className="text-xs text-neutral-400">
                   {(() => {
                     const doc = documents.find((d) => d.originalFilename === q.name);
-                    if (doc && STAGE_LABEL[doc.status]) return STAGE_LABEL[doc.status];
-                    return "đang tải file lên...";
+                    if (!doc || !STAGE_LABEL[doc.status]) return "đang tải file lên...";
+                    const elapsedSeconds = Math.floor((nowTick - parseUtcDate(doc.uploadedAt).getTime()) / 1000);
+                    const remaining = Math.max(0, estimateProcessingSeconds(doc.pageCount) - elapsedSeconds);
+                    return `${STAGE_LABEL[doc.status]} · ${formatRemaining(remaining)}`;
                   })()}
                 </span>
               )}

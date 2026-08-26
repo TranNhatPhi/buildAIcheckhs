@@ -21,6 +21,7 @@ export interface DocumentDTO {
   storedPath: string;
   mimeType: string;
   fileSizeBytes: number;
+  pageCount: number | null;
   uploadedAt: string;
   matchedChecklistItemId: string | null;
   matchedChecklistItem: ChecklistItemDTO | null;
