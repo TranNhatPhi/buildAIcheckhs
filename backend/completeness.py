@@ -6,29 +6,36 @@ from models import ChecklistItem, Document
 FULFILLED_STATUSES = {"CLASSIFIED", "MANUALLY_SET"}
 
 
-def is_item_applicable(item: ChecklistItem, marital_status: str, number_of_children: int) -> bool:
-    if item.appliesTo == "ALWAYS":
+# Số con tối thiểu cần để mục "CHILD_N" / "SPOUSE_CHILD_N" áp dụng — checklist nguồn (4 file
+# .md của khách hàng) chỉ định nghĩa giấy tờ riêng cho tối đa 3 con (con 1/2/3), không có mục
+# tổng quát "mọi con thứ N+" nữa như model cũ (PER_CHILD/PER_DEPENDENT).
+_CHILD_MIN_COUNT = {"CHILD_1": 1, "CHILD_2": 2, "CHILD_3": 3,
+                    "SPOUSE_CHILD_1": 1, "SPOUSE_CHILD_2": 2, "SPOUSE_CHILD_3": 3}
+
+
+def is_item_applicable(
+    item: ChecklistItem, marital_status: str, number_of_children: int, skill_level: str
+) -> bool:
+    # Mỗi skill level có bộ checklist HOÀN TOÀN riêng (xem seed.py) — lọc trước tiên, không
+    # liên quan gì tới appliesTo bên dưới.
+    if item.skillLevel != skill_level:
+        return False
+
+    applies_to = item.appliesTo
+    if applies_to == "ALWAYS":
         return True
-    if item.appliesTo == "SPOUSE":
+    if applies_to == "SPOUSE":
         return marital_status == "MARRIED"
-    if item.appliesTo == "CHILDREN":
-        # Mục chỉ dành riêng cho con cái (vd giấy khai sinh con cái, tách riêng khỏi
-        # vợ/chồng) — khác DEPENDENTS ở chỗ KHÔNG áp dụng chỉ vì đã kết hôn chưa có con.
-        return number_of_children > 0
-    # DEPENDENTS (mục 28 — hình thẻ trắng): áp dụng khi có vợ/chồng HOẶC có ít nhất 1 con
-    return marital_status == "MARRIED" or number_of_children > 0
-
-
-def required_count(item: ChecklistItem, marital_status: str, number_of_children: int) -> int:
-    if item.quantityRule == "PER_CHILD":
-        # Mục chỉ tính theo số con, không cộng thêm cho vợ/chồng (khác PER_DEPENDENT).
-        return number_of_children
-    if item.quantityRule != "PER_DEPENDENT":
-        return 1
-    # Mục 28 cần 1 document cho mỗi người: vợ/chồng (nếu có) + từng con. v1 không
-    # track document nào ứng với người nào cụ thể — chỉ đếm tổng số document đã khớp
-    # mục này so với tổng số người kỳ vọng.
-    return (1 if marital_status == "MARRIED" else 0) + number_of_children
+    if applies_to == "SINGLE":
+        return marital_status == "SINGLE"
+    if applies_to in _CHILD_MIN_COUNT:
+        # "SPOUSE_CHILD_N" (checklist HIGH_SKILL): mục riêng cho từng con nhưng CHỈ áp dụng
+        # khi đã kết hôn — checklist gốc không có mục cho con khi đương đơn còn độc thân.
+        # "CHILD_N" (checklist LOW_SKILL): áp dụng chỉ theo số con, không cần đã kết hôn.
+        if applies_to.startswith("SPOUSE_") and marital_status != "MARRIED":
+            return False
+        return number_of_children >= _CHILD_MIN_COUNT[applies_to]
+    return False
 
 
 @dataclass
@@ -54,9 +61,14 @@ def compute_checklist_summary(
     documents: list[Document],
     marital_status: str,
     number_of_children: int,
+    skill_level: str,
 ) -> ChecklistSummary:
     applicable_items = sorted(
-        (i for i in all_items if is_item_applicable(i, marital_status, number_of_children)),
+        (
+            i
+            for i in all_items
+            if is_item_applicable(i, marital_status, number_of_children, skill_level)
+        ),
         key=lambda i: i.order,
     )
 
@@ -67,7 +79,10 @@ def compute_checklist_summary(
             for d in documents
             if d.matchedChecklistItemId == item.id and d.status in FULFILLED_STATUSES
         ]
-        required = required_count(item, marital_status, number_of_children)
+        # Mỗi mục trong checklist mới (4 file .md khách hàng gửi) là 1 giấy tờ cụ thể, kể cả
+        # với vợ/chồng/từng con (đã tách thành mục riêng theo tên, vd "hs-child1-passport")
+        # — không còn mục nào cần NHIỀU document mới coi là đủ như model cũ (PER_DEPENDENT).
+        required = 1
         statuses.append(
             ChecklistItemStatus(
                 item=item,

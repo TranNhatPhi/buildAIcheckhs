@@ -53,7 +53,9 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
 
     all_items = db.scalars(select(ChecklistItem)).all()
     applicable_items = [
-        i for i in all_items if is_item_applicable(i, case.maritalStatus, case.numberOfChildren)
+        i
+        for i in all_items
+        if is_item_applicable(i, case.maritalStatus, case.numberOfChildren, case.skillLevel)
     ]
 
     is_pdf = mime_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")

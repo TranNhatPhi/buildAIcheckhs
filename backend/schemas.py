@@ -45,6 +45,7 @@ class ChecklistItemDTO(BaseModel):
     isOptional: bool
     appliesTo: str
     quantityRule: str
+    skillLevel: str
 
     class Config:
         from_attributes = True

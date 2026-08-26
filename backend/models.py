@@ -70,7 +70,10 @@ class ChecklistItem(Base):
 
     id = Column(String(191), primary_key=True)  # slug ổn định, vd "passport"
     order = Column("order", Integer, nullable=False)
-    section = Column(String(191), nullable=False)  # "A" | "B"
+    # Tên đầy đủ để hiển thị trực tiếp lên UI (vd "Hồ sơ đương đơn", "Hồ sơ người phụ thuộc
+    # (Con 1)") — KHÔNG còn là mã "A"/"B" đơn lẻ như trước (frontend từng tự suy ra nhãn từ
+    # mã này, giờ hiển thị thẳng section để phân biệt được vợ/chồng vs từng con).
+    section = Column(String(191), nullable=False)
     group = Column("group", String(191), nullable=False)
     nameVi = Column(String(191), nullable=False)
     note = Column(Text, nullable=True)
@@ -78,8 +81,13 @@ class ChecklistItem(Base):
     # `note` vốn hướng dẫn thu thập giấy tờ gì) — tổng hợp từ kinh nghiệm thực tế xử lý hồ sơ.
     verificationNote = Column(Text, nullable=True)
     isOptional = Column(Boolean, nullable=False, default=False)
-    appliesTo = Column(String(191), nullable=False)  # "ALWAYS" | "SPOUSE" | "DEPENDENTS"
+    # "ALWAYS" | "SPOUSE" | "SINGLE" | "CHILD_1/2/3" | "SPOUSE_CHILD_1/2/3" — xem
+    # is_item_applicable (completeness.py) để biết ý nghĩa từng giá trị.
+    appliesTo = Column(String(191), nullable=False)
     quantityRule = Column(String(191), nullable=False, default="FIXED_1")
+    # "LOW_SKILL" | "HIGH_SKILL" — checklist hoàn toàn khác nhau theo skill level (xem
+    # backend/seed.py), lọc theo Case.skillLevel giống cách appliesTo lọc theo marital/con.
+    skillLevel = Column(String(191), nullable=False, default="LOW_SKILL")
     # Cặp "chỉ cần 1 trong 2" (vd CCCD vợ / CCCD chồng — 1 hồ sơ chỉ có 1 người, không bao
     # giờ cần cả 2) — trỏ sang id của mục kia trong cặp. Xem compute_checklist_summary.
     eitherWithId = Column(String(191), nullable=True)

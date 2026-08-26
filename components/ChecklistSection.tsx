@@ -16,6 +16,10 @@ function groupBy(items: ChecklistItemStatusDTO[]) {
 
 export function ChecklistSection({ items }: Props) {
   const grouped = groupBy(items);
+  // Số thứ tự theo đúng checklist gốc (file .md khách hàng gửi) — đánh số LIÊN TỤC xuyên
+  // suốt cả checklist (không reset lại từ 1 ở mỗi nhóm), dựa theo vị trí trong mảng `items`
+  // đã được backend sắp xếp đúng theo `order` (compute_checklist_summary, completeness.py).
+  const numberById = new Map(items.map((s, i) => [s.item.id, i + 1]));
 
   return (
     <div className="flex flex-col gap-7">
@@ -24,7 +28,7 @@ export function ChecklistSection({ items }: Props) {
         return (
           <div key={key}>
             <h3 className="text-xs font-bold uppercase tracking-wide text-indigo-600 mb-3">
-              {section === "A" ? "Hồ sơ đương đơn" : "Hồ sơ người phụ thuộc"} — {group}
+              {section} — {group}
             </h3>
             <ul className="flex flex-col gap-2.5">
               {statuses.map((s) => (
@@ -47,7 +51,10 @@ export function ChecklistSection({ items }: Props) {
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold text-neutral-800">{s.item.nameVi}</span>
+                      <span className="text-sm font-semibold text-neutral-800">
+                        <span className="text-neutral-400">{numberById.get(s.item.id)}.</span>{" "}
+                        {s.item.nameVi}
+                      </span>
                       {s.item.isOptional && (
                         <span className="text-[11px] font-medium bg-neutral-100 text-neutral-500 px-2 py-0.5 rounded-full">
                           Tuỳ chọn

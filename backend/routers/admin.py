@@ -21,7 +21,9 @@ def list_all_cases(db: Session = Depends(get_db)):
 
     result = []
     for c in cases:
-        summary = compute_checklist_summary(checklist_items, c.documents, c.maritalStatus, c.numberOfChildren)
+        summary = compute_checklist_summary(
+            checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel
+        )
         threshold = compute_financial_threshold_vnd(c.maritalStatus, c.numberOfChildren)
         result.append(
             CaseListItemDTO(

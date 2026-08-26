@@ -50,6 +50,10 @@ export function CaseDetail({ caseId, initialData }: Props) {
   // Mục bắt buộc còn thiếu — liệt kê ngay đầu trang để nhân viên biết cần làm gì tiếp mà
   // không phải kéo xuống dò cả checklist dài bên dưới.
   const missingRequiredItems = checklist.items.filter((s) => !s.item.isOptional && !s.complete);
+  // Đánh số theo đúng vị trí trong checklist đầy đủ bên dưới (khớp với số hiển thị ở
+  // ChecklistSection) — để nhân viên đối chiếu nhanh từ banner này xuống đúng mục trong
+  // checklist dài bên dưới, không phải dò tên bằng mắt.
+  const checklistNumberById = new Map(checklist.items.map((s, i) => [s.item.id, i + 1]));
 
   return (
     <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-10 flex flex-col gap-7">
@@ -105,6 +109,7 @@ export function CaseDetail({ caseId, initialData }: Props) {
           <ul className="list-disc pl-5 flex flex-col gap-1">
             {missingRequiredItems.map((s) => (
               <li key={s.item.id} className="text-sm text-amber-900">
+                <span className="font-semibold">{checklistNumberById.get(s.item.id)}.</span>{" "}
                 {s.item.nameVi}
                 {s.requiredCount > 1 && ` (${s.fulfilledCount}/${s.requiredCount} đã có)`}
               </li>

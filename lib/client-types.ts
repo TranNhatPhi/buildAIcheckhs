@@ -11,6 +11,7 @@ export interface ChecklistItemDTO {
   isOptional: boolean;
   appliesTo: string;
   quantityRule: string;
+  skillLevel: string;
 }
 
 export interface DocumentDTO {

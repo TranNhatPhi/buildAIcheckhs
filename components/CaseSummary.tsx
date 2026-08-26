@@ -120,6 +120,10 @@ export function CaseSummary({
   }
 
   const grouped = groupBy(itemsWithDocs);
+  // Số thứ tự theo đúng checklist gốc — tính trên TOÀN BỘ `items` (không phải itemsWithDocs)
+  // để số hiển thị luôn khớp đúng vị trí thật của mục trong checklist, kể cả khi trang này
+  // chỉ hiện 1 tập con (các mục đã có file khớp).
+  const numberById = new Map(items.map((s, i) => [s.item.id, i + 1]));
 
   return (
     <div className="flex flex-col gap-7">
@@ -179,12 +183,15 @@ export function CaseSummary({
         return (
           <div key={key}>
             <h3 className="text-xs font-bold uppercase tracking-wide text-indigo-600 mb-3">
-              {section === "A" ? "Hồ sơ đương đơn" : "Hồ sơ người phụ thuộc"} — {group}
+              {section} — {group}
             </h3>
             <div className="flex flex-col gap-4">
               {statuses.map((s) => (
                 <div key={s.item.id}>
-                  <h4 className="text-sm font-semibold text-neutral-800 mb-2">{s.item.nameVi}</h4>
+                  <h4 className="text-sm font-semibold text-neutral-800 mb-2">
+                    <span className="text-neutral-400">{numberById.get(s.item.id)}.</span>{" "}
+                    {s.item.nameVi}
+                  </h4>
                   <div className="flex flex-col gap-2">
                     {s.matchedDocuments.map((doc) => {
                       const text = doc.manualCorrectedText || doc.correctedText || doc.ocrText;

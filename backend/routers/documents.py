@@ -101,7 +101,9 @@ def reclassify_document(document_id: str, db: Session = Depends(get_db)):
     applicable_items = [
         i
         for i in all_items
-        if is_item_applicable(i, doc.case.maritalStatus, doc.case.numberOfChildren)
+        if is_item_applicable(
+            i, doc.case.maritalStatus, doc.case.numberOfChildren, doc.case.skillLevel
+        )
     ]
 
     doc.status = "OCR_RUNNING"

@@ -35,7 +35,9 @@ def list_cases(db: Session = Depends(get_db)):
 
     result = []
     for c in cases:
-        summary = compute_checklist_summary(checklist_items, c.documents, c.maritalStatus, c.numberOfChildren)
+        summary = compute_checklist_summary(
+            checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel
+        )
         threshold = compute_financial_threshold_vnd(c.maritalStatus, c.numberOfChildren)
         result.append(
             CaseListItemDTO(
@@ -94,7 +96,9 @@ def list_deleted_cases(db: Session = Depends(get_db)):
 
     result = []
     for c in cases:
-        summary = compute_checklist_summary(checklist_items, c.documents, c.maritalStatus, c.numberOfChildren)
+        summary = compute_checklist_summary(
+            checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel
+        )
         threshold = compute_financial_threshold_vnd(c.maritalStatus, c.numberOfChildren)
         result.append(
             CaseListItemDTO(
@@ -131,7 +135,7 @@ def restore_case(case_id: str, db: Session = Depends(get_db)):
 
     checklist_items = db.scalars(select(ChecklistItem)).all()
     summary = compute_checklist_summary(
-        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren
+        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren, case.skillLevel
     )
     threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
     return CaseListItemDTO(
@@ -156,7 +160,7 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
 
     checklist_items = db.scalars(select(ChecklistItem)).all()
     summary = compute_checklist_summary(
-        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren
+        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren, case.skillLevel
     )
     threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
 
@@ -194,7 +198,7 @@ def analyze_case(case_id: str, db: Session = Depends(get_db)):
 
     checklist_items = db.scalars(select(ChecklistItem)).all()
     summary = compute_checklist_summary(
-        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren
+        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren, case.skillLevel
     )
 
     case_context = (
@@ -390,7 +394,7 @@ def update_case(case_id: str, body: UpdateCaseRequest, db: Session = Depends(get
 
     checklist_items = db.scalars(select(ChecklistItem)).all()
     summary = compute_checklist_summary(
-        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren
+        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren, case.skillLevel
     )
     threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
 
