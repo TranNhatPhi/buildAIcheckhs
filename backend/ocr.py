@@ -443,14 +443,34 @@ def _crop_to_content(pil_img: Image.Image, padding_ratio: float = 0.03) -> Image
     bằng mắt hoàn toàn bình thường, vì thuật toán dò bố cục của Tesseract kỳ vọng khối chữ
     có kích thước tương xứng với trang, không phải 1 "đảo" nội dung nhỏ giữa vùng trắng
     rộng lớn. Không dùng cho ảnh chụp/scan trực tiếp (JPG/PNG upload) vì ảnh đó thường đã
-    gần sát nội dung — chỉ áp dụng cho trang PDF render ra."""
+    gần sát nội dung — chỉ áp dụng cho trang PDF render ra.
+
+    XÁC NHẬN BẰNG SỰ CỐ THẬT (3 tài liệu production treo Tesseract vô hạn — trước khi có
+    timeout ở _lines_from_preprocessed): 1 số trang PDF render ra có 1 ĐƯỜNG VIỀN ĐEN MỎNG
+    1px chạy sát mép ngoài cùng (artifact từ máy scan/PDF gốc, KHÔNG phải nội dung thật) —
+    mật độ mực của viền này gần như 100% suốt chiều dài, trong khi nội dung thật (CCCD/vân
+    tay/MRZ) chỉ ~13-15%. Ngưỡng tương đối bên dưới (15% so với đỉnh) bị chính viền 1px này
+    kéo đỉnh lên 100%, khiến nội dung thật (chỉ ~15%) rơi NGAY DƯỚI ngưỡng — thuật toán tưởng
+    nhầm viền 1px là toàn bộ nội dung, cắt ảnh xuống còn 9-12px bề ngang. Ảnh dị dạng gần như
+    1 chiều đó khiến Tesseract xử lý cực chậm/treo vô hạn. Bỏ qua 1 viền nhỏ ngoài cùng TRƯỚC
+    khi tính mật độ để loại artifact này mà không ảnh hưởng tới việc dò nội dung thật (nội
+    dung thật không bao giờ nằm sát tuyệt đối mép ảnh — luôn còn padding_ratio bù lại sau)."""
     gray = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
     h, w = gray.shape
 
     # Downsample để tính mật độ nhanh và ổn định hơn (giảm ảnh hưởng nhiễu từng điểm ảnh lẻ).
     small_w = 200
     small = cv2.resize(gray, (small_w, max(1, int(small_w * h / w))), interpolation=cv2.INTER_AREA)
-    ink = small < 200  # điểm ảnh tối = có nội dung (chữ/ảnh), điểm ảnh sáng = nền/lề trắng
+
+    # Bỏ viền ngoài cùng của ảnh downsample trước khi tính mật độ — xem giải thích artifact
+    # viền 1px ở docstring. Chỉ trim khi ảnh đủ lớn để còn phần thật đáng kể sau khi bỏ viền.
+    edge_margin = 3
+    if small.shape[0] > 4 * edge_margin and small.shape[1] > 4 * edge_margin:
+        trimmed = small[edge_margin:-edge_margin, edge_margin:-edge_margin]
+    else:
+        edge_margin = 0
+        trimmed = small
+    ink = trimmed < 200  # điểm ảnh tối = có nội dung (chữ/ảnh), điểm ảnh sáng = nền/lề trắng
 
     def _content_bounds(density: np.ndarray) -> tuple[int, int] | None:
         threshold = max(float(density.max()) * 0.15, 0.01)  # tương đối theo đỉnh, có sàn tối thiểu
@@ -463,6 +483,9 @@ def _crop_to_content(pil_img: Image.Image, padding_ratio: float = 0.03) -> Image
     col_bounds = _content_bounds(ink.mean(axis=0))
     if row_bounds is None or col_bounds is None:
         return pil_img  # trang trắng thật/không phát hiện được nội dung — giữ nguyên
+    # Bù lại offset đã bỏ viền lúc trim, để toạ độ khớp lại đúng hệ quy chiếu của `small`.
+    row_bounds = (row_bounds[0] + edge_margin, row_bounds[1] + edge_margin)
+    col_bounds = (col_bounds[0] + edge_margin, col_bounds[1] + edge_margin)
 
     scale_y, scale_x = h / small.shape[0], w / small.shape[1]
     y1, y2 = int(row_bounds[0] * scale_y), int((row_bounds[1] + 1) * scale_y)
