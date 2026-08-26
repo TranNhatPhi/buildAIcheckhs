@@ -25,7 +25,11 @@ interface FileProgress {
   error?: string;
 }
 
-const MAX_CONCURRENT = 2;
+// Khớp đúng số lượng DeepSeek API key đang round-robin (classify.py: DEEPSEEK_API_KEY +
+// LLM_API_KEY_2/3/4 = 4 key) — đây là giới hạn tài nguyên "cứng" hơn cả (mỗi key có rate
+// limit riêng), nên nâng lên bao nhiêu cũng vô ích nếu vượt quá số key sẵn có. Trước đây
+// để 2 dù đã có 4 key, khiến 1 đợt upload nhiều file chỉ tận dụng được nửa số key.
+const MAX_CONCURRENT = 4;
 
 export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
   const [queue, setQueue] = useState<FileProgress[]>([]);

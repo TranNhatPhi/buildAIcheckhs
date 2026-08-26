@@ -166,7 +166,13 @@ def _preprocess_variants(pil_img: Image.Image) -> dict[str, Image.Image]:
     "Phân tích lại"): mỗi cách phù hợp với 1 kiểu ảnh khác nhau (ảnh sạch/mờ/chữ nhỏ đè
     watermark...), không có cách nào luôn thắng tất cả nên thử hết rồi so kết quả thay vì
     đoán trước 1 cách cố định như _preprocess() ở trên (dùng cho lần OCR đầu, ưu tiên
-    nhanh)."""
+    nhanh).
+
+    CHỈ giữ 2 biến thể (trước đây 4) — đo thực nghiệm trên 52 trang tài liệu thật (mọi PDF
+    đang có trong DB): "default" thắng 25/52, "binary" thắng 23/52 (tổng 92%), "no_denoise"
+    chỉ 4/52, "strong_contrast" thắng ĐÚNG 0/52 lần — bỏ 2 biến thể gần như vô dụng đó để
+    giảm ~1 nửa thời gian OCR "Phân tích lại" mà không mất tín hiệu thật (không biến thể nào
+    trong 52 trang cần tới "strong_contrast" mới đọc ra được chữ)."""
     if not PREPROCESS_ENABLED:
         base = pil_img.convert("RGB")
         return {"raw": base}
@@ -178,10 +184,6 @@ def _preprocess_variants(pil_img: Image.Image) -> dict[str, Image.Image]:
     denoised = cv2.fastNlMeansDenoising(gray, h=7, templateWindowSize=7, searchWindowSize=21)
     variants["default"] = _to_rgb_image(cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(denoised))
 
-    # no_denoise: bỏ khử nhiễu — fastNlMeansDenoising đôi khi làm mờ luôn nét chữ nhỏ/mảnh
-    # trên ảnh vốn đã không nhiễu nhiều, mất chi tiết cần cho OCR.
-    variants["no_denoise"] = _to_rgb_image(cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray))
-
     # binary: nhị phân hoá thích ứng (adaptive threshold) — thường cho kết quả rất tốt với
     # chữ in rõ nét trên nền tương đối đồng đều (giấy khai sinh, bằng cấp scan phẳng), dù
     # có thể hỏng ảnh có watermark/hoạ tiết nền phức tạp (CCCD).
@@ -189,10 +191,6 @@ def _preprocess_variants(pil_img: Image.Image) -> dict[str, Image.Image]:
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 15
     )
     variants["binary"] = _to_rgb_image(binary)
-
-    # strong_contrast: tăng tương phản mạnh hơn hẳn (clipLimit 4.0 thay vì 2.0) — cho ảnh
-    # chụp thiếu sáng/mờ mà mức tương phản mặc định chưa đủ để tách chữ khỏi nền.
-    variants["strong_contrast"] = _to_rgb_image(cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8)).apply(gray))
 
     return variants
 
