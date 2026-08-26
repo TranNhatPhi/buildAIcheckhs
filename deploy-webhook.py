@@ -39,11 +39,28 @@ def verify_signature(body: bytes, signature_header: str) -> bool:
 
 
 def run_deploy():
+    # LƯU Ý: trước đây 2 lệnh dưới chạy vô điều kiện, không kiểm tra mã thoát — nếu "git pull"
+    # lỗi (vd đúng sự cố thật đã gặp: object git trong .git/objects bị tạo bởi user khác,
+    # không ghi đè được), code CŨ vẫn chạy tiếp "deploy.sh" với repo CHƯA được cập nhật, khiến
+    # code MỚI coi như "đã deploy" trong khi thực ra server vẫn chạy bản CŨ — chỉ phát hiện
+    # được nếu tự soi kỹ từng dòng log. Giờ dừng ngay và ghi rõ FAILED nếu git pull lỗi, không
+    # âm thầm deploy nhầm bản cũ nữa.
     with open(LOG_FILE, "a") as f:
         f.write(f"\n=== Deploy triggered {datetime.now(timezone.utc).isoformat()} ===\n")
         f.flush()
-        subprocess.run(["git", "pull"], cwd=REPO_DIR, stdout=f, stderr=subprocess.STDOUT)
-        subprocess.run(["bash", "./deploy.sh"], cwd=REPO_DIR, stdout=f, stderr=subprocess.STDOUT)
+
+        pull = subprocess.run(["git", "pull"], cwd=REPO_DIR, stdout=f, stderr=subprocess.STDOUT)
+        if pull.returncode != 0:
+            f.write(f"\n!!! DEPLOY FAILED — git pull lỗi (exit {pull.returncode}), KHÔNG chạy "
+                    f"deploy.sh để tránh âm thầm giữ nguyên bản cũ mà tưởng đã deploy xong.\n")
+            return
+
+        deploy = subprocess.run(["bash", "./deploy.sh"], cwd=REPO_DIR, stdout=f, stderr=subprocess.STDOUT)
+        if deploy.returncode != 0:
+            f.write(f"\n!!! DEPLOY FAILED — deploy.sh lỗi (exit {deploy.returncode}), xem log phía "
+                    f"trên để biết bước nào thất bại.\n")
+        else:
+            f.write(f"\n=== Deploy thành công {datetime.now(timezone.utc).isoformat()} ===\n")
 
 
 class Handler(BaseHTTPRequestHandler):
