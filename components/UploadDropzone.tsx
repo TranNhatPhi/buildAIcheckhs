@@ -22,7 +22,10 @@ export const STAGE_LABEL: Partial<Record<DocumentDTO["status"], string>> = {
 interface FileProgress {
   id: string;
   name: string;
-  status: "uploading" | "done" | "error" | "cancelled";
+  // "duplicate" tách riêng khỏi "error": file trùng KHÔNG phải lỗi (không có gì hỏng, không
+  // cần người dùng sửa gì) — hiện màu đỏ như lỗi thật sẽ làm nhân viên tưởng hồ sơ có vấn đề
+  // và đi tìm cách khắc phục một việc vốn đã đúng như mong đợi.
+  status: "uploading" | "done" | "error" | "cancelled" | "duplicate";
   error?: string;
 }
 
@@ -71,7 +74,33 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               method: "POST",
               body: form,
             });
-            if (!res.ok) throw new Error(await res.text());
+            if (!res.ok) {
+              // Backend trả lỗi dạng {"detail": "..."} (chuẩn FastAPI) — lấy đúng câu tiếng
+              // Việt bên trong thay vì ném nguyên chuỗi JSON thô lên giao diện.
+              const raw = await res.text();
+              let message = raw;
+              try {
+                message = JSON.parse(raw).detail ?? raw;
+              } catch {
+                // Không phải JSON (vd 502 do Caddy tự trả lúc backend đang khởi động lại) —
+                // giữ nguyên nội dung thô, vẫn hơn là không hiện gì.
+              }
+              // 409 = file trùng, backend đã bỏ qua có chủ đích (xem case_documents.py:
+              // _find_duplicate) — không phải lỗi cần báo động.
+              if (res.status === 409) {
+                setQueue((prev) =>
+                  prev.map((q) =>
+                    q.id === entry.id ? { ...q, status: "duplicate", error: message } : q
+                  )
+                );
+                // `continue` (KHÔNG phải `return`): chỉ bỏ qua file này rồi lấy file kế
+                // tiếp — `return` sẽ kết thúc luôn cả worker, mất 1 trong 4 luồng xử lý
+                // song song mỗi khi gặp 1 file trùng. Khối `finally` vẫn chạy trước khi
+                // sang vòng lặp kế tiếp, nên timer/nudge vẫn được dọn đúng.
+                continue;
+              }
+              throw new Error(message);
+            }
             setQueue((prev) =>
               prev.map((q) => (q.id === entry.id ? { ...q, status: "done" } : q))
             );
@@ -111,6 +140,7 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
   const successCount = useMemo(() => queue.filter((q) => q.status === "done").length, [queue]);
   const errorCount = useMemo(() => queue.filter((q) => q.status === "error").length, [queue]);
   const cancelledCount = useMemo(() => queue.filter((q) => q.status === "cancelled").length, [queue]);
+  const duplicateCount = useMemo(() => queue.filter((q) => q.status === "duplicate").length, [queue]);
   const isProcessing = pendingCount > 0;
 
   // F5/đóng tab giữa chừng sẽ HUỶ NGANG các file CHƯA kịp gửi lên — trình duyệt không giữ
@@ -266,6 +296,8 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               ? `Đã dừng — ${successCount}/${queue.length} file đã tải lên xong, ${cancelledCount} file chưa tải (${errorCount} lỗi).`
               : errorCount > 0
               ? `Đã xử lý xong ${successCount}/${queue.length} file — ${errorCount} file bị lỗi, kiểm tra lại bên dưới.`
+              : duplicateCount > 0
+              ? `Đã tải lên và phân tích xong ${successCount} file — ${duplicateCount} file đã có sẵn trong hồ sơ nên được bỏ qua.`
               : `Đã tải lên và phân tích xong ${successCount} file thành công.`}
           </p>
           <button
@@ -288,6 +320,7 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               {q.status === "done" && <span className="text-green-600">✓</span>}
               {q.status === "error" && <span className="text-red-600">✗</span>}
               {q.status === "cancelled" && <span className="text-neutral-400">⏸</span>}
+              {q.status === "duplicate" && <span className="text-neutral-400">⊘</span>}
               <span className="truncate">{q.name}</span>
               {q.status === "uploading" && (
                 <span className="text-xs text-neutral-400">
@@ -303,6 +336,9 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               {q.status === "error" && <span className="text-red-600 text-xs">{q.error}</span>}
               {q.status === "cancelled" && (
                 <span className="text-neutral-400 text-xs">đã dừng, chưa tải lên</span>
+              )}
+              {q.status === "duplicate" && (
+                <span className="text-neutral-500 text-xs">đã có sẵn trong hồ sơ — bỏ qua</span>
               )}
             </li>
           ))}

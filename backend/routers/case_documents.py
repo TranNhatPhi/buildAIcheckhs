@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,6 +15,38 @@ from schemas import DocumentDTO
 router = APIRouter(prefix="/cases/{case_id}/documents", tags=["documents"])
 
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20MB, dưới xa giới hạn 32MB của DeepSeek/Claude API
+
+
+def _find_duplicate(db: Session, case_id: str, content: bytes) -> Document | None:
+    """Tìm file đã có trong CÙNG hồ sơ với nội dung trùng khít (so từng byte).
+
+    Upload trùng rất dễ xảy ra khi nhân viên chọn nhiều file cùng lúc (đã gặp thật: cùng 1
+    CCCD nằm 2 lần trong danh sách) — mỗi lần trùng tốn TRỌN một lượt OCR 4 biến thể + 2 lần
+    gọi DeepSeek, đúng thứ đang gây nặng máy, mà kết quả chắc chắn y hệt bản đã có.
+
+    Lọc trước theo fileSizeBytes (cột đã có sẵn) để chỉ phải tải về từ MinIO những file CÓ
+    KHẢ NĂNG trùng — thực tế gần như luôn 0 hoặc 1 file, nên rẻ hơn nhiều so với việc thêm
+    cột lưu hash: không phải sửa cấu trúc bảng (schema đang quản lý thủ công, xem models.py),
+    không phải chạy migration trên production, và có tác dụng NGAY với toàn bộ tài liệu cũ
+    (nếu lưu hash thì các bản ghi cũ đều NULL, phải backfill mới dùng được).
+
+    So từng byte thay vì so tên file: không có dương tính giả (2 file khác nhau vô tình
+    trùng tên+dung lượng vẫn upload được), và bắt được cả file bị ĐỔI TÊN — trường hợp rất
+    hay gặp khi trình duyệt tự thêm hậu tố "(1)" lúc tải lại cùng 1 file."""
+    same_size = db.scalars(
+        select(Document).where(
+            Document.caseId == case_id, Document.fileSizeBytes == len(content)
+        )
+    ).all()
+    for doc in same_size:
+        try:
+            if storage.get_document_bytes(doc.storedPath) == content:
+                return doc
+        except Exception:  # noqa: BLE001
+            # File không còn trên MinIO (đã bị xoá thủ công/lỗi lưu trữ) — không thể so sánh
+            # nên coi như không trùng, để người dùng vẫn upload được thay vì bị chặn oan.
+            continue
+    return None
 
 
 @router.post("", response_model=DocumentDTO, status_code=201)
@@ -32,6 +66,15 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
     content = file.file.read()
     if len(content) > MAX_FILE_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="File quá lớn (tối đa 20MB)")
+
+    # Chặn TRƯỚC khi lưu vào MinIO và trước khi chạy OCR/AI — mục đích chính là tiết kiệm
+    # tài nguyên, nên phải chặn ở đây chứ không phải sau khi đã xử lý xong.
+    duplicate = _find_duplicate(db, case_id, content)
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail=f'File này đã có trong hồ sơ ("{duplicate.originalFilename}") — bỏ qua, không cần upload lại.',
+        )
 
     # Không tin mù quáng Content-Type client tự khai báo — xác nhận thật ra có file tên
     # ".webp" nhưng khai báo "image/webp" trong khi nội dung byte thật là JPEG, khiến ảnh
