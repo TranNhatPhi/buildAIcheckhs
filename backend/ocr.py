@@ -202,8 +202,20 @@ def _preprocess_variants(pil_img: Image.Image) -> dict[str, Image.Image]:
     thật, khiến Tesseract dò ra vùng chữ nhưng không đọc nổi ký tự nào (xác nhận: 81 vùng dò
     được, 0 ký tự đọc được). Giữ CLAHE cho ảnh scan mờ/thiếu sáng (vẫn thắng 67/218), thêm
     "plain" cho ảnh có watermark — best-of tự chọn đúng cách cho từng ảnh, không phải đánh
-    đổi nhóm này lấy nhóm kia. Cái giá: chậm hơn ~50% cho mỗi lần OCR kỹ (3 lần chạy
-    Tesseract thay vì 2)."""
+    đổi nhóm này lấy nhóm kia.
+
+    Biến thể thứ 4 "denoise_only" (khử nhiễu, KHÔNG CLAHE) thêm theo yêu cầu chạy đủ 4 lượt.
+    Đo trên cùng 218 trang đó, so với bộ 3 ở trên: mức bù thêm KHIÊM TỐN hơn hẳn — +1947 ký
+    tự (+1.1%, so với +4.5% khi thêm "plain"), thắng 71/218 trang nhưng CỨU 0 trang rỗng
+    (không trang nào cần tới nó mới đọc được chữ). Đã đo cả 3 ứng viên khác cho suất này:
+    "otsu" (nhị phân toàn cục) +0.4%, "no_denoise" +0.3%, "strong_contrast" +0.2% — tức 2
+    biến thể từng bị loại đúng là không đáng quay lại, quyết định loại chúng trước đây chính
+    xác. Nếu cần giảm tải VM, đây là biến thể NÊN BỎ TRƯỚC (bỏ 1 dòng, mất 1.1% ký tự, không
+    mất trang nào).
+
+    Cái giá tổng cộng: mỗi trang chạy Tesseract 4 lần thay vì 2 — chậm gấp đôi so với trước.
+    Áp lên CẢ lần upload PDF đầu tiên (case_documents.py dùng try_harder=True cho PDF), không
+    chỉ nút "Phân tích lại"."""
     if not PREPROCESS_ENABLED:
         base = pil_img.convert("RGB")
         return {"raw": base}
@@ -227,6 +239,12 @@ def _preprocess_variants(pil_img: Image.Image) -> dict[str, Image.Image]:
     # nhạt màu, nơi chính việc "tăng cường" ảnh ở 2 biến thể trên lại làm nền nổi lên ngang
     # chữ thật (xem đo đạc chi tiết ở docstring).
     variants["plain"] = _to_rgb_image(gray)
+
+    # denoise_only: khử nhiễu nhưng KHÔNG CLAHE — nằm giữa "default" và "plain", hợp với ảnh
+    # vừa có nhiễu hạt (scan cũ) vừa có nền hoa văn không chịu được CLAHE.
+    variants["denoise_only"] = _to_rgb_image(
+        cv2.fastNlMeansDenoising(gray, h=7, templateWindowSize=7, searchWindowSize=21)
+    )
 
     return variants
 
