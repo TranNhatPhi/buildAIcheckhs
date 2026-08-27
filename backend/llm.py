@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import time
 
 from openai import (
     APIConnectionError,
@@ -234,10 +235,40 @@ for _n in range(1, _env_int("GEMINI_MAX_KEYS", 20) + 1):
         _seen_keys.add(_key)
         _GEMINI_PAIRS.append((_label, _key))
 
+# max_retries=0 — KHÁC pool DeepSeek (để 1). Cố ý: SDK openai tự retry 429 kèm backoff
+# TRƯỚC KHI ném lỗi ra (log thật: "Retrying request to /chat/completions in 0.44 seconds"),
+# nên mỗi cặp (model, key) đã cạn hạn mức tốn 2 request + ~0.4s ngủ thay vì 1 request. Mà
+# retry lại ĐÚNG key vừa báo hết hạn mức thì gần như chắc chắn hỏng tiếp — vòng lặp
+# model x key trong try_gemini mới là cơ chế thử lại đúng nghĩa. Tắt retry của SDK để
+# fallback không bị chậm gấp đôi một cách vô ích.
 _gemini_clients = [
-    (label, OpenAI(base_url=GEMINI_BASE_URL, api_key=key, timeout=600.0, max_retries=1))
+    (label, OpenAI(base_url=GEMINI_BASE_URL, api_key=key, timeout=600.0, max_retries=0))
     for label, key in _GEMINI_PAIRS
 ]
+
+# ---------------------------------------------------------------------------
+# Ghi nhớ chỗ đã cạn để KHÔNG dò lại — thứ quyết định tốc độ fallback
+# ---------------------------------------------------------------------------
+# Vấn đề đã quan sát thật: mỗi lệnh gọi duyệt lại ma trận TỪ ĐẦU, không nhớ gì. Trace
+# production cho thấy cả 5 key của gemini-3.7-flash bị 429, rồi lệnh gọi NGAY SAU ĐÓ lại dò
+# đúng 5 key đó và lại 429 đủ 5 lần. File 7 trang = 7 lần OCR = dò lại 7 lượt cùng một chỗ
+# đã biết chắc là cạn. Đây là lý do chính khiến fallback "lâu sao sao".
+#
+# Cách chữa: nhớ lại trong bộ nhớ tiến trình, bỏ qua trong thời gian nghỉ.
+#   - 429 -> cạn theo TỪNG CẶP (model, key), vì hạn mức tính riêng cho từng cặp.
+#   - 5xx -> hỏng theo MODEL (mọi key đều gọi vào cùng model đó), nghỉ ngắn hơn vì 503 của
+#     Google là quá tải TẠM THỜI (đã thấy 3.7-flash 503 rồi vài phút sau chạy lại bình thường).
+# Hết thời gian nghỉ thì tự thử lại — nếu vẫn cạn thì chỉ tốn đúng 1 lượt rồi lại nghỉ tiếp,
+# tự điều chỉnh, không cần biết chính xác hạn mức reset lúc nào.
+#
+# CỐ Ý dùng dict thường không khoá: route FastAPI dạng `def` chạy trong threadpool nên nhiều
+# luồng cùng đụng vào đây, nhưng thao tác chỉ là get/set 1 khoá bất biến — dưới GIL là an
+# toàn, và kể cả có ghi đè lẫn nhau thì hậu quả xấu nhất là dò thừa 1 lượt, không sai kết quả.
+GEMINI_KEY_COOLDOWN_SECONDS = _env_int("GEMINI_KEY_COOLDOWN_SECONDS", 60)
+GEMINI_MODEL_COOLDOWN_SECONDS = _env_int("GEMINI_MODEL_COOLDOWN_SECONDS", 30)
+
+_key_cooldown: dict[tuple[str, str], float] = {}  # (model, nhãn key) -> thời điểm hết nghỉ
+_model_cooldown: dict[str, float] = {}            # model -> thời điểm hết nghỉ
 
 logger.info(
     "LLM: Gemini %d key(s) x %d model %s (nguồn chính) — DeepSeek %d key(s) (dự phòng).",
@@ -261,10 +292,18 @@ def try_gemini(
     chỉ tốn thêm vài lượt gọi. Xem GEMINI_LITE_MODELS để biết vì sao đáng làm vậy."""
     max_tokens = GEMINI_MAX_OUTPUT_TOKENS
     chain = (GEMINI_LITE_MODELS + GEMINI_MODELS) if prefer_lite else GEMINI_MODELS
+    now = time.monotonic()
+    skipped = 0
     for model in chain:
+        if _model_cooldown.get(model, 0.0) > now:
+            skipped += len(_gemini_clients)
+            continue
         # Xáo ngẫu nhiên thứ tự key để tải rải đều thay vì luôn dồn vào key đầu tiên — cùng
         # cách đã dùng cho pool DeepSeek (get_deepseek_client).
         for label, client in random.sample(_gemini_clients, len(_gemini_clients)):
+            if _key_cooldown.get((model, label), 0.0) > now:
+                skipped += 1
+                continue
             try:
                 completion = client.chat.completions.create(
                     model=model, max_tokens=max_tokens, messages=messages, **extra
@@ -286,7 +325,12 @@ def try_gemini(
                             step, model, label, max_tokens,
                         )
                     else:
-                        logger.info("%s: Gemini %s, key %s.", step, model, label)
+                        logger.info("%s: Gemini %s, key %s.%s", step, model, label,
+                                    f" (bỏ qua {skipped} chỗ đang nghỉ)" if skipped else "")
+                    # Gọi được nghĩa là chỗ này đã hồi — xoá dấu nghỉ để lần sau không bỏ qua
+                    # oan (vd cooldown đặt lúc 429 nhưng hạn mức đã reset sớm hơn dự kiến).
+                    _key_cooldown.pop((model, label), None)
+                    _model_cooldown.pop(model, None)
                     return content.strip()
                 # Rỗng hoàn toàn: hay gặp nhất là trần token quá thấp tới mức model dùng hết
                 # sạch vào phần suy luận, chưa kịp sinh chữ nào (đã tái hiện được: cùng 1 câu
@@ -301,7 +345,9 @@ def try_gemini(
                 # gemini-3.6-flash, 15 với gemini-3.7-flash — rất dễ chạm khi upload nhiều
                 # file cùng lúc, nên nhiều model x nhiều key mới là thứ giữ cho pipeline
                 # không tụt hết về DeepSeek.
-                logger.info("%s: Gemini %s key %s hết hạn mức (429) — thử tiếp.", step, model, label)
+                _key_cooldown[(model, label)] = now + GEMINI_KEY_COOLDOWN_SECONDS
+                logger.info("%s: Gemini %s key %s hết hạn mức (429) — nghỉ %ds, thử tiếp.",
+                            step, model, label, GEMINI_KEY_COOLDOWN_SECONDS)
             except AuthenticationError:
                 # Key sai/bị thu hồi — lỗi của RIÊNG key này. Phải bắt TRƯỚC APIStatusError vì
                 # AuthenticationError là lớp con của nó, nếu không sẽ rơi vào nhánh "break"
@@ -322,8 +368,9 @@ def try_gemini(
                 # gemini-3.7-flash — 503 rồi sau đó chạy bình thường), hay 404 khi Google
                 # ngừng model. Đổi key vô ích vì key nào cũng gọi vào đúng model đó, nên bỏ
                 # các key còn lại và sang MODEL kế tiếp trong chuỗi.
-                logger.warning("%s: Gemini %s lỗi phía model (mã %s) — sang model kế tiếp.",
-                               step, model, e.status_code)
+                _model_cooldown[model] = now + GEMINI_MODEL_COOLDOWN_SECONDS
+                logger.warning("%s: Gemini %s lỗi phía model (mã %s) — nghỉ %ds, sang model kế tiếp.",
+                               step, model, e.status_code, GEMINI_MODEL_COOLDOWN_SECONDS)
                 break
             except Exception as e:  # noqa: BLE001
                 # Timeout/mất mạng: có thể do riêng lần gọi này, thử nốt các key còn lại.

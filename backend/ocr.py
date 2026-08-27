@@ -31,6 +31,7 @@ import io
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
 import fitz  # PyMuPDF
@@ -693,6 +694,12 @@ GEMINI_OCR_PROMPT = (
 # suất thì vẫn tự rơi xuống chuỗi model thường rồi mới tới Tesseract, không mất khả năng gì.
 GEMINI_LITE_MAX_PAGES = llm._env_int("GEMINI_LITE_MAX_PAGES", 1)
 
+# Số trang gọi Gemini song song trong 1 file. Không để quá cao: mỗi luồng là 1 request, gọi
+# ồ ạt chạm hạn mức RPM nhanh hơn và phần thời gian tiết kiệm được lại mất vào việc dò
+# key/model khác. Nhiều file cũng đang chạy song song sẵn (UploadDropzone gửi 4 file 1 lúc),
+# nên con số này nhân lên theo số file đang xử lý.
+OCR_PAGE_CONCURRENCY = llm._env_int("OCR_PAGE_CONCURRENCY", 4)
+
 
 def gemini_ocr_page(
     page_img: Image.Image, page_no: int = 1, prefer_lite: bool = False
@@ -798,16 +805,38 @@ def extract_text(
     # lite nửa kia bằng bản thường chỉ làm kết quả khó lý giải khi soát lại.
     prefer_lite = len(pages) <= GEMINI_LITE_MAX_PAGES
 
+    # Gọi Gemini cho các trang SONG SONG. Đây là chỗ tiết kiệm lớn nhất còn lại: đo thật trên
+    # file 2 trang, OCR trang 1 mất 11-22s còn trang 2 mất 48-72s — chạy nối đuôi là 60-95s,
+    # chạy song song chỉ còn bằng trang chậm nhất. File 7 trang thì chênh lệch gấp bội.
+    # Thời gian ở đây gần như toàn bộ là CHỜ MẠNG (Gemini xử lý), không phải CPU của mình,
+    # nên thread là đúng công cụ — GIL không cản.
+    #
+    # Giới hạn số luồng: gọi ồ ạt sẽ chạm hạn mức RPM nhanh hơn, mà chạm rồi thì phần thắng
+    # được lại mất vào việc dò key/model khác. 4 là điểm cân bằng, chỉnh được qua .env.
+    gemini_texts: list[str | None] = [None] * len(pages)
+    if want_gemini and pages:
+        with ThreadPoolExecutor(max_workers=min(OCR_PAGE_CONCURRENCY, len(pages))) as pool:
+            futures = {
+                pool.submit(gemini_ocr_page, img, i + 1, prefer_lite): i
+                for i, img in enumerate(pages)
+            }
+            for fut in as_completed(futures):
+                i = futures[fut]
+                try:
+                    gemini_texts[i] = fut.result()
+                except Exception as e:  # noqa: BLE001
+                    # Không để 1 trang lỗi làm hỏng cả file — trang đó tự rơi về Tesseract.
+                    logger.warning("OCR trang %d lỗi (%s) — dùng Tesseract cho trang này.",
+                                   i + 1, type(e).__name__)
+
+    # Trang nào Gemini không đọc được thì đọc bằng Tesseract. CỐ Ý chạy TUẦN TỰ ở đây (khác
+    # phần trên): Tesseract ngốn CPU thật, chạy song song nhiều trang sẽ giành CPU với các
+    # request khác đang xử lý trên cùng VM.
     page_texts = []
     all_lines: list[OcrLine] = []
     for i, page_img in enumerate(pages):
-        text = (
-            gemini_ocr_page(page_img, page_no=i + 1, prefer_lite=prefer_lite)
-            if want_gemini
-            else None
-        )
+        text = gemini_texts[i]
         if text is None:
-            # Hết hạn mức Gemini / bị tắt / trang lỗi — đọc bằng Tesseract như trước.
             page_lines = ocr_page(page_img)
             all_lines.extend(page_lines)
             text = "\n".join(line.text for line in page_lines)
