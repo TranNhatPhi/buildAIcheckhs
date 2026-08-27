@@ -39,11 +39,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-import random
 from dataclasses import dataclass
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError, OpenAI, RateLimitError
-
+from llm import GEMINI_LOW_REASONING, _env_int, complete_with_fallback, describe_error
 from models import ChecklistItem
 
 logger = logging.getLogger("classify")
@@ -55,64 +53,8 @@ logger = logging.getLogger("classify")
 _NO_THINKING = {"thinking": {"type": "disabled"}}
 
 
-def _describe_deepseek_error(e: Exception) -> str:
-    """Dịch exception kỹ thuật khi gọi DeepSeek API (message gốc từ SDK openai luôn bằng
-    tiếng Anh) sang câu tiếng Việt dễ hiểu cho nhân viên — không hiển thị nguyên văn lên UI."""
-    if isinstance(e, APITimeoutError):
-        return "DeepSeek phản hồi quá lâu (quá thời gian chờ) — thử lại sau."
-    if isinstance(e, APIConnectionError):
-        return "Không kết nối được tới DeepSeek API — kiểm tra kết nối mạng."
-    if isinstance(e, AuthenticationError):
-        return "Sai hoặc thiếu API key DeepSeek — kiểm tra cấu hình DEEPSEEK_API_KEY."
-    if isinstance(e, RateLimitError):
-        return "DeepSeek API đang bị giới hạn tần suất gọi (rate limit) — thử lại sau."
-    if isinstance(e, APIStatusError):
-        return f"DeepSeek API trả về lỗi (mã {e.status_code}) — thử lại sau."
-    if isinstance(e, json.JSONDecodeError):
-        return "DeepSeek trả về nội dung không đúng định dạng, không phân loại được."
-    if isinstance(e, (KeyError, ValueError)):
-        return "Kết quả phân loại từ DeepSeek thiếu dữ liệu hoặc sai định dạng."
-    return "Lỗi không xác định khi gọi DeepSeek API — thử lại sau."
-
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.6"))
 
-# Phân luồng nhiều API key DeepSeek (round-robin ngẫu nhiên) thay vì dồn hết request vào 1
-# key — chỉ có ý nghĩa THẬT SỰ từ sau khi sửa bug async chặn event loop (xem
-# case_documents.py:upload_document): trước đó mọi request OCR/AI vốn đã bị serialize hết
-# nên 1 key không phải nút thắt; giờ nhiều file thật sự chạy song song, dồn hết vào 1 key
-# dễ dính rate-limit của riêng key đó. Các key dự phòng LLM_API_KEY_2..10 đã có sẵn trong
-# .env gốc (project khác để lại, dùng cho "parallel shards") — main.py đã load_dotenv cả
-# 2 file (.env.local rồi .env) nên các biến này đã có sẵn trong os.environ, không cần khai
-# báo thêm ở .env.local.
-_API_KEYS = [
-    key
-    for key in [
-        os.environ["DEEPSEEK_API_KEY"],
-        *(os.getenv(f"LLM_API_KEY_{i}") for i in range(2, 11)),
-    ]
-    if key
-]
-_API_KEYS = list(dict.fromkeys(_API_KEYS))  # bỏ trùng, giữ thứ tự — phòng khi 2 biến trỏ cùng 1 key
-
-_clients = [
-    OpenAI(
-        base_url=os.environ["DEEPSEEK_BASE_URL"],
-        api_key=key,
-        # deepseek-v4-flash là model reasoning — xem giải thích ở CORRECTION_MAX_TOKENS. Nâng
-        # 300s→600s khi thêm SUMMARY_MAX_TOKENS=60000 (bản phân tích chuyên sâu, mục lớn nhất
-        # trong file): theo ước tính ~7ms/token đã quan sát được, 60000 token có thể cần tới
-        # ~420s để sinh xong, sát trần cũ 300s — nâng lên 600s để đủ dư địa cho mọi loại gọi
-        # dùng chung client pool này (correction 40000, summary 60000, classification 8000).
-        timeout=600.0,
-        max_retries=1,
-    )
-    for key in _API_KEYS
-]
-logger.info("DeepSeek client pool: %d key(s) sẵn sàng để phân luồng.", len(_clients))
-
-
-def _get_client() -> OpenAI:
-    return random.choice(_clients)
 
 # ĐÃ THỬ giới hạn max_tokens thấp (4000) để chặn suy luận vô hạn — THẤT BẠI: đã xác nhận
 # bằng thực nghiệm là với input lộn xộn, model dùng HẾT 4000 token chỉ để suy luận
@@ -144,6 +86,14 @@ def _get_client() -> OpenAI:
 #     thêm SUMMARY_MAX_TOKENS=60000) nên không cần đổi thêm.
 CORRECTION_MAX_TOKENS = 60000
 CLASSIFICATION_MAX_TOKENS = 8000
+
+# Text ngắn hơn mức này thì bước sửa OCR ưu tiên model lite của Gemini (hạn mức free gấp 3 —
+# xem GEMINI_LITE_MODELS trong llm.py). Dùng SỐ KÝ TỰ chứ không phải số trang vì hàm sửa lỗi
+# chỉ nhận được text, không biết file mấy trang — mà "ít token" mới đúng là thứ quyết định.
+# 3000 lấy từ số đo thật: tài liệu 1 trang đọc ra 723-1036 ký tự, 2 trang khoảng 1300-2200 —
+# nên 3000 phủ trọn nhóm 1-2 trang mà không đụng tới tài liệu dày (7 trang: 7541 ký tự).
+# CHỈ áp cho bước sửa lỗi (việc máy móc), KHÔNG áp cho phân loại — xem docstring đầu file.
+LITE_CORRECTION_MAX_CHARS = _env_int("LITE_CORRECTION_MAX_CHARS", 3000)
 
 CORRECTION_SYSTEM_PROMPT = """Bạn là trợ lý sửa lỗi văn bản OCR tiếng Việt. Bạn sẽ nhận được các
 dòng chữ trích xuất bằng OCR từ một giấy tờ hành chính (căn cước, giấy khai sinh, bằng cấp...).
@@ -182,19 +132,22 @@ def correct_ocr_text(raw_text: str) -> str | None:
     if not raw_text or not raw_text.strip():
         return None
     try:
-        completion = _get_client().chat.completions.create(
-            model=os.environ["DEEPSEEK_MODEL"],
-            max_tokens=CORRECTION_MAX_TOKENS,
-            extra_body=_NO_THINKING,
+        return complete_with_fallback(
+            step="Sửa OCR",
             messages=[
                 {"role": "system", "content": CORRECTION_SYSTEM_PROMPT},
                 {"role": "user", "content": raw_text},
             ],
+            deepseek_max_tokens=CORRECTION_MAX_TOKENS,
+            # Tắt suy luận ở CẢ 2 nhà cung cấp — bước này chỉ sửa chính tả/sắp xếp theo quy
+            # tắc cố định, không cần phán đoán (xem docstring đầu file về thực nghiệm đã làm
+            # với DeepSeek). Hai bên khai báo khác nhau nên phải truyền cả 2 tham số.
+            gemini_reasoning_effort=GEMINI_LOW_REASONING,
+            deepseek_extra_body=_NO_THINKING,
+            prefer_lite=len(raw_text) <= LITE_CORRECTION_MAX_CHARS,
         )
-        corrected = completion.choices[0].message.content
-        return corrected.strip() if corrected else None
     except Exception as e:  # noqa: BLE001
-        logger.warning("Lỗi bước sửa OCR bằng DeepSeek: %s", e)
+        logger.warning("Lỗi bước sửa OCR: %s", e)
         return None
 
 
@@ -268,10 +221,13 @@ def classify_ocr_text(
     text_for_classification = corrected_text or ocr_text
 
     try:
-        completion = _get_client().chat.completions.create(
-            model=os.environ["DEEPSEEK_MODEL"],
-            max_tokens=CLASSIFICATION_MAX_TOKENS,
-            response_format={"type": "json_object"},
+        # KHÔNG truyền reasoning_effort cho Gemini ở bước này — cần suy luận thật để phân
+        # biệt "giấy tờ này của ai trong gia đình" (xem docstring đầu file: DeepSeek tắt
+        # reasoning từng khớp nhầm CCCD của mẹ thành CCCD đương đơn 3/4 lần). Đã kiểm chứng
+        # lại đúng case đó với Gemini để reasoning mặc định: gemini-3.6-flash đúng 6/6 lần,
+        # mỗi lần ~4s, trong khi DeepSeek có reasoning mất hàng chục tới hàng trăm giây.
+        raw = complete_with_fallback(
+            step="Phân loại",
             messages=[
                 {"role": "system", "content": _build_classification_system_prompt(applicable_items)},
                 {
@@ -279,9 +235,10 @@ def classify_ocr_text(
                     "content": f"Tên file gốc: {filename}\n\nNội dung trích xuất được:\n{text_for_classification or '(không đọc được nội dung)'}",
                 },
             ],
+            deepseek_max_tokens=CLASSIFICATION_MAX_TOKENS,
+            response_format={"type": "json_object"},
         )
-        raw = completion.choices[0].message.content or ""
-        parsed = json.loads(raw)
+        parsed = json.loads(raw or "")
 
         matched_item_id = str(parsed["matched_item_id"])
         confidence = float(parsed["confidence"])
@@ -323,7 +280,7 @@ def classify_ocr_text(
             ai_raw_label=None,
             ai_confidence=None,
             ai_reasoning=None,
-            classification_error=f"Lỗi phân loại DeepSeek: {_describe_deepseek_error(e)}",
+            classification_error=f"Lỗi phân loại: {describe_error(e)}",
         )
 
 
@@ -378,14 +335,18 @@ Quy tắc BẮT BUỘC:
 def summarize_case_profile(case_context: str, documents_text: str) -> tuple[str | None, str | None]:
     """Trả về (summary, error_message) — đúng 1 trong 2 có giá trị. Dùng cho nút "Phân tích AI
     chuyên sâu" ở trang Tổng hợp thông tin — chỉ tóm tắt dữ liệu ĐÃ CÓ sẵn trong DB (không OCR
-    lại), nên input đã sạch hơn hẳn so với bước sửa lỗi OCR thô, thường nhanh hơn nhiều."""
+    lại), nên input đã sạch hơn hẳn so với bước sửa lỗi OCR thô, thường nhanh hơn nhiều.
+
+    Thứ tự nhà cung cấp: GEMINI TRƯỚC (mọi model x mọi key, dùng hạn mức miễn phí), HẾT free
+    mới quay về DEEPSEEK — xem llm.complete_with_fallback."""
     if not documents_text.strip():
         return None, "Chưa có file nào được phân loại — chưa có dữ liệu để phân tích."
 
     try:
-        completion = _get_client().chat.completions.create(
-            model=os.environ["DEEPSEEK_MODEL"],
-            max_tokens=SUMMARY_MAX_TOKENS,
+        # Giữ reasoning mặc định ở cả 2 nhà cung cấp — bước này cần suy luận thật (đối chiếu
+        # chéo nhiều nguồn dữ liệu để phát hiện bất nhất), theo đúng yêu cầu người dùng.
+        summary = complete_with_fallback(
+            step="Phân tích chuyên sâu",
             messages=[
                 {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                 {
@@ -393,11 +354,11 @@ def summarize_case_profile(case_context: str, documents_text: str) -> tuple[str 
                     "content": f"{case_context}\n\nThông tin trích xuất từ các giấy tờ đã nộp:\n{documents_text}",
                 },
             ],
+            deepseek_max_tokens=SUMMARY_MAX_TOKENS,
         )
-        summary = completion.choices[0].message.content
-        if not summary or not summary.strip():
-            return None, "DeepSeek không trả về nội dung tóm tắt — thử lại sau."
-        return summary.strip(), None
+        if not summary:
+            return None, "AI không trả về nội dung tóm tắt — thử lại sau."
+        return summary, None
     except Exception as e:  # noqa: BLE001
         logger.warning("Lỗi phân tích AI chuyên sâu: %s", e)
-        return None, _describe_deepseek_error(e)
+        return None, describe_error(e)

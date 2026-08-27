@@ -28,6 +28,34 @@ x-backend-common: &backend-common
     LLM_API_KEY_3: ${LLM_API_KEY_3:-}
     LLM_API_KEY_4: ${LLM_API_KEY_4:-}
     DEEPSEEK_MODEL: deepseek-v4-flash
+    # ── Gemini: nguồn CHÍNH cho OCR + sửa lỗi + phân loại + phân tích sâu ──────────────
+    # DeepSeek ở trên giờ chỉ còn là dự phòng khi hết hạn mức free của Gemini (xem
+    # backend/llm.py). Thiếu hết các key này thì app VẪN CHẠY — chỉ là mọi thứ rơi về
+    # DeepSeek (tốn tiền) và OCR rơi về Tesseract (đọc kém hơn hẳn với giấy nền hoa văn).
+    #
+    # Đánh số LIÊN TỤC v1, v2, v3... — backend quét từ v1 và DỪNG ở số đầu tiên không có,
+    # nên .env.prod nhảy cóc (chỉ có v1 và v3) sẽ khiến v3 bị bỏ qua âm thầm.
+    GEMINI_API_KEYv1: ${GEMINI_API_KEYv1:-}
+    GEMINI_API_KEYv2: ${GEMINI_API_KEYv2:-}
+    GEMINI_API_KEYv3: ${GEMINI_API_KEYv3:-}
+    GEMINI_API_KEYv4: ${GEMINI_API_KEYv4:-}
+    GEMINI_API_KEYv5: ${GEMINI_API_KEYv5:-}
+    # Khai sẵn dư vài slot: thêm key mới chỉ cần sửa .env.prod, KHÔNG phải sửa file này rồi
+    # build lại. Slot bỏ trống là chuỗi rỗng, backend tự bỏ qua — không tốn gì.
+    GEMINI_API_KEYv6: ${GEMINI_API_KEYv6:-}
+    GEMINI_API_KEYv7: ${GEMINI_API_KEYv7:-}
+    GEMINI_API_KEYv8: ${GEMINI_API_KEYv8:-}
+    # Các biến tinh chỉnh dưới đây ĐỀU CÓ MẶC ĐỊNH trong code — để rỗng là dùng mặc định
+    # (backend/llm.py coi chuỗi rỗng như chưa đặt, cố ý xử lý vậy vì cú pháp `${X:-}` của
+    # Compose LUÔN set biến, chỉ là set thành rỗng). Có mặt ở đây để đổi được trên VM mà
+    # không phải sửa code + build lại image:
+    #   GEMINI_OCR_ENABLED=0  -> tắt hẳn OCR bằng Gemini, quay về Tesseract. Đây là CÔNG TẮC
+    #       KHẨN nếu phát hiện Gemini bịa nội dung (rủi ro có thật của LLM đọc ảnh — xem
+    #       ghi chú ở gemini_ocr_page trong backend/ocr.py).
+    #   GEMINI_MODELS / GEMINI_LITE_MODELS -> đổi model khi Google ngừng/đổi tên model.
+    GEMINI_OCR_ENABLED: ${GEMINI_OCR_ENABLED:-}
+    GEMINI_MODELS: ${GEMINI_MODELS:-}
+    GEMINI_LITE_MODELS: ${GEMINI_LITE_MODELS:-}
     CONFIDENCE_THRESHOLD: "0.6"
     CORS_ORIGINS: https://${APP_DOMAIN}
     ADMIN_PASSWORD: ${ADMIN_PASSWORD}

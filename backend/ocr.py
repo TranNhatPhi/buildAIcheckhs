@@ -26,6 +26,7 @@ message / trao đổi với người dùng để biết chi tiết thực nghi�
 """
 from __future__ import annotations
 
+import base64
 import io
 import logging
 import os
@@ -38,6 +39,7 @@ import pytesseract
 from pytesseract import Output
 from PIL import Image, ImageDraw, ImageFont
 
+import llm
 import storage
 
 logger = logging.getLogger("ocr")
@@ -640,8 +642,107 @@ def save_pdf_page_images(case_id: str, document_id: str, pages: list[Image.Image
         storage.upload_object(key, buf.getvalue(), "image/png")
 
 
+# ---------------------------------------------------------------------------
+# Đọc chữ bằng Gemini Vision — nguồn CHÍNH, Tesseract giờ là nguồn dự phòng
+# ---------------------------------------------------------------------------
+# VÌ SAO ĐỔI: toàn bộ phần tiền xử lý ảnh ở trên (deskew, CLAHE, khử nhiễu, khử màu, best-of
+# 5 biến thể) là để bù cho việc Tesseract chỉ so KHỚP HÌNH DẠNG ký tự, không hiểu nội dung.
+# Với giấy tờ khó, mức đó vẫn không đủ. Số đo trên đúng 1 trang thật (giấy chứng nhận kết
+# hôn nền hoa văn bảo an đỏ — "6. Trần Văn Hùng - ĐKKH.pdf" trang 2):
+#
+#    trường            Tesseract (đã có biến thể dropout)   Gemini 3.7 Flash
+#    tên vợ + chồng    MẤT HẲN CẢ HAI                       TRẦN VĂN HÙNG / TRẦN THỊ THUẬN
+#    số CMND           "18372 3316" / "1 321 g373"          183725316 / 183910373
+#    số + quyển số     "18/2015" (sai)                      18/2013, Quyển số 01
+#    ngày sinh         mất                                  12/7/1989 / 02/4/1992
+#    ngày đăng ký      mất                                  18/02/2013
+#
+# Gemini đọc đúng cả dòng chữ dọc cỡ nhỏ ở lề trang. Lý do bản chất: nó suy luận theo NGỮ
+# CẢNH (biết đây là mẫu giấy chứng nhận kết hôn nên biết chỗ nào là tên, chỗ nào là số
+# CMND), còn Tesseract chỉ nhìn hình dạng từng ký tự rời.
+#
+# RỦI RO PHẢI BIẾT: đây cũng chính là điểm yếu — model hiểu ngữ cảnh thì cũng có thể BỊA
+# theo ngữ cảnh, kiểu "ảo giác" đã gặp với VietOCR (xem docstring đầu file, lý do bỏ
+# VietOCR). Prompt dưới đây vì vậy nhấn mạnh KHÔNG ĐOÁN BỪA. Tesseract tuy đọc kém hơn
+# nhưng không bao giờ bịa, nên vẫn giữ nguyên làm nguồn dự phòng chứ không xoá.
+GEMINI_OCR_ENABLED = (os.getenv("GEMINI_OCR_ENABLED") or "1") != "0"
+
+# 1600px cạnh dài + JPEG q85: đo thật trên trang khó ở trên — ảnh 528KB, tốn 1180 token, đọc
+# đúng mọi trường kể cả chữ dọc bé ở lề, mất 9.0s. Render gốc 300 DPI là 3509x2481, gửi
+# nguyên sẽ nặng gấp mấy lần mà không thêm thông tin (ảnh gốc trong PDF vốn chỉ 2340x1654).
+GEMINI_OCR_MAX_DIM = llm._env_int("GEMINI_OCR_MAX_DIM", 1600)
+GEMINI_OCR_JPEG_QUALITY = llm._env_int("GEMINI_OCR_JPEG_QUALITY", 85)
+# Không còn hằng số trần token riêng cho OCR: llm.try_gemini luôn chạy KỊCH TRẦN của model
+# (llm.GEMINI_MAX_OUTPUT_TOKENS = 65536). Với OCR đây là lựa chọn đúng — bị cắt ngang nghĩa
+# là MẤT NỬA CUỐI TRANG mà API vẫn trả 200, không báo lỗi gì.
+
+GEMINI_OCR_PROMPT = (
+    "Trích xuất TOÀN BỘ văn bản trong ảnh tài liệu này, giữ nguyên bố cục theo dòng.\n"
+    "- Chỉ trả về nội dung chữ đọc được, KHÔNG thêm lời dẫn, KHÔNG giải thích, "
+    "KHÔNG mô tả hình ảnh.\n"
+    "- TUYỆT ĐỐI KHÔNG BỊA: chỗ nào thực sự không đọc được thì bỏ qua, không suy đoán nội "
+    "dung theo mẫu giấy tờ. Thà thiếu còn hơn sai.\n"
+    "- Giữ nguyên chính xác mọi con số, ngày tháng, số giấy tờ đúng như trên ảnh.\n"
+    "- Nếu ảnh không có chữ nào, trả về đúng chuỗi rỗng."
+)
+
+
+# Tài liệu bao nhiêu trang thì coi là "nhỏ" và ưu tiên model lite (15 RPM / 50 RPD, gấp 3
+# hạn mức bản thường) — giữ suất của bản thường cho tài liệu dày/khó. Mặc định 1: đúng nhóm
+# giấy tờ 1 trang (CCCD, giấy khai sinh, bằng cấp) vốn chiếm phần lớn hồ sơ. Nếu lite hết
+# suất thì vẫn tự rơi xuống chuỗi model thường rồi mới tới Tesseract, không mất khả năng gì.
+GEMINI_LITE_MAX_PAGES = llm._env_int("GEMINI_LITE_MAX_PAGES", 1)
+
+
+def gemini_ocr_page(
+    page_img: Image.Image, page_no: int = 1, prefer_lite: bool = False
+) -> str | None:
+    """Đọc chữ 1 trang bằng Gemini Vision. Trả None khi KHÔNG dùng được (hết hạn mức mọi
+    model x mọi key, hoặc lỗi ảnh) — nơi gọi tự chuyển sang Tesseract.
+
+    KHÔNG trả toạ độ dòng như Tesseract (Gemini chỉ trả text thuần), nên đường này không
+    vẽ được khung debug ở /ocr/test — đó là lý do extract_text có tham số use_gemini.
+
+    Dùng chung pool + logic xoay vòng key với các bước LLM khác (llm.try_gemini): mỗi lần
+    gọi xáo ngẫu nhiên thứ tự key, duyệt hết model này tới model khác. Không có nhánh
+    DeepSeek vì DeepSeek không đọc được ảnh — dự phòng ở đây là Tesseract chạy tại chỗ."""
+    try:
+        img = page_img.convert("RGB")
+        if max(img.size) > GEMINI_OCR_MAX_DIM:
+            ratio = GEMINI_OCR_MAX_DIM / max(img.size)
+            img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=GEMINI_OCR_JPEG_QUALITY)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Không mã hoá được ảnh trang %d để gửi Gemini (%s) — dùng Tesseract.",
+                       page_no, type(e).__name__)
+        return None
+
+    text = llm.try_gemini(
+        step=f"OCR trang {page_no}",
+        prefer_lite=prefer_lite,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": GEMINI_OCR_PROMPT},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                ],
+            }
+        ],
+    )
+    if text is None:
+        logger.info("OCR trang %d: hết lượt Gemini — chuyển sang Tesseract.", page_no)
+    return text
+
+
 def extract_text(
-    content: bytes, filename: str, mime_type: str, try_harder: bool = False
+    content: bytes,
+    filename: str,
+    mime_type: str,
+    try_harder: bool = False,
+    use_gemini: bool = True,
 ) -> tuple[str, int, list[OcrLine], list[Image.Image]]:
     """Trả về (text, pageCount, lines, pages). `lines` giữ toạ độ từng dòng (dùng cho vẽ
     khung debug ở /ocr/test — không còn dùng cho prompt LLM, xem ghi chú ở
@@ -649,10 +750,18 @@ def extract_text(
     (non-PDF) — trả ra để nơi gọi lưu lại vào MinIO nếu cần (vd PDF nhiều trang), tránh
     phải render PDF lại lần 2 chỉ để lấy ảnh.
 
+    Thứ tự đọc chữ TỪNG TRANG: GEMINI VISION trước, hết hạn mức free mới về TESSERACT chạy
+    tại chỗ (xem gemini_ocr_page). Fallback tính theo TỪNG TRANG, không phải cả file — 1
+    trang lỗi/hết suất chỉ trang đó dùng Tesseract, các trang khác vẫn được Gemini đọc.
+
+    `use_gemini=False`: bỏ hẳn Gemini, chỉ chạy Tesseract. Dùng cho trang debug /ocr/test —
+    nơi đó cần chính TOẠ ĐỘ từng dòng do Tesseract dò ra để vẽ khung, mà Gemini không trả
+    toạ độ (xem gemini_ocr_page), nên đi đường Gemini sẽ làm công cụ debug đó vô dụng.
+
     `try_harder=True`: mỗi trang chạy Tesseract với NHIỀU cách tiền xử lý khác nhau
-    (_preprocess_variants), giữ lại kết quả đọc được nhiều ký tự nhất — chậm hơn hẳn (~4
+    (_preprocess_variants), giữ lại kết quả đọc được nhiều ký tự nhất — chậm hơn hẳn (~5
     lần) nên chỉ bật cho "Phân tích lại" (nhân viên chủ động chờ để có kết quả tốt hơn),
-    không bật cho lần OCR đầu lúc upload.
+    không bật cho lần OCR đầu lúc upload. CHỈ có tác dụng ở đường Tesseract.
 
     Raise ValueError nếu không đọc được file, hoặc nếu Tesseract xử lý quá
     TESSERACT_TIMEOUT_SECONDS mà không xong (xem _lines_from_preprocessed)."""
@@ -669,14 +778,39 @@ def extract_text(
     if not pages:
         return "", 0, [], []
 
-    ocr_page = _ocr_single_image_lines_best_of if try_harder else _ocr_single_image_lines
+    want_gemini = use_gemini and GEMINI_OCR_ENABLED
+
+    # Khi Gemini đang lo lần đọc đầu, Tesseract chỉ còn là PHƯƠNG ÁN CUỐI — lúc đó ưu tiên
+    # đọc được nhiều nhất chứ không phải nhanh, nên luôn dùng best-of bất kể `try_harder`.
+    # Đây là chỗ ĐÃ TỪNG hổng thật: nơi gọi lúc upload truyền try_harder=is_pdf
+    # (case_documents.py), tức ẢNH jpg/png chỉ chạy 1 biến thể — đo trên giấy khai sinh nền
+    # hoa văn đỏ, 1 biến thể đọc được ĐÚNG 2 KÝ TỰ trong khi best-of đọc được 1013. Trước
+    # đây lỗ hổng đó ít lộ vì đường Tesseract là đường chính; giờ nó là lưới an toàn cuối
+    # cùng nên đọc hỏng ở đây là mất hẳn nội dung.
+    ocr_page = (
+        _ocr_single_image_lines_best_of
+        if (want_gemini or try_harder)
+        else _ocr_single_image_lines
+    )
+
+    # Tài liệu ít trang -> ưu tiên model lite (xem GEMINI_LITE_MAX_PAGES). Quyết định 1 lần
+    # cho cả file chứ không theo từng trang: 1 file là 1 loại giấy tờ, xử lý nửa trang bằng
+    # lite nửa kia bằng bản thường chỉ làm kết quả khó lý giải khi soát lại.
+    prefer_lite = len(pages) <= GEMINI_LITE_MAX_PAGES
 
     page_texts = []
     all_lines: list[OcrLine] = []
     for i, page_img in enumerate(pages):
-        page_lines = ocr_page(page_img)
-        all_lines.extend(page_lines)
-        text = "\n".join(line.text for line in page_lines)
+        text = (
+            gemini_ocr_page(page_img, page_no=i + 1, prefer_lite=prefer_lite)
+            if want_gemini
+            else None
+        )
+        if text is None:
+            # Hết hạn mức Gemini / bị tắt / trang lỗi — đọc bằng Tesseract như trước.
+            page_lines = ocr_page(page_img)
+            all_lines.extend(page_lines)
+            text = "\n".join(line.text for line in page_lines)
         if len(pages) > 1:
             page_texts.append(f"--- Trang {i + 1} ---\n{text}")
         else:

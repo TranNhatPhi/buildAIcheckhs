@@ -19,32 +19,48 @@ export function estimateProcessingSeconds(pageCount: number | null): number {
 }
 
 // Ước tính thời gian "Phân tích AI chuyên sâu" (nút ở trang Tổng hợp thông tin) — hiệu chỉnh
-// bằng số đo THẬT, KHÔNG đoán. Đo theo số tài liệu: 4 → 39s, 12 → 108s, 20 → 241s.
+// bằng số đo THẬT, KHÔNG đoán.
 //
-// QUAN TRỌNG — độ dao động rất lớn, đây là điều quyết định cách thiết kế hàm này: đo LẶP LẠI
-// 5 lần trên CÙNG 1 hồ sơ (6 tài liệu, nội dung y hệt) ra 46.7s / 68.5s / 89.0s / 108s /
-// 186.7s — chênh nhau 4 LẦN. Độ trễ của model reasoning phụ thuộc tải phía DeepSeek và độ dài
-// suy luận model tự chọn, không phải hàm xác định theo input.
+// HIỆU CHỈNH LẠI sau khi backend đổi nhà cung cấp: phân tích chuyên sâu giờ chạy GEMINI
+// trước (miễn phí), hết hạn mức mới quay về DeepSeek (xem summarize_case_profile trong
+// backend/classify.py). Gemini nhanh hơn HẲN nên công thức cũ (hiệu chỉnh theo DeepSeek:
+// 20 + 12n) giờ ước quá lâu — vd 20 tài liệu nó báo ~4 phút trong khi Gemini chạy xong
+// trong 38s.
 //
-// Vì vậy CỐ Ý KHÔNG khớp công thức chính xác vào các điểm đo lẻ: bản đầu tiên viết theo dạng
-// bậc hai khớp được sai số trung bình 2.8% trên 4 điểm — nhưng đó là khớp vào NHIỄU, và tệ hơn
-// là khớp trúng lần đo NHANH NHẤT (47s cho 6 tài liệu, trong khi trung vị thật ~89s), nên sẽ
-// liên tục báo "sắp xong" rồi bắt nhân viên chờ thêm gấp mấy lần — trải nghiệm tệ hơn hẳn so
-// với việc báo lâu hơn thực tế. Giờ dùng dạng TUYẾN TÍNH đơn giản, nhắm vào TRUNG VỊ và
-// nghiêng về phía thận trọng (ước lâu hơn): khớp trung vị đo được ở 6 tài liệu (92s vs 89s) và
-// ở 20 tài liệu (260s vs 241s).
+// Số đo Gemini (gemini-3.6-flash), 8 hồ sơ thật x lặp 3 lần = 24 phép đo, cột giữa là TRUNG VỊ:
+//    n= 2   12.8 / 15.9 / 17.4
+//    n= 4   12.0 / 13.7 / 14.8
+//    n= 6   20.4 / 22.3 / 22.8
+//    n=11   22.3 / 29.9 / 30.0
+//    n=12   23.4 / 28.4 / 31.1     (3 hồ sơ khác nhau cùng n=12: trung vị 28.4 / 27.1 / 28.1
+//    n=12   25.1 / 27.1 / 30.1      — rất ổn định giữa các hồ sơ, không chỉ giữa các lần đo)
+//    n=12   25.8 / 28.1 / 28.4
+//    n=20   30.4 / 38.4 / 40.2
+// Dao động giữa các lần đo CÙNG hồ sơ chỉ ~1.1-1.35 lần, khác hẳn DeepSeek (đo được tới 4
+// LẦN chênh lệch trên cùng input) — nên ước tính lần này đáng tin hơn nhiều.
+//
+// Vẫn CỐ Ý dùng dạng TUYẾN TÍNH đơn giản, không khớp sát từng điểm: điểm n=4 (13.7s) còn
+// NHANH HƠN n=2 (15.9s), tức vẫn có nhiễu, và bài học cũ vẫn đúng — khớp vào nhiễu thì tệ
+// hơn ước hơi lệch. 13 + 1.3n bám trung vị tốt ở mọi mức trừ đúng điểm nhiễu đó:
+//    n=2 -> 15.6 (đo 15.9)   n=6 -> 20.8 (22.3)   n=12 -> 28.6 (27.9)   n=20 -> 39 (38.4)
 export function estimateAnalysisSeconds(documentCount: number): number {
   const n = Math.max(1, documentCount);
-  return Math.round(20 + 12 * n);
+  return Math.round(13 + 1.3 * n);
 }
 
-// Khoảng dao động quanh ước tính trung vị — hiển thị dạng KHOẢNG ("khoảng 1–3 phút") thay vì
-// một con số cụ thể, vì với mức dao động 4 lần đã đo được thì một con số chính xác tới từng
-// giây là thông tin SAI LỆCH: nó tạo cảm giác chắc chắn mà dữ liệu thật không hề có. Hệ số
-// 0.6–2.0 lấy từ chính khoảng đo lặp lại (46.7s–186.7s quanh trung vị 89s ≈ 0.52–2.1 lần).
+// Khoảng dao động — hiển thị dạng KHOẢNG ("khoảng 1–2 phút") thay vì con số chính xác tới
+// từng giây, vì con số lẻ tạo cảm giác chắc chắn mà dữ liệu thật không có.
+//
+// Khoảng này CỐ Ý rộng lệch hẳn về phía trên (0.8x - 4.5x, không đối xứng) vì thời gian giờ
+// PHỤ THUỘC NHÀ CUNG CẤP NÀO PHỤC VỤ, mà lúc hiện thanh tiến trình thì chưa biết được:
+//   - đường thường gặp (Gemini, còn hạn mức free): sát ước tính, hệ số ~0.8-1.35
+//   - đường dự phòng (đã hết cả 4 model x 3 key Gemini -> DeepSeek): chậm hơn ~3-4 lần, đo
+//     thật 12 tài liệu mất 108s và 166.7s so với ~28s của Gemini
+// Cận trên 4.5x để cả trường hợp rơi về DeepSeek vẫn nằm TRONG khoảng đã báo, thay vì báo
+// "sắp xong" rồi bắt nhân viên chờ gấp mấy lần — đúng lỗi đã sửa ở bản trước.
 export function analysisRangeSeconds(documentCount: number): [number, number] {
   const mid = estimateAnalysisSeconds(documentCount);
-  return [Math.round(mid * 0.6), Math.round(mid * 2.0)];
+  return [Math.round(mid * 0.8), Math.round(mid * 4.5)];
 }
 
 // Làm tròn sang phút cho dễ đọc — với sai số hàng chục giây thì hiện "1–3 phút" trung thực hơn

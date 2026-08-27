@@ -118,7 +118,11 @@ def test_ocr(file: UploadFile = File(...)):
     mime_type = file.content_type or ""
 
     try:
-        text, page_count, lines, pages = ocr.extract_text(content, filename, mime_type)
+        # use_gemini=False: trang debug này vẽ khung TOẠ ĐỘ từng dòng do Tesseract dò ra —
+        # Gemini chỉ trả text thuần, không có toạ độ, đi đường đó thì không còn gì để vẽ.
+        text, page_count, lines, pages = ocr.extract_text(
+            content, filename, mime_type, use_gemini=False
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001
