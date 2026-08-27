@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedDocumentText } from "@/components/FormattedDocumentText";
 import {
   API_URL,
+  analysisRangeSeconds,
   estimateAnalysisSeconds,
   formatElapsed,
-  formatRemaining,
+  formatMinuteRange,
   parseUtcDate,
 } from "@/lib/format";
 import type {
@@ -151,12 +152,17 @@ export function CaseSummary({
     [items]
   );
   const estimatedSeconds = estimateAnalysisSeconds(analysedDocCount);
+  const [rangeLow, rangeHigh] = analysisRangeSeconds(analysedDocCount);
   const elapsedSeconds =
     mounted && startedAt ? Math.max(0, Math.floor((nowTick - parseUtcDate(startedAt).getTime()) / 1000)) : 0;
-  const remainingSeconds = Math.max(0, estimatedSeconds - elapsedSeconds);
   // Chặn trần 95%: chỉ có backend mới biết chắc lúc nào xong, nên không bao giờ hiện 100% khi
   // thực tế còn đang chạy — tránh cảm giác "thanh đầy rồi mà vẫn quay" trông như bị treo.
   const analysisPercent = Math.min(95, Math.round((elapsedSeconds / Math.max(1, estimatedSeconds)) * 100));
+  // Đã vượt quá cả cận trên của khoảng ước tính — đổi hẳn thông điệp thay vì cứ hiện 1 khoảng
+  // mà thực tế đã trôi qua từ lâu (nhìn như hệ thống đang nói dối/bị treo). Vẫn KHÔNG báo lỗi
+  // vì trường hợp này hoàn toàn có thật và vẫn kết thúc bình thường (đã đo được lần 186.7s
+  // trong khi cùng hồ sơ có lần chỉ 46.7s).
+  const overrunning = elapsedSeconds > rangeHigh;
 
   if (itemsWithDocs.length === 0) {
     return (
@@ -210,8 +216,9 @@ export function CaseSummary({
                   <>
                     {" "}
                     — đã chạy <strong>{formatElapsed(elapsedSeconds)}</strong>
-                    {", "}
-                    {formatRemaining(remainingSeconds)}
+                    {overrunning
+                      ? " · lâu hơn thường lệ, vẫn đang chạy bình thường"
+                      : ` · thường mất ${formatMinuteRange(rangeLow, rangeHigh)}`}
                   </>
                 )}
               </p>
@@ -229,9 +236,9 @@ export function CaseSummary({
             )}
             <p className="text-xs text-indigo-500/80 mt-2">
               AI đọc toàn bộ nội dung đã trích xuất, đối chiếu thông tin giữa các giấy tờ (họ tên,
-              ngày sinh, địa chỉ, số giấy tờ...) rồi viết báo cáo. Thời gian tăng nhanh theo số
-              tài liệu vì số cặp phải đối chiếu tăng theo cấp số nhân. Đây là ước tính — cứ để
-              trang mở hoặc tải lại (F5) bất cứ lúc nào cũng không mất tiến trình.
+              ngày sinh, địa chỉ, số giấy tờ...) rồi viết báo cáo. Thời gian dao động khá nhiều
+              ngay cả với cùng một hồ sơ, nên đây chỉ là khoảng tham khảo — cứ để trang mở hoặc
+              tải lại (F5) bất cứ lúc nào cũng không mất tiến trình.
             </p>
           </div>
         )}
