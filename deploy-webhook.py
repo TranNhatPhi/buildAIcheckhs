@@ -49,13 +49,30 @@ def run_deploy():
         f.write(f"\n=== Deploy triggered {datetime.now(timezone.utc).isoformat()} ===\n")
         f.flush()
 
+        # Ghi lại commit TRƯỚC khi pull để deploy.sh so được những gì vừa thay đổi — cụ thể là
+        # để phát hiện code của CHÍNH webhook có đổi không (webhook không tự deploy được chính
+        # nó, xem giải thích trong deploy.sh) và nhắc cập nhật tay. Lỗi ở đây không đáng để
+        # chặn deploy: chỉ mất phần nhắc nhở, nên nuốt lỗi và đi tiếp với chuỗi rỗng.
+        try:
+            prev_head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=REPO_DIR, capture_output=True, text=True, timeout=30
+            ).stdout.strip()
+        except Exception:  # noqa: BLE001
+            prev_head = ""
+
         pull = subprocess.run(["git", "pull"], cwd=REPO_DIR, stdout=f, stderr=subprocess.STDOUT)
         if pull.returncode != 0:
             f.write(f"\n!!! DEPLOY FAILED — git pull lỗi (exit {pull.returncode}), KHÔNG chạy "
                     f"deploy.sh để tránh âm thầm giữ nguyên bản cũ mà tưởng đã deploy xong.\n")
             return
 
-        deploy = subprocess.run(["bash", "./deploy.sh"], cwd=REPO_DIR, stdout=f, stderr=subprocess.STDOUT)
+        deploy = subprocess.run(
+            ["bash", "./deploy.sh"],
+            cwd=REPO_DIR,
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            env={**os.environ, "PREV_HEAD": prev_head},
+        )
         if deploy.returncode != 0:
             f.write(f"\n!!! DEPLOY FAILED — deploy.sh lỗi (exit {deploy.returncode}), xem log phía "
                     f"trên để biết bước nào thất bại.\n")
