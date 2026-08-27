@@ -141,13 +141,9 @@ def _deskew(gray: np.ndarray) -> np.ndarray:
     )
 
 
-def _base_gray_deskewed(pil_img: Image.Image) -> np.ndarray:
-    """Phần tiền xử lý DÙNG CHUNG cho mọi biến thể bên dưới: chuyển xám, phóng to nếu ảnh
-    nhỏ, chỉnh nghiêng — các bước này luôn có lợi bất kể cách xử lý tương phản/nhiễu sau
-    đó. Trả về ndarray xám (không phải PIL Image) để các variant xử lý tiếp cho nhanh,
-    khỏi phải deskew lại nhiều lần."""
-    gray = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
-
+def _upscale_and_deskew(gray: np.ndarray) -> np.ndarray:
+    """Phóng to nếu ảnh nhỏ + chỉnh nghiêng — luôn có lợi bất kể cách chuyển ảnh 1 kênh nào
+    được dùng trước đó (xám thường hay khử màu, xem _base_gray_deskewed / _colour_dropout)."""
     h, w = gray.shape
     min_dim = min(h, w)
     if min_dim < UPSCALE_MIN_DIM_PX:
@@ -155,6 +151,43 @@ def _base_gray_deskewed(pil_img: Image.Image) -> np.ndarray:
         gray = cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
 
     return _deskew(gray)
+
+
+def _base_gray_deskewed(pil_img: Image.Image) -> np.ndarray:
+    """Phần tiền xử lý DÙNG CHUNG cho mọi biến thể bên dưới: chuyển xám, phóng to nếu ảnh
+    nhỏ, chỉnh nghiêng — các bước này luôn có lợi bất kể cách xử lý tương phản/nhiễu sau
+    đó. Trả về ndarray xám (không phải PIL Image) để các variant xử lý tiếp cho nhanh,
+    khỏi phải deskew lại nhiều lần."""
+    gray = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    return _upscale_and_deskew(gray)
+
+
+def _colour_dropout(pil_img: Image.Image) -> np.ndarray:
+    """Khử MÀU thay vì chuyển xám: lấy max(R,G,B) từng pixel — mọi thứ có MÀU BÃO HOÀ (hoa
+    văn bảo an đỏ, chữ in đỏ, con dấu đỏ/xanh) bị đẩy về gần trắng, còn mực ĐEN TRUNG TÍNH
+    (chữ đánh máy, chữ in nhãn) giữ nguyên độ đậm. Đây chính là kỹ thuật "colour dropout"
+    máy scan form vẫn dùng để bỏ phần in sẵn của biểu mẫu.
+
+    LÝ DO THÊM — đo thật trên giấy chứng nhận kết hôn ("6. Trần Văn Hùng - ĐKKH.pdf"), loại
+    giấy in kín nền hoa văn trống đồng màu đỏ. Giá trị pixel đo được trên trang đó:
+
+        vùng             chuyển xám    max(R,G,B)
+        chữ đánh máy         73            76
+        chữ in nhãn          69            76
+        hoa văn nền         106           127
+        tiêu đề đỏ          133           238  (mất hẳn)
+
+    Chuyển xám thường đặt hoa văn nền (106) LỌT GIỮA chữ thật (69-73) và tiêu đề (133), rồi
+    CLAHE ở biến thể "default" kéo hoa văn lên ngang chữ thật — Tesseract đọc ra rác thuần
+    tuý ("= = =ô =>3⁄@G@*% Ô"). Đây là cùng cơ chế đã ghi ở docstring _preprocess_variants
+    với watermark giấy khai sinh, nhưng nặng hơn hẳn vì hoa văn phủ KÍN trang chứ không chỉ
+    chìm ở giữa. Khử màu tách được vì hoa văn đỏ bão hoà còn chữ thì không.
+
+    Cái mất: dòng tiêu đề in màu đỏ (vd "GIẤY CHỨNG NHẬN KẾT HÔN") biến mất theo. Chấp nhận
+    được vì đây chỉ là 1 trong nhiều biến thể — best-of chỉ chọn nó khi nó đọc được NHIỀU
+    HƠN hẳn, tức đúng những trang mà cách cũ vốn không đọc nổi gì."""
+    rgb = np.array(pil_img.convert("RGB"))
+    return _upscale_and_deskew(np.max(rgb, axis=2).astype(np.uint8))
 
 
 def _to_rgb_image(gray: np.ndarray) -> Image.Image:
@@ -213,7 +246,33 @@ def _preprocess_variants(pil_img: Image.Image) -> dict[str, Image.Image]:
     xác. Nếu cần giảm tải VM, đây là biến thể NÊN BỎ TRƯỚC (bỏ 1 dòng, mất 1.1% ký tự, không
     mất trang nào).
 
-    Cái giá tổng cộng: mỗi trang chạy Tesseract 4 lần thay vì 2 — chậm gấp đôi so với trước.
+    Biến thể thứ 5 "dropout" (khử MÀU thay vì chuyển xám — xem _colour_dropout) thêm sau khi
+    gặp loại giấy mà CẢ 4 biến thể trên đều bó tay: giấy in kín nền hoa văn bảo an MÀU ĐỎ
+    (chứng nhận kết hôn, giấy khai sinh bản gốc). Cả 4 biến thể trên đều bắt đầu từ cùng 1
+    ảnh xám, mà chính bước chuyển xám đã trộn hoa văn đỏ lẫn vào chữ — nên thêm biến thể nào
+    dựa trên `gray` cũng vô ích, phải đổi cách tách ngay từ đầu.
+
+    Đo trên toàn bộ 222 trang / 88 tài liệu thật trong DB: tổng ký tự +2.0%, thắng 52/222
+    trang. Con số tổng khiêm tốn nhưng KHÔNG phản ánh giá trị thật — nó cứu đúng loại giấy
+    mà trước đây gần như không đọc nổi chữ nào (2 trang duy nhất trong cả corpus tăng >1.5
+    lần đều nhờ biến thể này, và cả 2 đều là giấy nền hoa văn đỏ):
+    - "5. Trần Văn Hùng - GKS (Bản gốc).pdf" trang 1: 22 -> 988 ký tự, từ chỗ chỉ ra được
+      mỗi "là an Lộc, tỉnh Hà Tĩnh" thành đọc đủ họ tên, ngày sinh (cả số lẫn chữ), nơi
+      sinh, quê quán, họ tên + năm sinh cha mẹ, và số CCCD người đi khai sinh.
+    - "6. Trần Văn Hùng - ĐKKH.pdf" trang 2: 526 ký tự RÁC -> 819 ký tự đọc được (họ tên vợ
+      chồng, quốc tịch, tỉnh, số CMND, nơi đăng ký).
+    - "30. Trần An Phước - GKS (Bản gốc).pdf" trang 1: 944 -> 1014, phần thêm chính là dòng
+      "Số định danh cá nhân: 042217009487" mà biến thể cũ bỏ sót hoàn toàn.
+    Đã đọc tận nội dung từng trang "dropout" thắng (không chỉ đếm ký tự) để chắc chắn không
+    có trang nào thắng oan bằng nhiễu.
+
+    ĐÃ THỬ VÀ LOẠI "dropout_clahe" (khử màu rồi CLAHE): chỉ +0.8% tổng, và tệ hơn là trên
+    trang 2 của GKS Trần An Phước nó thắng với 1085 ký tự RÁC thuần tuý trong khi "dropout"
+    thuần chỉ ra 72 ký tự nhưng là chữ thật — tức thêm nó vào sẽ làm HỎNG tiêu chí best-of
+    ("nhiều ký tự nhất") ở đúng những trang khó. Đây là cùng cái bẫy CLAHE + hoa văn nền đã
+    nói ở trên, chỉ đổi cách vào.
+
+    Cái giá tổng cộng: mỗi trang chạy Tesseract 5 lần thay vì 2 — chậm ~2.5 lần so với trước.
     Áp lên CẢ lần upload PDF đầu tiên (case_documents.py dùng try_harder=True cho PDF), không
     chỉ nút "Phân tích lại"."""
     if not PREPROCESS_ENABLED:
@@ -245,6 +304,11 @@ def _preprocess_variants(pil_img: Image.Image) -> dict[str, Image.Image]:
     variants["denoise_only"] = _to_rgb_image(
         cv2.fastNlMeansDenoising(gray, h=7, templateWindowSize=7, searchWindowSize=21)
     )
+
+    # dropout: KHÔNG dùng `gray` chung ở trên — tự chuyển ảnh 1 kênh theo kiểu khử màu, dành
+    # riêng cho giấy in nền hoa văn bảo an màu (chứng nhận kết hôn, giấy khai sinh bản gốc).
+    # Xem _colour_dropout() để biết vì sao 4 biến thể trên đều bó tay với loại giấy này.
+    variants["dropout"] = _to_rgb_image(_colour_dropout(pil_img))
 
     return variants
 
