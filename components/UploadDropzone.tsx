@@ -15,7 +15,7 @@ interface Props {
 
 // Export để CaseDetail.tsx dùng chung — tránh lặp lại chuỗi ở 2 nơi cho cùng 1 khái niệm.
 export const STAGE_LABEL: Partial<Record<DocumentDTO["status"], string>> = {
-  OCR_RUNNING: "Bước 1/2 — đang đọc OCR...",
+  OCR_RUNNING: "Bước 1/2 — đang đọc tài liệu...",
   CLASSIFYING: "Bước 2/2 — đang phân loại AI...",
 };
 
@@ -257,7 +257,7 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               <span className="font-semibold">
                 Đang xử lý {doneCount}/{queue.length} file...
               </span>{" "}
-              Mỗi file cần chạy OCR + AI phân loại — thời gian tuỳ độ khó từng file, đừng tắt
+              Mỗi file cần đọc nội dung + AI phân loại — thời gian tuỳ độ khó từng file, đừng tắt
               trang, trang sẽ tự cập nhật.
               {totalRemainingEstimate > 0 && (
                 <>

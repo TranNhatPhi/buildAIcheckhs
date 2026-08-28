@@ -32,7 +32,7 @@ export default async function CaseSummaryPage({
       <div>
         <h1 className="text-3xl font-bold text-neutral-800">Tổng hợp thông tin — {c.clientName}</h1>
         <p className="text-sm text-neutral-500 mt-1.5">
-          Gom toàn bộ nội dung đã đọc được (OCR + đã sửa lỗi) từ các file khách hàng đã gửi, theo
+          Gom toàn bộ nội dung đã đọc được (đã sửa lỗi) từ các file khách hàng đã gửi, theo
           từng mục checklist — không cần mở từng file để xem.
         </p>
       </div>

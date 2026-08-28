@@ -120,11 +120,45 @@ services:
         condition: service_healthy
     # Không expose port ra host — chỉ Caddy mới thấy được (basic_auth chặn trước, xem Caddyfile).
 
+  # Chạy MỘT LẦN mỗi lần deploy rồi thoát — nạp lại checklist từ backend/seed.py vào DB.
+  #
+  # VÌ SAO PHẢI CÓ: seed.py KHÔNG tự chạy khi backend khởi động (main.py chỉ gọi
+  # ocr.load_models()), nên trước đây sửa checklist rồi push code là production vẫn giữ bộ
+  # cũ cho tới khi có người nhớ ra và chạy tay. ĐÃ XẢY RA THẬT: mục "Resume/ CV" thêm vào
+  # seed.py nhưng production thiếu nó suốt, cả nhóm "kinh nghiệm làm việc" bị lệch 1 bậc,
+  # chỉ phát hiện khi người dùng thắc mắc sao không thấy mục Resume trên UI.
+  #
+  # VÌ SAO LÀ SERVICE RIÊNG, không nhét vào startup của backend: có 2 replica (backend,
+  # backend2) cùng khởi động — cả hai cùng chạy seed sẽ đua nhau upsert/xoá trên cùng bảng.
+  # Tách ra thì seed chạy đúng 1 lần, xong mới tới lượt backend (xem depends_on bên dưới).
+  seed:
+    <<: *backend-common
+    command: ["python", "seed.py"]
+    # restart "no": đây là việc chạy một lần rồi thoát, KHÔNG phải service thường trực —
+    # để "unless-stopped" như backend sẽ khiến Docker chạy lại vô hạn.
+    restart: "no"
+
   backend:
     <<: *backend-common
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      # Chờ seed chạy XONG và THÀNH CÔNG mới khởi động. Nếu seed lỗi thì backend không lên —
+      # cố ý hỏng to còn hơn chạy tiếp với checklist sai mà không ai biết.
+      seed:
+        condition: service_completed_successfully
 
   backend2:
     <<: *backend-common
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
 
   frontend:
     build:

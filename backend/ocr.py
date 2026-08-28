@@ -31,6 +31,8 @@ import io
 import logging
 import os
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
@@ -70,6 +72,39 @@ TESSERACT_PSM = os.getenv("TESSERACT_PSM", "4")
 # rộng rãi (OCR 1 trang bình thường chỉ vài giây) — đủ dư địa cho ảnh nặng/máy đang tải cao,
 # nhưng vẫn đảm bảo LUÔN thoát ra được thay vì treo mãi.
 TESSERACT_TIMEOUT_SECONDS = int(os.getenv("TESSERACT_TIMEOUT_SECONDS", "90"))
+
+# Số tiến trình Tesseract được chạy CÙNG LÚC trong 1 tiến trình backend.
+#
+# VÌ SAO CẦN GIỚI HẠN — sự cố thật ("19. Phan Huy Di Dan - Certificate of employment.pdf"
+# báo "xử lý quá 90s không xong"): ĐO LẠI CHÍNH FILE ĐÓ trên máy dev, mỗi lần gọi Tesseract
+# chỉ mất 1.1-1.8s, cả 5 trang x 5 biến thể chỉ ~38s. Tức ảnh KHÔNG hề "lỗi hoặc quá khổ"
+# như thông báo lỗi cũ đoán — nó chậm gấp >60 lần trên production vì TRANH CPU:
+#   - UploadDropzone gửi 4 file song song (MAX_CONCURRENT=4);
+#   - route upload là `def` thường nên FastAPI ném vào threadpool (mặc định 40 luồng) —
+#     không có gì xếp hàng lại;
+#   - khi Gemini hết hạn mức (429), CẢ 4 file cùng rơi xuống Tesseract, mỗi trang lại chạy
+#     5 biến thể (_preprocess_variants);
+#   - production còn chạy 2 replica backend (backend + backend2) trên cùng 1 VM nhỏ.
+# Tesseract là việc NGỐN CPU THẬT (khác hẳn phần gọi Gemini vốn chỉ chờ mạng — xem chỗ chạy
+# song song trong extract_text). Nhồi hàng chục tiến trình Tesseract vào vài vCPU không làm
+# xong nhanh hơn, chỉ khiến MỌI lần gọi đều chậm đến mức chạm timeout rồi hỏng cả loạt.
+# Xếp hàng lại thì mỗi lần gọi chạy gần đúng tốc độ thật của nó, tổng thời gian NGẮN HƠN.
+#
+# Chia đôi số nhân vì 2 replica backend dùng chung host và mỗi container đều thấy đủ số CPU
+# của host (cgroup không giới hạn CPU trong compose hiện tại) — không chia thì tổng số tiến
+# trình Tesseract chạy cùng lúc sẽ gấp đôi số nhân, đúng lại cái bẫy vừa nói.
+TESSERACT_MAX_WORKERS = int(os.getenv("TESSERACT_MAX_WORKERS", "0") or 0) or max(
+    1, (os.cpu_count() or 2) // 2
+)
+_tesseract_slots = threading.BoundedSemaphore(TESSERACT_MAX_WORKERS)
+
+# Trần thời gian cho TOÀN BỘ 1 trang ở đường Tesseract (chạy nhiều biến thể, xem
+# _ocr_single_image_lines_best_of). Riêng TESSERACT_TIMEOUT_SECONDS chỉ chặn TỪNG lần gọi,
+# nên trang xấu vẫn có thể ngốn 5 x 90s = 450s mà cuối cùng chẳng đọc được gì. Hết ngân sách
+# thì bỏ các biến thể còn lại và dùng kết quả tốt nhất đã đọc được — thà có kết quả gần đúng
+# còn hơn để người dùng chờ mãi rồi nhận về lỗi.
+TESSERACT_PAGE_BUDGET_SECONDS = int(os.getenv("TESSERACT_PAGE_BUDGET_SECONDS", "150"))
+
 MIN_WORD_CONFIDENCE = int(os.getenv("OCR_MIN_WORD_CONFIDENCE", "5"))
 # Đã thử ngưỡng 40 — QUÁ CAO: xác nhận bằng thực nghiệm, tiêu đề "CĂN CƯỚC CÔNG DÂN" trên
 # CCCD thật (chữ in đậm, màu đỏ, khác kiểu chữ phần còn lại) Tesseract đọc ĐÚNG nhưng
@@ -111,7 +146,14 @@ def load_models():
             f"Thiếu gói ngôn ngữ Tesseract {missing} — cài qua `brew install tesseract-lang`."
         )
     _ready = True
-    logger.info("Tesseract OCR sẵn sàng (lang=%s, psm=%s).", TESSERACT_LANG, TESSERACT_PSM)
+    # Ghi cả số slot chạy song song: khi production báo "đọc tài liệu quá lâu", đây là con số
+    # đầu tiên cần xem (xem giải thích ở TESSERACT_MAX_WORKERS).
+    logger.info(
+        "Tesseract OCR sẵn sàng (lang=%s, psm=%s, tối đa %d tiến trình song song, "
+        "timeout %ds/lần, ngân sách %ds/trang).",
+        TESSERACT_LANG, TESSERACT_PSM, TESSERACT_MAX_WORKERS,
+        TESSERACT_TIMEOUT_SECONDS, TESSERACT_PAGE_BUDGET_SECONDS,
+    )
 
 
 def models_loaded() -> bool:
@@ -361,34 +403,79 @@ def _ocr_single_image_lines_best_of(img: Image.Image) -> list[OcrLine]:
     có TỔNG SỐ KÝ TỰ đọc được nhiều nhất — coi đọc được nhiều ký tự hơn là tín hiệu tốt
     (đọc thiếu vùng nào đó khiến số ký tự giảm hẳn, như đã gặp thật với vùng chữ to đậm bị
     bỏ sót — xem ghi chú PSM ở đầu file). Chỉ dùng cho "Phân tích lại" (chậm hơn ~4 lần vì
-    chạy Tesseract nhiều lần), KHÔNG dùng cho lần OCR đầu lúc upload (ưu tiên tốc độ)."""
+    chạy Tesseract nhiều lần), KHÔNG dùng cho lần OCR đầu lúc upload (ưu tiên tốc độ).
+
+    MỘT biến thể hỏng/quá giờ KHÔNG làm hỏng cả trang: 4 biến thể còn lại vẫn đọc ra chữ
+    thật, mà trước đây lỗi đầu tiên văng thẳng lên trên khiến CẢ TÀI LIỆU về ERROR với 0 ký
+    tự — đúng kịch bản đã xảy ra thật trên production. Chỉ báo lỗi khi KHÔNG biến thể nào
+    chạy nổi. Cả trang cũng có trần thời gian chung (TESSERACT_PAGE_BUDGET_SECONDS)."""
     variants = _preprocess_variants(img)
     best_lines: list[OcrLine] = []
     best_len = -1
     best_name = "?"
+    deadline = time.monotonic() + TESSERACT_PAGE_BUDGET_SECONDS
+    ran = 0
+    last_error: Exception | None = None
+
     for name, processed in variants.items():
-        lines = _lines_from_preprocessed(processed)
+        remaining = int(deadline - time.monotonic())
+        # Còn quá ít thời gian thì đừng bắt đầu: chạy dở rồi bị cắt vừa mất công vừa không
+        # ra kết quả nào dùng được.
+        if ran and remaining < 10:
+            logger.warning(
+                "Hết ngân sách %ds cho 1 trang — bỏ qua biến thể còn lại (đã chạy %d/%d).",
+                TESSERACT_PAGE_BUDGET_SECONDS, ran, len(variants),
+            )
+            break
+
+        try:
+            # Chặn theo CẢ HAI: trần của từng lần gọi, và phần ngân sách trang còn lại —
+            # biến thể sau cùng không được phép tiêu quá chỗ thời gian còn thừa.
+            lines = _lines_from_preprocessed(
+                processed, timeout=min(TESSERACT_TIMEOUT_SECONDS, remaining)
+            )
+        except ValueError as e:
+            last_error = e
+            logger.warning("Biến thể '%s' không đọc được (%s) — thử biến thể tiếp theo.",
+                           name, e)
+            continue
+
+        ran += 1
         total_len = sum(len(l.text) for l in lines)
         if total_len > best_len:
             best_len, best_lines, best_name = total_len, lines, name
+
+    if not ran:
+        # Không biến thể nào chạy nổi — giờ mới thật sự là lỗi của trang này.
+        raise last_error or ValueError("Không đọc được nội dung trang tài liệu.")
+
     logger.info(
-        "Best-of preprocessing: chọn '%s' (%d ký tự) trong %d phương án.",
-        best_name, best_len, len(variants),
+        "Best-of preprocessing: chọn '%s' (%d ký tự) trong %d/%d phương án chạy được.",
+        best_name, best_len, ran, len(variants),
     )
     return best_lines
 
 
-def _lines_from_preprocessed(processed: Image.Image) -> list[OcrLine]:
+def _lines_from_preprocessed(
+    processed: Image.Image, timeout: int | None = None
+) -> list[OcrLine]:
     load_models()
 
+    limit = max(1, timeout if timeout is not None else TESSERACT_TIMEOUT_SECONDS)
+
     try:
-        data = pytesseract.image_to_data(
-            processed,
-            lang=TESSERACT_LANG,
-            config=f"--psm {TESSERACT_PSM}",
-            output_type=Output.DICT,
-            timeout=TESSERACT_TIMEOUT_SECONDS,
-        )
+        # CỐ Ý xếp hàng NGOÀI lời gọi chứ không tính thời gian chờ vào `timeout`: `timeout`
+        # của pytesseract chỉ đo tiến trình con, nên thời gian nằm chờ tới lượt không bao giờ
+        # bị tính là "xử lý quá lâu" — nếu không tách, chính cơ chế xếp hàng này sẽ tự gây ra
+        # timeout giả mỗi khi có nhiều file cùng lúc (xem TESSERACT_MAX_WORKERS).
+        with _tesseract_slots:
+            data = pytesseract.image_to_data(
+                processed,
+                lang=TESSERACT_LANG,
+                config=f"--psm {TESSERACT_PSM}",
+                output_type=Output.DICT,
+                timeout=limit,
+            )
     except RuntimeError as e:
         # pytesseract chỉ raise RuntimeError THUẦN (không phải TesseractError/
         # TesseractNotFoundError) đúng lúc subprocess bị timeout — đã tự kill process con
@@ -396,9 +483,14 @@ def _lines_from_preprocessed(processed: Image.Image) -> list[OcrLine]:
         # máy. Đổi thành ValueError để đi đúng đường lỗi đã có sẵn (extract_text → status=
         # ERROR, xem case_documents.py/documents.py), thay vì văng lỗi 500 không rõ nguyên
         # nhân và để document đứng mãi ở OCR_RUNNING.
+        #
+        # Thông báo KHÔNG nhắc tên công cụ nội bộ và KHÔNG đoán "ảnh lỗi hoặc quá khổ": lần
+        # sự cố thật đầu tiên đã chứng minh phỏng đoán đó SAI (file hoàn toàn bình thường,
+        # đọc mất 1.5s/lần trên máy rảnh — xem TESSERACT_MAX_WORKERS), làm người dùng đi mở
+        # lại file gốc kiểm tra vô ích trong khi nguyên nhân thật là máy đang quá tải.
         raise ValueError(
-            f"Tesseract xử lý quá {TESSERACT_TIMEOUT_SECONDS}s không xong (có thể do ảnh lỗi "
-            "hoặc quá khổ) — đã huỷ, cần thử lại hoặc kiểm tra lại file gốc."
+            f"Đọc tài liệu quá {limit}s chưa xong nên đã dừng lại — thường do máy chủ đang "
+            "xử lý quá nhiều file cùng lúc. Bấm \"Thử lại\" sau ít phút."
         ) from e
 
     # Gộp các từ (word) cùng (block, paragraph, line) thành 1 dòng, bỏ từ có độ tin cậy
@@ -770,8 +862,9 @@ def extract_text(
     lần) nên chỉ bật cho "Phân tích lại" (nhân viên chủ động chờ để có kết quả tốt hơn),
     không bật cho lần OCR đầu lúc upload. CHỈ có tác dụng ở đường Tesseract.
 
-    Raise ValueError nếu không đọc được file, hoặc nếu Tesseract xử lý quá
-    TESSERACT_TIMEOUT_SECONDS mà không xong (xem _lines_from_preprocessed)."""
+    Raise ValueError CHỈ KHI không mở được file, hoặc không đọc nổi MỘT trang nào. Trang lẻ
+    đọc hỏng thì giữ nguyên các trang còn lại và ghi chú "[Không đọc được trang N: ...]" vào
+    đúng chỗ đó trong văn bản trả về."""
     is_pdf = mime_type == "application/pdf" or filename.lower().endswith(".pdf")
 
     try:
@@ -834,15 +927,38 @@ def extract_text(
     # request khác đang xử lý trên cùng VM.
     page_texts = []
     all_lines: list[OcrLine] = []
+    read_ok = 0
+    last_error: Exception | None = None
     for i, page_img in enumerate(pages):
         text = gemini_texts[i]
         if text is None:
-            page_lines = ocr_page(page_img)
-            all_lines.extend(page_lines)
-            text = "\n".join(line.text for line in page_lines)
+            try:
+                page_lines = ocr_page(page_img)
+            except ValueError as e:
+                # 1 trang hỏng KHÔNG được làm mất luôn các trang đọc tốt — đường Gemini phía
+                # trên đã theo nguyên tắc này từ đầu, đường Tesseract thì chưa: file 5 trang
+                # mà trang 3 quá giờ là cả tài liệu về ERROR với 0 ký tự (sự cố thật). Ghi
+                # thẳng chỗ hỏng vào văn bản để người soát biết trang nào thiếu mà mở file
+                # gốc đối chiếu, thay vì âm thầm bỏ trang.
+                last_error = e
+                logger.warning("Trang %d không đọc được (%s) — bỏ qua, giữ các trang khác.",
+                               i + 1, e)
+                text = f"[Không đọc được trang {i + 1}: {e}]"
+            else:
+                read_ok += 1
+                all_lines.extend(page_lines)
+                text = "\n".join(line.text for line in page_lines)
+        else:
+            read_ok += 1
         if len(pages) > 1:
             page_texts.append(f"--- Trang {i + 1} ---\n{text}")
         else:
             page_texts.append(text)
+
+    # Không trang nào đọc được thì mới thật sự là tài liệu hỏng — báo lỗi như cũ để document
+    # về ERROR, có nút "Thử lại". Chỉ MỘT SỐ trang hỏng thì vẫn trả kết quả (status bình
+    # thường) vì phần đọc được vẫn đủ để phân loại và đối chiếu checklist.
+    if read_ok == 0 and last_error is not None:
+        raise last_error
 
     return "\n\n".join(page_texts), len(pages), all_lines, pages

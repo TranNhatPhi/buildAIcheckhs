@@ -21,7 +21,7 @@ export const EL = {
 
 export const STATUS_LABEL: Record<DocumentDTO["status"], string> = {
   PENDING: "Chờ xử lý",
-  OCR_RUNNING: "Đang OCR",
+  OCR_RUNNING: "Đang đọc tài liệu",
   CLASSIFYING: "Đang phân loại",
   CLASSIFIED: "Đã phân loại",
   NEEDS_REVIEW: "Cần review",

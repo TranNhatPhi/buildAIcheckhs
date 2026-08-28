@@ -13,7 +13,7 @@ interface Props {
 
 const STATUS_LABEL: Record<DocumentDTO["status"], string> = {
   PENDING: "Đang chờ",
-  OCR_RUNNING: "Đang đọc OCR...",
+  OCR_RUNNING: "Đang đọc tài liệu...",
   CLASSIFYING: "Đang phân loại...",
   CLASSIFIED: "Đã phân loại",
   NEEDS_REVIEW: "Cần xem lại",
@@ -167,7 +167,7 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                 value={doc.matchedChecklistItemId ?? ""}
                 onChange={(e) => reassign(doc.id, e.target.value)}
                 disabled={isProcessing}
-                title={isProcessing ? "Đang xử lý OCR/AI, chưa chọn tay được lúc này" : undefined}
+                title={isProcessing ? "Đang đọc tài liệu / phân tích AI, chưa chọn tay được lúc này" : undefined}
               >
                 <option value="">Chưa xác định</option>
                 {applicableItems.map((item) => (
@@ -197,7 +197,7 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                 onClick={() => setExpandedId(isExpanded ? null : doc.id)}
                 className="text-xs font-semibold px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
               >
-                {isExpanded ? "Ẩn chi tiết OCR & AI" : "Xem chi tiết OCR & AI"}
+                {isExpanded ? "Ẩn chi tiết đọc & AI" : "Xem chi tiết đọc & AI"}
               </button>
               <button
                 onClick={() => reclassify(doc.id)}
@@ -211,7 +211,7 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                   ? doc.status === "CLASSIFYING"
                     ? "Đang phân loại AI..."
                     : doc.status === "OCR_RUNNING"
-                      ? "Đang đọc OCR..."
+                      ? "Đang đọc tài liệu..."
                       : "Đang bắt đầu..."
                   : doc.status === "ERROR"
                     ? "Thử lại"
@@ -222,8 +222,8 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                   {doc.status === "CLASSIFYING"
                     ? "Bước 2/2 — AI đang phân loại vào đúng mục checklist, sắp xong..."
                     : doc.status === "OCR_RUNNING"
-                      ? "Bước 1/2 — đang đọc chữ từ ảnh (OCR), có thể mất khoảng 10–20 giây..."
-                      : "Đang chạy OCR + AI, có thể mất khoảng 30–60 giây, vui lòng chờ một chút..."}
+                      ? "Bước 1/2 — đang đọc chữ từ tài liệu, có thể mất khoảng 10–20 giây..."
+                      : "Đang đọc tài liệu + AI phân loại, có thể mất khoảng 30–60 giây, vui lòng chờ một chút..."}
                 </span>
               )}
               <button
@@ -238,7 +238,7 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
               <div className="mt-3 flex flex-col gap-3 border-t border-neutral-100 pt-3">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-neutral-400 mb-1.5">
-                    1. Văn bản OCR trích xuất được
+                    1. Văn bản đọc được từ tài liệu
                   </p>
                   <FormattedDocumentText
                     text={doc.ocrText}
@@ -249,13 +249,13 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <p className="text-xs font-bold uppercase tracking-wide text-neutral-400">
-                      2. Văn bản sau khi DeepSeek sửa chính tả & sắp xếp lại
+                      2. Văn bản sau khi AI sửa chính tả & sắp xếp lại
                     </p>
                     {editingTextId !== doc.id && (
                       <button
                         onClick={() => startEditingText(doc)}
                         disabled={isProcessing}
-                        title={isProcessing ? "Đang xử lý OCR/AI, chưa sửa tay được lúc này" : undefined}
+                        title={isProcessing ? "Đang đọc tài liệu / phân tích AI, chưa sửa tay được lúc này" : undefined}
                         className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         ✏️ Sửa
@@ -290,14 +290,14 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                   ) : (
                     <FormattedDocumentText
                       text={doc.correctedText}
-                      emptyLabel="(chưa sửa được / giữ nguyên văn bản OCR thô)"
+                      emptyLabel="(chưa sửa được / giữ nguyên văn bản đọc được ban đầu)"
                       className="text-xs bg-emerald-50 border border-emerald-200 rounded-xl p-3 max-h-56 overflow-y-auto font-mono"
                     />
                   )}
                 </div>
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-neutral-400 mb-1.5">
-                    3. Kết quả phân loại DeepSeek
+                    3. Kết quả phân loại AI
                   </p>
                   <div className="text-xs bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex flex-col gap-1">
                     <p>

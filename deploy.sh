@@ -132,20 +132,46 @@ docker compose -f docker-compose.prod.yml ps
 # và khi đó các bước sau vẫn chạy tiếp như không có gì, khiến sự cố chỉ lộ ra khi người dùng
 # phát hiện website chết. Kiểm tra ở đây để hỏng là biết NGAY, kèm mã thoát khác 0 để webhook
 # ghi rõ DEPLOY FAILED thay vì báo thành công nhầm.
+# Service CHẠY MỘT LẦN RỒI THOÁT (không phải service thường trực). Với chúng, "running" là
+# SAI kỳ vọng — phải là đã thoát với mã 0. Không tách riêng thì deploy.sh báo DEPLOY FAILED
+# mỗi lần deploy dù mọi thứ đều đúng.
+ONESHOT_SERVICES="seed"
+
+is_oneshot() {
+  local svc="$1" one
+  for one in $ONESHOT_SERVICES; do [[ "$svc" == "$one" ]] && return 0; done
+  return 1
+}
+
 echo "==> Xác nhận container đã chạy..."
 NOT_RUNNING=""
 for svc in $DEPLOY_SERVICES; do
-  state=$(docker compose -f docker-compose.prod.yml --env-file .env.prod ps -a --format '{{.State}}' "$svc" 2>/dev/null | head -1)
-  if [[ "$state" != "running" ]]; then
+  read -r state code < <(
+    docker compose -f docker-compose.prod.yml --env-file .env.prod \
+      ps -a --format '{{.State}} {{.ExitCode}}' "$svc" 2>/dev/null | head -1
+  )
+  if is_oneshot "$svc"; then
+    # Chờ xong rồi mới đọc trạng thái: "up -d" trả về ngay khi container đã KHỞI ĐỘNG, còn
+    # seed thì lúc đó vẫn đang chạy. Backend đã depends_on service_completed_successfully nên
+    # thực tế nó đã xong trước khi tới đây, nhưng vẫn chờ tường minh cho chắc.
+    docker compose -f docker-compose.prod.yml --env-file .env.prod wait "$svc" >/dev/null 2>&1 || true
+    read -r state code < <(
+      docker compose -f docker-compose.prod.yml --env-file .env.prod \
+        ps -a --format '{{.State}} {{.ExitCode}}' "$svc" 2>/dev/null | head -1
+    )
+    if [[ "$state" != "exited" || "$code" != "0" ]]; then
+      NOT_RUNNING="$NOT_RUNNING $svc(chạy-một-lần: ${state:-không thấy}, mã ${code:-?})"
+    fi
+  elif [[ "$state" != "running" ]]; then
     NOT_RUNNING="$NOT_RUNNING $svc(${state:-không thấy})"
   fi
 done
 if [[ -n "$NOT_RUNNING" ]]; then
-  echo "!! CÁC SERVICE SAU KHÔNG CHẠY:$NOT_RUNNING"
-  echo "!! Thử bật lại bằng: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d"
+  echo "!! CÁC SERVICE SAU KHÔNG ĐÚNG TRẠNG THÁI:$NOT_RUNNING"
+  echo "!! Xem log để biết lý do: docker compose -f docker-compose.prod.yml logs <service> --tail 50"
   exit 1
 fi
-echo "    OK — tất cả service đang chạy."
+echo "    OK — service thường trực đang chạy, service chạy-một-lần đã xong."
 
 echo "==> Kiểm tra health..."
 sleep 3
