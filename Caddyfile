@@ -3,20 +3,12 @@
 }
 
 {$API_DOMAIN} {
-	# Webhook GitHub (push → tự deploy) — chạy dạng container "deploy-webhook" (xem
-	# deploy-webhook.py + docker-compose.prod.yml), điều khiển Docker của host qua socket
-	# mount thay vì chạy trực tiếp trên host (VM không cấp sudo cho tài khoản đang dùng).
-	handle /_deploy-webhook {
-		reverse_proxy deploy-webhook:9090
-	}
-	handle {
-		reverse_proxy backend:8001 backend2:8001 {
-			lb_policy round_robin
-			# health check chủ động — bỏ qua replica đang unhealthy/đang khởi động thay vì
-			# vẫn gửi request round-robin vào nó và trả lỗi cho người dùng.
-			health_uri /health
-			health_interval 10s
-		}
+	reverse_proxy backend:8001 backend2:8001 {
+		lb_policy round_robin
+		# health check chủ động — bỏ qua replica đang unhealthy/đang khởi động thay vì
+		# vẫn gửi request round-robin vào nó và trả lỗi cho người dùng.
+		health_uri /health
+		health_interval 10s
 	}
 }
 

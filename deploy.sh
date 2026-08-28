@@ -1,5 +1,9 @@
 #!/bin/bash
 # Script redeploy cho VM production — chạy từ thư mục gốc repo trên VM (~/buildAIcheckhs).
+# Đây là CÁCH DUY NHẤT để deploy: webhook GitHub (push → tự deploy) đã bị gỡ vì nó phải tự
+# dừng chính mình giữa lúc deploy, làm cả cụm container kẹt ở trạng thái "Created" và website
+# chết hẳn (xem ghi chú chỗ service deploy-webhook cũ trong docker-compose.prod.yml).
+#
 # Dùng: ./deploy.sh          (kiểm tra an toàn trước khi restart)
 #       ./deploy.sh --force  (bỏ qua kiểm tra, restart bất chấp — chỉ dùng khi chắc chắn)
 set -euo pipefail
@@ -76,45 +80,21 @@ fi
 echo "==> git pull..."
 git pull
 
-# deploy-webhook (docker-compose.prod.yml) chạy git pull TRỰC TIẾP lên thư mục repo bind-mount
-# chung với host — ép nó chạy đúng UID:GID của tài khoản host đang gọi script này (thay vì mặc
-# định root) để không tạo ra object git thuộc sở hữu root, khiến lần chạy tay tiếp theo (không
-# có sudo) không xoá/ghi đè được. Tính tự động mỗi lần chạy — không hard-code — để đúng bất kể
-# tài khoản/VM nào chạy script.
-#
-# CỐ Ý dùng `stat` (đọc chủ sở hữu file) thay vì `id -u`/`id -g` (đọc UID của TIẾN TRÌNH đang
-# chạy) — script này có thể tự chạy TỪ BÊN TRONG chính container deploy-webhook (khi trigger
-# qua GitHub webhook, xem run_deploy() trong deploy-webhook.py), lúc đó tiến trình vẫn là
-# UID/GID CŨ của container (có thể vẫn là root nếu đây là lần đầu áp dụng fix này) — `id -u`
-# lúc đó sẽ trả về UID SAI (của container, không phải của host). Chủ sở hữu file thư mục repo
-# (bind-mount CHUNG với host) thì luôn phản ánh đúng UID/GID thật trên host dù đọc từ đâu.
-export DEPLOY_UID DEPLOY_GID DOCKER_SOCK_GID
-DEPLOY_UID=$(stat -c '%u' .)
-DEPLOY_GID=$(stat -c '%g' .)
-DOCKER_SOCK_GID=$(stat -c '%g' /var/run/docker.sock)
-
 echo "==> Build & restart container..."
-# KHÔNG deploy service "deploy-webhook" ở đây — nó chính là container đang CHẠY script này khi
-# deploy được kích hoạt qua GitHub webhook (xem run_deploy() trong deploy-webhook.py). Đưa nó
-# vào danh sách "up" khiến Compose dừng chính container đang chạy script → tiến trình bị SIGKILL
-# (exit 137) NGAY GIỮA CHỪNG, các service còn lại đã được "Created" nhưng CHƯA KỊP "Started".
-#
-# ĐÃ XẢY RA THẬT trên production: toàn bộ container nằm ở trạng thái "Created", caddy "Exited",
-# website chết hẳn (ERR_CONNECTION_REFUSED) sau 1 lần push code bình thường. Đây KHÔNG phải lỗi
-# ngẫu nhiên — "docker compose up" là điều phối phía CLIENT (build → stop cũ → create mới →
-# start mới), nên client chết ở bước "stop cũ" thì 2 bước sau không bao giờ chạy.
-#
 # Lấy danh sách service ĐỘNG từ chính file compose (không hard-code) để service mới thêm sau này
 # tự động được deploy, không phải nhớ sửa thêm chỗ này.
 DEPLOY_SERVICES=$(docker compose -f docker-compose.prod.yml --env-file .env.prod config --services \
-  | grep -v '^deploy-webhook$' | tr '\n' ' ')
+  | tr '\n' ' ')
 if [[ -z "${DEPLOY_SERVICES// /}" ]]; then
   echo "!! Không đọc được danh sách service từ docker-compose.prod.yml — dừng để tránh deploy nhầm."
   exit 1
 fi
 echo "    service sẽ deploy: $DEPLOY_SERVICES"
+# --remove-orphans: dọn container của service ĐÃ BỊ XOÁ khỏi file compose (vd deploy-webhook
+# vừa gỡ) — không có cờ này thì chúng cứ nằm lại chạy mãi bằng image cũ. An toàn vì
+# $DEPLOY_SERVICES ở trên đã là TOÀN BỘ service trong file, không sót cái nào để bị dọn nhầm.
 # shellcheck disable=SC2086  # cố ý tách từ: đây là danh sách nhiều service, không phải 1 chuỗi
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build $DEPLOY_SERVICES
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build --remove-orphans $DEPLOY_SERVICES
 
 # Caddyfile gắn vào container qua bind-mount (không nằm trong image build) — nếu chỉ
 # Caddyfile đổi mà docker-compose.prod.yml không đổi, lệnh "up -d" ở trên KHÔNG tự restart
@@ -128,10 +108,10 @@ echo "==> Trạng thái container:"
 docker compose -f docker-compose.prod.yml ps
 
 # Xác nhận TỪNG service thật sự đang chạy — "docker compose up" có thể kết thúc mà vẫn để lại
-# container ở trạng thái "Created"/"Exited" (đã gặp thật, xem giải thích ở khối "up" phía trên),
-# và khi đó các bước sau vẫn chạy tiếp như không có gì, khiến sự cố chỉ lộ ra khi người dùng
-# phát hiện website chết. Kiểm tra ở đây để hỏng là biết NGAY, kèm mã thoát khác 0 để webhook
-# ghi rõ DEPLOY FAILED thay vì báo thành công nhầm.
+# container ở trạng thái "Created"/"Exited" (đã gặp thật trên production: toàn bộ container
+# "Created", caddy "Exited", website chết hẳn ERR_CONNECTION_REFUSED), và khi đó các bước sau
+# vẫn chạy tiếp như không có gì, khiến sự cố chỉ lộ ra khi người dùng phát hiện web chết.
+# Kiểm tra ở đây để hỏng là biết NGAY, kèm mã thoát khác 0 thay vì báo thành công nhầm.
 # Service CHẠY MỘT LẦN RỒI THOÁT (không phải service thường trực). Với chúng, "running" là
 # SAI kỳ vọng — phải là đã thoát với mã 0. Không tách riêng thì deploy.sh báo DEPLOY FAILED
 # mỗi lần deploy dù mọi thứ đều đúng.
@@ -176,21 +156,5 @@ echo "    OK — service thường trực đang chạy, service chạy-một-l�
 echo "==> Kiểm tra health..."
 sleep 3
 curl -s "https://${API_DOMAIN}/health" && echo "" || echo "!! Backend chưa phản hồi, kiểm tra log: docker compose -f docker-compose.prod.yml logs backend --tail 50"
-
-# Vì webhook KHÔNG tự deploy chính nó (lý do ở khối "up" phía trên), thay đổi với code webhook
-# sẽ không có hiệu lực cho tới khi cập nhật tay. Báo thật rõ thay vì im lặng để bản mới nằm im
-# trong repo mà tưởng đã chạy — đúng tinh thần cảnh báo git-pull-lỗi ở deploy-webhook.py.
-# PREV_HEAD do deploy-webhook.py truyền vào (commit TRƯỚC khi pull); chạy tay thì không có biến
-# này nên bỏ qua kiểm tra — chạy tay vốn đã deploy đủ mọi thứ rồi.
-if [[ -n "${PREV_HEAD:-}" ]] && ! git diff --quiet "$PREV_HEAD" HEAD -- deploy-webhook.py Dockerfile.webhook 2>/dev/null; then
-  echo ""
-  echo "!! ================== CẦN LÀM TAY =================="
-  echo "!! Code webhook (deploy-webhook.py / Dockerfile.webhook) vừa thay đổi, nhưng lần deploy"
-  echo "!! này KHÔNG áp dụng được cho chính nó (nó đang chạy script này)."
-  echo "!! SSH vào VM và chạy đúng 1 lệnh sau để cập nhật webhook:"
-  echo "!!   cd ~/buildAIcheckhs && export DEPLOY_UID=\$(stat -c '%u' .) DEPLOY_GID=\$(stat -c '%g' .) DOCKER_SOCK_GID=\$(stat -c '%g' /var/run/docker.sock) && docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build deploy-webhook"
-  echo "!! ================================================="
-  echo ""
-fi
 
 echo "==> Xong."
