@@ -264,11 +264,34 @@ _gemini_clients = [
 # CỐ Ý dùng dict thường không khoá: route FastAPI dạng `def` chạy trong threadpool nên nhiều
 # luồng cùng đụng vào đây, nhưng thao tác chỉ là get/set 1 khoá bất biến — dưới GIL là an
 # toàn, và kể cả có ghi đè lẫn nhau thì hậu quả xấu nhất là dò thừa 1 lượt, không sai kết quả.
+# Nghỉ TĂNG DẦN theo số lần hỏng liên tiếp: 60s, 120s, 240s... tối đa 30 phút.
+#
+# Vì sao không để cố định 60s: 429 có thể là 2 chuyện rất khác nhau mà API không phân biệt —
+#   RPM (số request/phút) hết  -> hồi sau ~1 phút, nghỉ 60s là vừa
+#   RPD (số request/NGÀY) hết  -> phải sang hôm sau; với gemini-3.6-flash RPD chỉ 20/ngày,
+#                                 nghĩa là upload 1 đợt 20 file là cạn nguyên ngày
+# Nghỉ cố định 60s thì trường hợp RPD sẽ dò lại đủ ma trận mỗi phút, suốt cả ngày, luôn hỏng.
+# Tăng dần tự phân biệt được mà không cần đoán: hết RPM thì lần dò lại đầu tiên thành công và
+# bộ đếm reset ngay; hết RPD thì nó hỏng tiếp và giãn dần ra tới 30 phút/lần.
 GEMINI_KEY_COOLDOWN_SECONDS = _env_int("GEMINI_KEY_COOLDOWN_SECONDS", 60)
 GEMINI_MODEL_COOLDOWN_SECONDS = _env_int("GEMINI_MODEL_COOLDOWN_SECONDS", 30)
+GEMINI_COOLDOWN_MAX_SECONDS = _env_int("GEMINI_COOLDOWN_MAX_SECONDS", 1800)
 
 _key_cooldown: dict[tuple[str, str], float] = {}  # (model, nhãn key) -> thời điểm hết nghỉ
 _model_cooldown: dict[str, float] = {}            # model -> thời điểm hết nghỉ
+_fail_streak: dict[object, int] = {}              # khoá tương ứng -> số lần hỏng liên tiếp
+
+# Bao lâu mới nhắc lại cảnh báo "hết lượt Gemini" — upload 20 file sẽ gọi hàm này hàng chục
+# lần, không chặn thì log ngập không đọc nổi.
+GEMINI_EXHAUSTED_LOG_EVERY = _env_int("GEMINI_EXHAUSTED_LOG_EVERY", 120)
+_last_exhausted_log = 0.0
+
+
+def _backoff(key: object, base: int) -> int:
+    """Số giây nghỉ cho lần hỏng này, nhân đôi sau mỗi lần hỏng liên tiếp."""
+    streak = _fail_streak.get(key, 0) + 1
+    _fail_streak[key] = streak
+    return min(base * (2 ** (streak - 1)), GEMINI_COOLDOWN_MAX_SECONDS)
 
 logger.info(
     "LLM: Gemini %d key(s) x %d model %s (nguồn chính) — DeepSeek %d key(s) (dự phòng).",
@@ -293,7 +316,8 @@ def try_gemini(
     max_tokens = GEMINI_MAX_OUTPUT_TOKENS
     chain = (GEMINI_LITE_MODELS + GEMINI_MODELS) if prefer_lite else GEMINI_MODELS
     now = time.monotonic()
-    skipped = 0
+    skipped = 0     # số tổ hợp bỏ qua vì đang nghỉ
+    attempted = 0   # số tổ hợp thật sự gọi đi — phân biệt "hết lượt" với "gọi mà hỏng"
     for model in chain:
         if _model_cooldown.get(model, 0.0) > now:
             skipped += len(_gemini_clients)
@@ -304,6 +328,7 @@ def try_gemini(
             if _key_cooldown.get((model, label), 0.0) > now:
                 skipped += 1
                 continue
+            attempted += 1
             try:
                 completion = client.chat.completions.create(
                     model=model, max_tokens=max_tokens, messages=messages, **extra
@@ -327,10 +352,13 @@ def try_gemini(
                     else:
                         logger.info("%s: Gemini %s, key %s.%s", step, model, label,
                                     f" (bỏ qua {skipped} chỗ đang nghỉ)" if skipped else "")
-                    # Gọi được nghĩa là chỗ này đã hồi — xoá dấu nghỉ để lần sau không bỏ qua
-                    # oan (vd cooldown đặt lúc 429 nhưng hạn mức đã reset sớm hơn dự kiến).
+                    # Gọi được nghĩa là chỗ này đã hồi — xoá dấu nghỉ VÀ bộ đếm hỏng liên
+                    # tiếp, để lần sau không bỏ qua oan và nghỉ lại từ mức thấp nhất (nếu
+                    # không reset, một lần cạn RPD hôm nay sẽ khiến ngày mai vẫn nghỉ 30 phút).
                     _key_cooldown.pop((model, label), None)
                     _model_cooldown.pop(model, None)
+                    _fail_streak.pop((model, label), None)
+                    _fail_streak.pop(model, None)
                     return content.strip()
                 # Rỗng hoàn toàn: hay gặp nhất là trần token quá thấp tới mức model dùng hết
                 # sạch vào phần suy luận, chưa kịp sinh chữ nào (đã tái hiện được: cùng 1 câu
@@ -345,9 +373,10 @@ def try_gemini(
                 # gemini-3.6-flash, 15 với gemini-3.7-flash — rất dễ chạm khi upload nhiều
                 # file cùng lúc, nên nhiều model x nhiều key mới là thứ giữ cho pipeline
                 # không tụt hết về DeepSeek.
-                _key_cooldown[(model, label)] = now + GEMINI_KEY_COOLDOWN_SECONDS
+                wait = _backoff((model, label), GEMINI_KEY_COOLDOWN_SECONDS)
+                _key_cooldown[(model, label)] = now + wait
                 logger.info("%s: Gemini %s key %s hết hạn mức (429) — nghỉ %ds, thử tiếp.",
-                            step, model, label, GEMINI_KEY_COOLDOWN_SECONDS)
+                            step, model, label, wait)
             except AuthenticationError:
                 # Key sai/bị thu hồi — lỗi của RIÊNG key này. Phải bắt TRƯỚC APIStatusError vì
                 # AuthenticationError là lớp con của nó, nếu không sẽ rơi vào nhánh "break"
@@ -368,14 +397,34 @@ def try_gemini(
                 # gemini-3.7-flash — 503 rồi sau đó chạy bình thường), hay 404 khi Google
                 # ngừng model. Đổi key vô ích vì key nào cũng gọi vào đúng model đó, nên bỏ
                 # các key còn lại và sang MODEL kế tiếp trong chuỗi.
-                _model_cooldown[model] = now + GEMINI_MODEL_COOLDOWN_SECONDS
+                wait = _backoff(model, GEMINI_MODEL_COOLDOWN_SECONDS)
+                _model_cooldown[model] = now + wait
                 logger.warning("%s: Gemini %s lỗi phía model (mã %s) — nghỉ %ds, sang model kế tiếp.",
-                               step, model, e.status_code, GEMINI_MODEL_COOLDOWN_SECONDS)
+                               step, model, e.status_code, wait)
                 break
             except Exception as e:  # noqa: BLE001
                 # Timeout/mất mạng: có thể do riêng lần gọi này, thử nốt các key còn lại.
                 logger.warning("%s: Gemini %s key %s lỗi (%s) — thử tiếp.",
                                step, model, label, type(e).__name__)
+
+    # Không còn chỗ nào dùng được. Nếu là do TẤT CẢ đang nghỉ (không thử lượt nào), phải kêu
+    # lên: từ giờ mọi file sẽ chạy bằng DeepSeek (TỐN TIỀN) và Tesseract (đọc kém hơn) mà
+    # không có dấu hiệu gì trên UI. Trước đây nhánh này im lặng tuyệt đối.
+    # Chỉ log lại mỗi GEMINI_EXHAUSTED_LOG_EVERY giây để không ngập log khi upload cả loạt.
+    if skipped and not attempted:
+        global _last_exhausted_log
+        if now - _last_exhausted_log >= GEMINI_EXHAUSTED_LOG_EVERY:
+            _last_exhausted_log = now
+            soonest = min(
+                [t for t in _key_cooldown.values() if t > now]
+                + [t for t in _model_cooldown.values() if t > now],
+                default=now,
+            )
+            logger.warning(
+                "HẾT LƯỢT GEMINI — toàn bộ %d tổ hợp model x key đang nghỉ, thử lại sau ~%ds. "
+                "Từ giờ mọi việc chạy bằng DeepSeek (tốn tiền) và Tesseract (OCR kém hơn).",
+                skipped, int(soonest - now),
+            )
     return None
 
 
