@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ChecklistSection } from "@/components/ChecklistSection";
 import { DocumentList } from "@/components/DocumentList";
 import { GeneralNotesBanner } from "@/components/GeneralNotesBanner";
+import { SavingsCard } from "@/components/SavingsCard";
 import { STAGE_LABEL, UploadDropzone } from "@/components/UploadDropzone";
 import { API_URL, estimateProcessingSeconds, formatRemaining, parseUtcDate } from "@/lib/format";
 import type { CaseDetailDTO } from "@/lib/client-types";
@@ -200,6 +201,13 @@ export function CaseDetail({ caseId, initialData }: Props) {
       )}
 
       <GeneralNotesBanner />
+
+      <SavingsCard
+        caseId={caseId}
+        threshold={data.financialThreshold}
+        savings={data.savings}
+        onChanged={refetch}
+      />
 
       <div>
         <h2 className="text-lg font-bold text-neutral-800 mb-3">Upload hồ sơ</h2>

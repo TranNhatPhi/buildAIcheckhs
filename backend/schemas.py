@@ -82,6 +82,21 @@ class FinancialThresholdDTO(BaseModel):
     isEstimated: bool
 
 
+class SavingsAssessmentDTO(BaseModel):
+    """Số dư tiết kiệm THẬT của khách, đối chiếu với mức yêu cầu ở financialThreshold."""
+
+    aiVnd: int | None
+    aiNote: str | None
+    manualVnd: int | None
+    # Số được dùng để kết luận: manualVnd nếu nhân viên đã nhập, không thì aiVnd.
+    effectiveVnd: int | None
+    source: str  # "MANUAL" | "AI" | "NONE"
+    verdict: str  # "ENOUGH" | "BORDERLINE" | "SHORT" | "UNKNOWN"
+    shortOfMinVnd: int
+    shortOfMaxVnd: int
+    updatedAt: datetime | None
+
+
 class ChecklistItemStatusDTO(BaseModel):
     item: ChecklistItemDTO
     requiredCount: int
@@ -132,6 +147,13 @@ class CaseDetailDTO(BaseModel):
     case: CaseWithDocumentsDTO
     checklist: ChecklistSummaryDTO
     financialThreshold: FinancialThresholdDTO
+    savings: SavingsAssessmentDTO
+
+
+class UpdateSavingsRequest(BaseModel):
+    """None nghĩa là XOÁ số nhập tay, quay về dùng số AI đọc — không phải "không đổi"."""
+
+    manualVnd: int | None = None
 
 
 class CaseAnalysisResponse(BaseModel):

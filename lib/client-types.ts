@@ -50,6 +50,20 @@ export interface FinancialThresholdDTO {
   isEstimated: boolean;
 }
 
+/** Số dư tiết kiệm thật của khách, đối chiếu với mức yêu cầu ở financialThreshold. */
+export interface SavingsAssessmentDTO {
+  aiVnd: number | null;
+  aiNote: string | null;
+  manualVnd: number | null;
+  /** Số dùng để kết luận: manualVnd nếu nhân viên đã nhập, không thì aiVnd. */
+  effectiveVnd: number | null;
+  source: "MANUAL" | "AI" | "NONE";
+  verdict: "ENOUGH" | "BORDERLINE" | "SHORT" | "UNKNOWN";
+  shortOfMinVnd: number;
+  shortOfMaxVnd: number;
+  updatedAt: string | null;
+}
+
 export interface CaseListItemDTO {
   id: string;
   clientName: string;
@@ -106,4 +120,5 @@ export interface CaseDetailDTO {
     needsReviewCount: number;
   };
   financialThreshold: FinancialThresholdDTO;
+  savings: SavingsAssessmentDTO;
 }

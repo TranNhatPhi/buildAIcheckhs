@@ -362,3 +362,102 @@ def summarize_case_profile(case_context: str, documents_text: str) -> tuple[str 
     except Exception as e:  # noqa: BLE001
         logger.warning("Lỗi phân tích AI chuyên sâu: %s", e)
         return None, describe_error(e)
+
+
+# ---------------------------------------------------------------------------
+# Đọc số dư tiết kiệm từ giấy tờ chứng minh tài chính
+# ---------------------------------------------------------------------------
+
+# Nhỏ hơn hẳn CLASSIFICATION_MAX_TOKENS: đầu ra chỉ là 1 con số + vài dòng liệt kê nguồn,
+# không phải đoạn phân tích dài. Vẫn để rộng rãi vì Gemini 3.x là model lai — phần suy luận
+# ăn CHUNG hạn mức này, cắt sát quá là trả về rỗng với finish_reason="length" (đã gặp thật
+# ở SUMMARY_MAX_TOKENS, xem ghi chú ở đó).
+SAVINGS_MAX_TOKENS = 8000
+
+SAVINGS_SYSTEM_PROMPT = """Bạn đọc giấy tờ chứng minh tài chính (sổ tiết kiệm, giấy xác nhận số dư
+sổ tiết kiệm) của khách hàng làm hồ sơ định cư Canada, và trả về TỔNG SỐ TIỀN TIẾT KIỆM khách
+đang có, tính bằng ĐỒNG VIỆT NAM.
+
+Trả về JSON đúng dạng:
+{"total_vnd": <số nguyên, đơn vị đồng>, "accounts": [{"source": "<tên file>", "bank": "<ngân hàng>",
+"account_no": "<số sổ/số tài khoản nếu đọc được>", "amount_vnd": <số nguyên>}], "note": "<giải
+thích ngắn gọn bằng tiếng Việt: đã cộng những khoản nào, đã loại khoản nào và vì sao>"}
+
+Quy tắc BẮT BUỘC:
+- KHÔNG ĐƯỢC TRÙNG TIỀN. Sổ tiết kiệm và Giấy xác nhận số dư của CÙNG MỘT sổ là CÙNG MỘT khoản
+  tiền được chứng minh hai lần — chỉ tính MỘT LẦN. Dấu hiệu cùng một sổ: trùng số sổ/số tài
+  khoản, hoặc trùng cả ngân hàng lẫn số tiền. Đây là lỗi nguy hiểm nhất ở việc này: cộng trùng
+  làm hồ sơ thiếu tiền trông như đủ tiền.
+- Chỉ tính TIỀN GỬI TIẾT KIỆM đứng tên khách hoặc vợ/chồng khách. KHÔNG tính giá trị nhà đất,
+  xe, lương hàng tháng, hay số dư tài khoản thanh toán thông thường.
+- Nếu giấy tờ ghi bằng ngoại tệ (USD...), ĐỪNG tự quy đổi — bỏ khoản đó ra khỏi total_vnd và
+  ghi rõ trong "note" là có khoản ngoại tệ cần nhân viên tự quy đổi.
+- Đọc kỹ số 0. "100.000.000" là một trăm triệu, "10.000.000" là mười triệu. Nếu chữ số bị mờ
+  hoặc không chắc chắn, ĐỪNG ĐOÁN: bỏ khoản đó ra và ghi lý do vào "note".
+- Nếu không tìm thấy khoản tiết kiệm nào đọc được, trả về {"total_vnd": null, "accounts": [],
+  "note": "<lý do>"}.
+- CHỈ dựa trên nội dung được cung cấp. KHÔNG bịa số.
+"""
+
+
+def extract_savings_balance(documents_text: str) -> tuple[int | None, str | None, str | None]:
+    """Đọc tổng số dư tiết kiệm từ văn bản các giấy tờ tài chính đã nộp.
+
+    Trả về (tổng_vnd, ghi_chú_cho_nhân_viên, lỗi) — `lỗi` khác None nghĩa là không đọc được,
+    lúc đó 2 giá trị đầu là None.
+
+    Con số trả về là ĐỀ XUẤT của AI, không phải kết luận: nơi gọi lưu vào Case.savingsAiVnd
+    và luôn để nhân viên đè lên bằng savingsManualVnd (xem completeness.assess_savings)."""
+    if not documents_text.strip():
+        return None, None, "Chưa có giấy tờ tài chính nào được phân loại."
+
+    try:
+        raw = complete_with_fallback(
+            step="Đọc số dư tiết kiệm",
+            messages=[
+                {"role": "system", "content": SAVINGS_SYSTEM_PROMPT},
+                {"role": "user", "content": documents_text},
+            ],
+            deepseek_max_tokens=SAVINGS_MAX_TOKENS,
+            response_format={"type": "json_object"},
+        )
+        parsed = json.loads(raw or "")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Lỗi đọc số dư tiết kiệm: %s", e)
+        return None, None, describe_error(e)
+
+    total = parsed.get("total_vnd")
+    if total is None:
+        return None, str(parsed.get("note") or "AI không đọc được số dư nào."), None
+
+    try:
+        # float() trước rồi mới int(): model đôi khi trả "400000000.0" hoặc "4e8" thay vì số
+        # nguyên thuần, ép thẳng int() sẽ ném ValueError và mất luôn kết quả đọc đúng.
+        total_vnd = int(float(total))
+    except (TypeError, ValueError):
+        logger.warning("AI trả về total_vnd không phải số: %r", total)
+        return None, None, "AI trả về số dư không đọc được thành số."
+
+    if total_vnd < 0:
+        return None, None, "AI trả về số dư âm — bỏ qua."
+
+    # Ghép phần liệt kê từng khoản vào ghi chú: nhân viên phải nhìn thấy con số tổng ĐƯỢC
+    # CỘNG TỪ ĐÂU mới soát được, nhất là để bắt lỗi cộng trùng sổ tiết kiệm với giấy xác
+    # nhận số dư của chính sổ đó.
+    lines: list[str] = []
+    for acc in parsed.get("accounts") or []:
+        if not isinstance(acc, dict):
+            continue
+        bits = [str(acc.get(k)) for k in ("bank", "account_no") if acc.get(k)]
+        amount = acc.get("amount_vnd")
+        amount_str = f"{int(float(amount)):,} đ".replace(",", ".") if amount is not None else "?"
+        lines.append(f"- {acc.get('source') or 'không rõ nguồn'}: {amount_str}"
+                     + (f" ({', '.join(bits)})" if bits else ""))
+
+    note_parts = []
+    if lines:
+        note_parts.append("\n".join(lines))
+    if parsed.get("note"):
+        note_parts.append(str(parsed["note"]))
+
+    return total_vnd, "\n\n".join(note_parts) or None, None

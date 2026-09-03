@@ -1,4 +1,6 @@
 """Tính đủ/thiếu checklist + ngưỡng tài chính. Port từ lib/completeness.ts (Next.js)."""
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 from models import ChecklistItem, Document
@@ -151,3 +153,85 @@ def compute_financial_threshold_vnd(marital_status: str, number_of_children: int
     is_estimated = number_of_children > 2 or marital_status == "SINGLE"
 
     return FinancialThreshold(base, base, is_estimated)
+
+
+# Mục checklist chứa TIỀN MẶT chứng minh tài chính. Nhận diện theo mẩu chuỗi trong id thay vì
+# liệt kê cứng 6 id: cùng một mục lặp lại ở cả 3 bộ với tiền tố khác nhau ("so-tiet-kiem",
+# "hs-so-tiet-kiem", "hs-spouse-so-tiet-kiem" — xem seed.py), và bộ checklist còn được sửa/
+# thêm theo yêu cầu khách hàng, nên danh sách cứng sẽ âm thầm bỏ sót mục mới.
+#
+# CỐ Ý KHÔNG tính "Quyền sử dụng đất" / "giay-to-nha-dat": đó là tài sản, không phải số dư
+# tài khoản — cộng vào sẽ thổi phồng con số quyết định "đủ tiền hay không".
+_SAVINGS_ID_MARKERS = ("tiet-kiem", "so-du")
+
+
+def is_savings_item(item_id: str | None) -> bool:
+    return bool(item_id) and any(m in item_id for m in _SAVINGS_ID_MARKERS)
+
+
+@dataclass
+class SavingsAssessment:
+    """Đối chiếu số dư THẬT của khách với mức yêu cầu (compute_financial_threshold_vnd)."""
+
+    threshold: FinancialThreshold
+    ai_vnd: int | None
+    ai_note: str | None
+    manual_vnd: int | None
+    effective_vnd: int | None
+    # "MANUAL" (nhân viên tự nhập) | "AI" (AI đọc từ giấy tờ) | "NONE" (chưa có số nào)
+    source: str
+    # "ENOUGH" (đạt cả mức an toàn) | "BORDERLINE" (qua mức tối thiểu nhưng chưa tới mức an
+    # toàn) | "SHORT" (chưa đủ mức tối thiểu) | "UNKNOWN" (chưa đọc được số dư nào)
+    verdict: str
+    # Còn thiếu bao nhiêu để chạm mức TỐI THIỂU, và bao nhiêu để chạm mức AN TOÀN. 0 nghĩa
+    # là đã đạt mức đó rồi.
+    short_of_min_vnd: int
+    short_of_max_vnd: int
+
+
+def assess_savings(
+    marital_status: str,
+    number_of_children: int,
+    ai_vnd: int | None,
+    ai_note: str | None,
+    manual_vnd: int | None,
+) -> SavingsAssessment:
+    threshold = compute_financial_threshold_vnd(marital_status, number_of_children)
+
+    # Nhân viên nhập tay thì LUÔN thắng số AI đọc — giống hệt cách manualCorrectedText đè
+    # correctedText ở Document. Người đã tự mở giấy tờ ra xem thì đáng tin hơn máy đọc ảnh.
+    if manual_vnd is not None:
+        effective, source = manual_vnd, "MANUAL"
+    elif ai_vnd is not None:
+        effective, source = ai_vnd, "AI"
+    else:
+        effective, source = None, "NONE"
+
+    if effective is None:
+        verdict = "UNKNOWN"
+        short_of_min = short_of_max = 0
+    else:
+        short_of_min = max(0, threshold.min_vnd - effective)
+        short_of_max = max(0, threshold.max_vnd - effective)
+        if short_of_min > 0:
+            verdict = "SHORT"
+        elif short_of_max > 0:
+            # Chỉ xảy ra với hồ sơ không con, nơi checklist gốc cho một KHOẢNG (vd độc thân
+            # 100-150 triệu) chứ không một con số. Nằm trong khoảng nghĩa là đã qua mức tối
+            # thiểu nhưng chưa tới mức khách hàng vẫn khuyên nên có — nói rõ thay vì gộp
+            # chung vào "đủ", vì gộp là giấu mất rủi ro trượt.
+            verdict = "BORDERLINE"
+        else:
+            verdict = "ENOUGH"
+
+    return SavingsAssessment(
+        threshold=threshold,
+        ai_vnd=ai_vnd,
+        ai_note=ai_note,
+        manual_vnd=manual_vnd,
+        effective_vnd=effective,
+        source=source,
+        verdict=verdict,
+        short_of_min_vnd=short_of_min,
+        short_of_max_vnd=short_of_max,
+    )

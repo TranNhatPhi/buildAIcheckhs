@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -61,6 +62,21 @@ class Case(Base):
     aiAnalysisSummary = Column(Text, nullable=True)
     aiAnalysisError = Column(Text, nullable=True)
     aiAnalysisUpdatedAt = Column(DateTime, nullable=True)
+
+    # Số dư tiết kiệm chứng minh tài chính. Tách LÀM 2 CỘT theo đúng khuôn đã dùng cho văn
+    # bản OCR (correctedText / manualCorrectedText): AI đọc ra một con số, nhân viên được đè
+    # lên mà KHÔNG mất bản AI — vẫn còn để đối chiếu khi nghi AI đọc nhầm. Số hiệu lực =
+    # savingsManualVnd nếu có, không thì savingsAiVnd (xem completeness.assess_savings).
+    #
+    # BigInteger chứ không Integer: INT của MySQL tối đa ~2,1 tỷ, mà số dư 3-5 tỷ VNĐ là
+    # chuyện bình thường với hồ sơ diện tay nghề cao — tràn số sẽ làm hỏng đúng những hồ sơ
+    # dư tiền nhất.
+    savingsAiVnd = Column(BigInteger, nullable=True)
+    # AI đọc được những khoản nào, từ file nào — hiện nguyên văn cho nhân viên soát lại,
+    # vì con số một mình không đủ để tin khi nó quyết định "đủ tiền đi hay không".
+    savingsAiNote = Column(Text, nullable=True)
+    savingsManualVnd = Column(BigInteger, nullable=True)
+    savingsUpdatedAt = Column(DateTime, nullable=True)
 
     documents = relationship("Document", back_populates="case", cascade="all, delete-orphan")
 

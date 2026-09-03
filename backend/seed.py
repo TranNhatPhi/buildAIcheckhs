@@ -17,7 +17,7 @@ load_dotenv(".env.local")
 load_dotenv("../.env.local")
 load_dotenv("../.env")
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from db import SessionLocal, engine
 from models import Base, ChecklistItem
@@ -363,8 +363,43 @@ for _d in HIGH_SKILL_ITEMS:
 CHECKLIST_ITEMS = LOW_SKILL_ITEMS + HIGH_SKILL_ITEMS
 
 
+# Cột thêm vào bảng ĐÃ CÓ SẴN, kèm câu lệnh tạo. `Base.metadata.create_all()` chỉ tạo BẢNG
+# còn thiếu — nó KHÔNG bao giờ thêm CỘT còn thiếu vào bảng đã tồn tại, nên nếu chỉ khai thêm
+# Column trong models.py thì production sẽ chết ngay ở query đầu tiên với "Unknown column".
+# Schema ở dự án này quản lý bằng tay (Prisma migrate đã bỏ, xem cuối models.py), và seed.py
+# vốn đã tự chạy mỗi lần deploy (service "seed" trong docker-compose.prod.yml) — nên đây là
+# đúng chỗ để đặt bước thêm cột, khỏi phải nhớ SSH vào VN gõ ALTER TABLE bằng tay.
+#
+# MySQL 8 KHÔNG có "ADD COLUMN IF NOT EXISTS" (cú pháp đó là của MariaDB), nên phải tự hỏi
+# information_schema trước. Chỉ THÊM cột, không bao giờ sửa/xoá — để chạy lại nhiều lần vẫn
+# an toàn và không có cách nào làm mất dữ liệu đang có.
+ADDED_COLUMNS = [
+    ("Case", "savingsAiVnd", "BIGINT NULL"),
+    ("Case", "savingsAiNote", "TEXT NULL"),
+    ("Case", "savingsManualVnd", "BIGINT NULL"),
+    ("Case", "savingsUpdatedAt", "DATETIME NULL"),
+]
+
+
+def ensure_columns():
+    with engine.begin() as conn:
+        for table, column, ddl in ADDED_COLUMNS:
+            exists = conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema = DATABASE() AND table_name = :t AND column_name = :c"
+                ),
+                {"t": table, "c": column},
+            ).first()
+            if exists:
+                continue
+            conn.execute(text(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {ddl}"))
+            print(f"Added column {table}.{column} ({ddl})")
+
+
 def main():
     Base.metadata.create_all(engine)
+    ensure_columns()
 
     db = SessionLocal()
     try:

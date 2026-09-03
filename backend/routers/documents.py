@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session
 import ocr
 import storage
 from classify import classify_ocr_text
-from completeness import is_item_applicable
+from completeness import is_item_applicable, is_savings_item
 from db import get_db
 from models import ChecklistItem, Document
+from savings import refresh_case_savings_quietly
 from schemas import DocumentDTO, PatchDocumentRequest, UpdateManualCorrectedTextRequest
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -35,10 +36,19 @@ def patch_document(document_id: str, body: PatchDocumentRequest, db: Session = D
     if not doc:
         raise HTTPException(status_code=404, detail="Không tìm thấy file")
 
+    # Giữ lại mục CŨ trước khi ghi đè: nếu nhân viên GỠ một file ra khỏi mục tiết kiệm thì
+    # tổng số dư cũng phải tính lại, không chỉ khi họ GÁN vào. Không nhớ mục cũ thì trường
+    # hợp gỡ ra sẽ để lại con số cũ đã sai trên màn hình.
+    was_savings = is_savings_item(doc.matchedChecklistItemId)
+
     doc.matchedChecklistItemId = body.matchedChecklistItemId
     doc.status = "MANUALLY_SET" if body.matchedChecklistItemId else "NEEDS_REVIEW"
     doc.isManualOverride = True
     db.commit()
+
+    if was_savings or is_savings_item(doc.matchedChecklistItemId):
+        refresh_case_savings_quietly(db, doc.case)
+
     db.refresh(doc)
     return doc
 
@@ -109,9 +119,13 @@ def get_document_page_image(document_id: str, page_num: int, db: Session = Depen
 
 @router.post("/{document_id}/reclassify", response_model=DocumentDTO)
 def reclassify_document(document_id: str, db: Session = Depends(get_db)):
+    # Xem giải thích ở patch_document: phải nhớ mục CŨ vì phân loại lại có thể chuyển file
+    # RA KHỎI mục tiết kiệm, lúc đó tổng số dư cũng phải tính lại.
     doc = db.get(Document, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Không tìm thấy file")
+
+    was_savings = is_savings_item(doc.matchedChecklistItemId)
 
     all_items = db.scalars(select(ChecklistItem)).all()
     applicable_items = [
@@ -170,5 +184,9 @@ def reclassify_document(document_id: str, db: Session = Depends(get_db)):
     doc.classificationError = outcome.classification_error
     doc.isManualOverride = False
     db.commit()
+
+    if was_savings or is_savings_item(doc.matchedChecklistItemId):
+        refresh_case_savings_quietly(db, doc.case)
+
     db.refresh(doc)
     return doc

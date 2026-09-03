@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session
 import ocr
 import storage
 from classify import classify_ocr_text
-from completeness import is_item_applicable
+from completeness import is_item_applicable, is_savings_item
 from db import get_db
 from models import Case, ChecklistItem, Document
+from savings import refresh_case_savings_quietly
 from schemas import DocumentDTO
 
 router = APIRouter(prefix="/cases/{case_id}/documents", tags=["documents"])
@@ -137,6 +138,16 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
         document.classificationError = outcome.classification_error
 
     db.commit()
+
+    # File vừa vào là giấy tờ tài chính -> đọc lại số dư của cả hồ sơ ngay, để nhân viên mở
+    # hồ sơ ra là thấy sẵn kết luận đủ/thiếu tiền, không phải bấm thêm nút nào. Đọc lại TOÀN
+    # BỘ giấy tờ tài chính chứ không chỉ file này: tổng số dư phụ thuộc vào việc đối chiếu
+    # các sổ với nhau để không cộng trùng (xem SAVINGS_SYSTEM_PROMPT ở classify.py).
+    #
+    # Bản "quietly" — lỗi ở bước phụ này không được phép làm hỏng lượt upload đã thành công.
+    if is_savings_item(document.matchedChecklistItemId):
+        refresh_case_savings_quietly(db, case)
+
     db.refresh(document)
     return document
 

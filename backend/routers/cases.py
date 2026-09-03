@@ -11,16 +11,23 @@ import pdf_export
 import storage
 from admin_auth import require_admin
 from classify import summarize_case_profile
-from completeness import compute_checklist_summary, compute_financial_threshold_vnd
+from completeness import (
+    assess_savings,
+    compute_checklist_summary,
+    compute_financial_threshold_vnd,
+)
 from db import get_db
-from mappers import checklist_summary_to_dto, financial_threshold_to_dto
+from mappers import checklist_summary_to_dto, financial_threshold_to_dto, savings_to_dto
 from models import Case, ChecklistItem, now_utc
+from savings import refresh_case_savings
 from schemas import (
     CaseAnalysisResponse,
     CaseDetailDTO,
     CaseListItemDTO,
     CreateCaseRequest,
+    SavingsAssessmentDTO,
     UpdateCaseRequest,
+    UpdateSavingsRequest,
 )
 
 router = APIRouter(prefix="/cases", tags=["cases"])
@@ -181,7 +188,60 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
         },
         checklist=checklist_summary_to_dto(summary),
         financialThreshold=financial_threshold_to_dto(threshold),
+        savings=_savings_dto(case),
     )
+
+
+def _savings_dto(case: Case) -> SavingsAssessmentDTO:
+    return savings_to_dto(
+        assess_savings(
+            case.maritalStatus,
+            case.numberOfChildren,
+            case.savingsAiVnd,
+            case.savingsAiNote,
+            case.savingsManualVnd,
+        ),
+        case.savingsUpdatedAt,
+    )
+
+
+@router.post("/{case_id}/savings/detect", response_model=SavingsAssessmentDTO)
+def detect_case_savings(case_id: str, db: Session = Depends(get_db)):
+    """Đọc lại số dư tiết kiệm từ giấy tờ đã nộp bằng AI.
+
+    Bình thường bước này tự chạy sau khi upload xong giấy tờ tài chính (xem
+    case_documents.upload_document) — endpoint này dành cho lúc nhân viên sửa tay văn bản
+    OCR rồi muốn AI đọc lại, hoặc lần đọc trước gặp lỗi mạng."""
+    case = db.get(Case, case_id)
+    if not case or case.deletedAt is not None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+
+    error = refresh_case_savings(db, case)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
+    db.refresh(case)
+    return _savings_dto(case)
+
+
+@router.patch("/{case_id}/savings", response_model=SavingsAssessmentDTO)
+def update_case_savings(
+    case_id: str, body: UpdateSavingsRequest, db: Session = Depends(get_db)
+):
+    """Nhân viên tự nhập/sửa số dư. Gửi manualVnd=null để XOÁ số nhập tay và quay lại dùng
+    số AI đọc — CỐ Ý không đụng tới savingsAiVnd để vẫn còn bản AI mà đối chiếu."""
+    case = db.get(Case, case_id)
+    if not case or case.deletedAt is not None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+
+    if body.manualVnd is not None and body.manualVnd < 0:
+        raise HTTPException(status_code=400, detail="Số dư không thể là số âm.")
+
+    case.savingsManualVnd = body.manualVnd
+    case.savingsUpdatedAt = now_utc()
+    db.commit()
+    db.refresh(case)
+    return _savings_dto(case)
 
 
 @router.post("/{case_id}/analyze", response_model=CaseAnalysisResponse)
