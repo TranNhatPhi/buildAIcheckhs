@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { CanhCuonHoSo } from "@/components/CanhCuonHoSo";
 import { ChecklistOverview3D } from "@/components/ChecklistOverview3D";
 import { EditCaseModal } from "@/components/EditCaseModal";
 import { API_URL } from "@/lib/format";
@@ -127,9 +128,12 @@ export function CaseList({ initialCases }: Props) {
 
   return (
     <>
-      <ChecklistOverview3D tongHoSo={cases.length} {...overview} />
+      <CanhCuonHoSo tongHoSo={cases.length} {...overview} />
 
-      <section className="mb-5 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
+      <section
+        id="danh-sach-ho-so"
+        className="mb-5 scroll-mt-6 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"
+      >
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <label className="md:col-span-2 lg:col-span-4">
             <span className="mb-1.5 block text-sm font-medium text-neutral-700">
