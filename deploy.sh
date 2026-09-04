@@ -23,17 +23,27 @@ fi
 # dựng lại cụm Compose song song: container Caddy tranh cổng 80/443 với Caddy của k3s, còn
 # mysql/minio thì gắn lại volume Compose CŨ — hai bản dữ liệu cùng chạy, rất khó nhận ra.
 #
-# Kiểm bằng chính cụm k8s đang sống chứ không phải bằng cờ hay biến: k3s đã dừng (đường lùi)
-# thì kubectl lỗi, guard tự thông, đúng lúc cần dùng script này thật.
-if command -v kubectl >/dev/null 2>&1 && kubectl -n checklist get deployment caddy >/dev/null 2>&1; then
-  echo "!! ============================ DỪNG ============================"
-  echo "!! Hệ thống đang chạy trên k3s, KHÔNG phải Docker Compose."
-  echo "!! Deploy bằng:  ./k8s/deploy-k8s.sh"
-  echo "!!"
-  echo "!! Chỉ dùng script này khi CỐ Ý quay lui về Compose, và phải dừng"
-  echo "!! k3s trước:    sudo systemctl stop k3s"
-  echo "!! =============================================================="
-  exit 1
+# Kiểm theo SỐ POD ĐANG PHỤC VỤ, không phải theo "deployment có tồn tại hay không".
+#
+# Khác biệt này quan trọng: tài khoản trên VM hiện KHÔNG có quyền sudo, nên đường lùi
+# "sudo systemctl stop k3s" không dùng được. Đường lùi duy nhất còn lại là hạ replica về 0
+# bằng kubectl (không cần sudo) — mà lúc đó deployment caddy VẪN TỒN TẠI. Guard bản cũ chỉ
+# hỏi "có tồn tại không" nên sẽ chặn luôn cả lần quay lui hợp lệ, tức tự khoá mất lối thoát.
+if command -v kubectl >/dev/null 2>&1; then
+  K8S_CADDY_UP=$(kubectl -n checklist get deployment caddy \
+    -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)
+  if [[ "${K8S_CADDY_UP:-0}" -gt 0 ]]; then
+    echo "!! ============================ DỪNG ============================"
+    echo "!! Hệ thống đang chạy trên k3s, KHÔNG phải Docker Compose."
+    echo "!! Deploy bằng:  ./k8s/deploy-k8s.sh"
+    echo "!!"
+    echo "!! Muốn CỐ Ý quay lui về Compose thì hạ k8s xuống trước (không cần sudo):"
+    echo "!!   kubectl -n checklist scale deployment caddy backend frontend --replicas=0"
+    echo "!!   kubectl -n checklist delete svc caddy      # trả lại cổng 80/443"
+    echo "!!   kubectl -n checklist scale statefulset mysql minio --replicas=0"
+    echo "!! =============================================================="
+    exit 1
+  fi
 fi
 
 # .env.prod có APP_DOMAIN/API_DOMAIN — dùng để gọi qua HTTPS công khai (backend không mở
