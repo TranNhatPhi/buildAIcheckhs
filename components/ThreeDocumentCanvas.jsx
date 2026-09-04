@@ -61,9 +61,15 @@ export default function ThreeDocumentCanvas({ cheDo = "tong-quan", tienDo = 0 })
     const khung = khungRef.current;
     if (!khung) return undefined;
 
+    // Khai báo NGOÀI try: `setPixelRatio` và số hạt sáng bên dưới còn đọc lại biến này. Để
+    // `const` bên trong try thì nó bị chặn trong phạm vi khối, build vẫn qua (file .jsx nên
+    // không có TypeScript soát) nhưng production chết ngay ở lần render đầu với
+    // "ReferenceError: thietBiYeu is not defined" — cả trang trắng, không riêng hiệu ứng 3D.
+    // hardwareConcurrency có thể undefined ở vài trình duyệt; `|| 0` để không ra NaN.
+    const thietBiYeu = (window.navigator.hardwareConcurrency || 0) <= 4;
+
     let boDung;
     try {
-      const thietBiYeu = window.navigator.hardwareConcurrency <= 4;
       boDung = new THREE.WebGLRenderer({
         alpha: true,
         antialias: !thietBiYeu,
