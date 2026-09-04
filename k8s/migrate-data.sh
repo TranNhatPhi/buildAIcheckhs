@@ -48,13 +48,26 @@ $COMPOSE stop minio
 kubectl -n "$NS" scale statefulset/minio --replicas=0
 kubectl -n "$NS" wait --for=delete pod/minio-0 --timeout=120s || true
 
-SRC=$(docker volume inspect "$($COMPOSE config --volumes | grep -x minio_data | head -1 >/dev/null && basename "$PWD")_minio_data" \
-        --format '{{.Mountpoint}}' 2>/dev/null || true)
-if [[ -z "$SRC" || ! -d "$SRC" ]]; then
-  SRC=$(docker volume ls -q | grep -i 'minio_data' | head -1 | xargs -r docker volume inspect --format '{{.Mountpoint}}')
+# Tìm volume theo TÊN thật do Docker đặt, không tự ghép từ tên thư mục: Compose viết
+# thường hoá tên project ("buildAIcheckhs" -> "buildaicheckhs_minio_data"), ghép tay là
+# lệch hoa/thường và không tìm thấy.
+#
+# Đòi hỏi khớp ĐÚNG MỘT volume rồi mới chạy tiếp — khớp nhiều cái nghĩa là trên máy còn
+# stack khác cùng tên, chép nhầm là hỏng dữ liệu của stack đó.
+mapfile -t _minio_vols < <(docker volume ls -q | grep 'minio_data$')
+if [[ ${#_minio_vols[@]} -ne 1 ]]; then
+  echo "!! Tìm thấy ${#_minio_vols[@]} volume minio_data (${_minio_vols[*]:-không có}) — cần đúng 1. DỪNG."
+  exit 1
 fi
-DST=$(kubectl -n "$NS" get pv -o jsonpath='{range .items[*]}{.spec.claimRef.name}{" "}{.spec.hostPath.path}{"\n"}{end}' \
-      | awk '$1=="data-minio-0"{print $2}')
+SRC=$(docker volume inspect "${_minio_vols[0]}" --format '{{.Mountpoint}}')
+echo "    volume Docker: ${_minio_vols[0]}"
+# local-path-provisioner của k3s tạo PV dạng .spec.hostPath.path ở bản cũ và
+# .spec.local.path ở bản mới — hỏi cả hai rồi lấy cái nào có giá trị.
+pv_path() {  # $1 = ten PVC
+  kubectl -n "$NS" get pv -o jsonpath='{range .items[*]}{.spec.claimRef.name}{" "}{.spec.hostPath.path}{.spec.local.path}{"\n"}{end}' \
+    | awk -v want="$1" '$1==want{print $2}'
+}
+DST=$(pv_path data-minio-0)
 echo "    nguồn : $SRC"
 echo "    đích  : $DST"
 [[ -d "$SRC" && -n "$DST" ]] || { echo "!! Không xác định được đường dẫn — DỪNG, làm tay."; exit 1; }
@@ -70,8 +83,7 @@ kubectl -n "$NS" rollout status statefulset/minio --timeout=300s
 # Let's Encrypt và site nằm không có HTTPS hàng giờ.
 echo "==> Chép chứng chỉ HTTPS của Caddy..."
 CSRC=$(docker volume ls -q | grep -i 'caddy_data' | head -1 | xargs -r docker volume inspect --format '{{.Mountpoint}}')
-CDST=$(kubectl -n "$NS" get pv -o jsonpath='{range .items[*]}{.spec.claimRef.name}{" "}{.spec.hostPath.path}{"\n"}{end}' \
-      | awk '$1=="caddy-data"{print $2}')
+CDST=$(pv_path caddy-data)
 if [[ -d "$CSRC" && -n "$CDST" ]]; then
   kubectl -n "$NS" scale deployment/caddy --replicas=0 2>/dev/null || true
   sudo cp -a "$CSRC/." "$CDST/"
