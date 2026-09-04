@@ -67,4 +67,7 @@ spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            storage: 20Gi
+            # Thực tế đang dùng 235 MB (đo trên VM 04/09/2026). 10Gi là dư ~40 lần.
+            # local-path của k3s KHÔNG cấp phát trước, con số này chỉ mang tính khai báo —
+            # nhưng vẫn để sát thực tế để người đọc sau không hiểu nhầm về quy mô dữ liệu.
+            storage: 10Gi

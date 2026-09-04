@@ -66,4 +66,6 @@ spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            storage: 50Gi
+            # Thực tế đang dùng 2,3 GB tài liệu khách (đo trên VM 04/09/2026). 20Gi dư ~9 lần —
+            # đây là thứ lớn dần theo số hồ sơ, nên để rộng hơn MySQL.
+            storage: 20Gi
