@@ -38,7 +38,12 @@ def _sanitize_filename(name: str) -> str:
 
 
 def upload_document(case_id: str, original_filename: str, content: bytes, mime_type: str) -> str:
-    key = f"{case_id}/{uuid.uuid4()}-{_sanitize_filename(original_filename)}"
+    prefix = f"{case_id}/{uuid.uuid4()}-"
+    safe_name = _sanitize_filename(original_filename) or "file"
+    # Document.storedPath là VARCHAR(191). Tên file hệ điều hành thường cho phép dài hơn
+    # phần còn lại sau case id + UUID; nếu không cắt trước, MinIO nhận file nhưng INSERT DB
+    # lỗi "Data too long", để lại object mồ côi không còn bản ghi nào trỏ tới.
+    key = f"{prefix}{safe_name[:max(1, 191 - len(prefix))]}"
     _s3.put_object(Bucket=BUCKET, Key=key, Body=content, ContentType=mime_type)
     return key
 

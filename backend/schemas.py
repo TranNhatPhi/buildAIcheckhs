@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class CreateCaseRequest(BaseModel):
-    clientName: str = Field(min_length=1)
+    clientName: str = Field(min_length=1, max_length=191)
     maritalStatus: Literal["SINGLE", "MARRIED"]
     numberOfChildren: int = Field(ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] = "LOW_SKILL"
@@ -17,11 +17,20 @@ class CreateCaseRequest(BaseModel):
 class UpdateCaseRequest(BaseModel):
     # Tất cả field optional — PATCH chỉ cập nhật field nào thực sự được gửi lên (dùng
     # exclude_unset khi áp dụng), không bắt buộc gửi đủ như lúc tạo mới.
-    clientName: str | None = Field(default=None, min_length=1)
+    clientName: str | None = Field(default=None, min_length=1, max_length=191)
     maritalStatus: Literal["SINGLE", "MARRIED"] | None = None
     numberOfChildren: int | None = Field(default=None, ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] | None = None
     notes: str | None = None
+
+    @field_validator("clientName", "maritalStatus", "numberOfChildren", "skillLevel", mode="before")
+    @classmethod
+    def reject_null_for_required_columns(cls, value):
+        # Các field được phép BỎ QUA trong PATCH nhưng không được gửi null, vì bốn cột này
+        # đều NOT NULL trong MySQL; chặn ở validation để trả 422 thay vì IntegrityError 500.
+        if value is None:
+            raise ValueError("Trường này không được để null")
+        return value
 
 
 class PatchDocumentRequest(BaseModel):

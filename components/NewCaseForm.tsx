@@ -19,20 +19,25 @@ export function NewCaseForm() {
     setSubmitting(true);
     setError(null);
 
-    const res = await fetch(`${API_URL}/cases`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientName, maritalStatus, numberOfChildren, skillLevel, notes }),
-    });
+    try {
+      const res = await fetch(`${API_URL}/cases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientName, maritalStatus, numberOfChildren, skillLevel, notes }),
+      });
 
-    if (!res.ok) {
-      setError("Không tạo được hồ sơ. Kiểm tra lại thông tin.");
+      if (!res.ok) {
+        setError("Không tạo được hồ sơ. Kiểm tra lại thông tin.");
+        return;
+      }
+
+      const created = await res.json();
+      router.push(`/cases/${created.id}`);
+    } catch {
+      setError("Không kết nối được máy chủ. Vui lòng thử lại.");
+    } finally {
       setSubmitting(false);
-      return;
     }
-
-    const created = await res.json();
-    router.push(`/cases/${created.id}`);
   }
 
   return (
@@ -44,6 +49,7 @@ export function NewCaseForm() {
         <label className="block text-sm font-semibold mb-1.5">Tên khách hàng</label>
         <input
           required
+          maxLength={191}
           value={clientName}
           onChange={(e) => setClientName(e.target.value)}
           className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"

@@ -64,6 +64,10 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
     if not case:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
 
+    filename = file.filename or "file"
+    if len(filename) > 191:
+        raise HTTPException(status_code=400, detail="Tên file quá dài (tối đa 191 ký tự)")
+
     content = file.file.read()
     if len(content) > MAX_FILE_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="File quá lớn (tối đa 20MB)")
@@ -81,11 +85,11 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
     # ".webp" nhưng khai báo "image/webp" trong khi nội dung byte thật là JPEG, khiến ảnh
     # hiển thị lỗi không ổn định phía trình duyệt. Dò lại định dạng thật từ nội dung file.
     mime_type = ocr.detect_real_mime_type(content, file.content_type or "application/octet-stream")
-    key = storage.upload_document(case_id, file.filename or "file", content, mime_type)
+    key = storage.upload_document(case_id, filename, content, mime_type)
 
     document = Document(
         caseId=case_id,
-        originalFilename=file.filename or "file",
+        originalFilename=filename,
         storedPath=key,
         mimeType=mime_type,
         fileSizeBytes=len(content),
@@ -102,7 +106,7 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
         if is_item_applicable(i, case.maritalStatus, case.numberOfChildren, case.skillLevel)
     ]
 
-    is_pdf = mime_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")
+    is_pdf = mime_type == "application/pdf" or filename.lower().endswith(".pdf")
 
     try:
         # try_harder=True cho PDF ngay từ lần upload đầu — đã xác nhận bằng thực nghiệm
@@ -154,9 +158,18 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
 
 @router.delete("")
 def delete_all_documents(case_id: str, db: Session = Depends(get_db)):
+    case = db.get(Case, case_id)
+    if not case or case.deletedAt is not None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+
     documents = db.scalars(select(Document).where(Document.caseId == case_id)).all()
+    had_savings_document = any(is_savings_item(doc.matchedChecklistItemId) for doc in documents)
     for doc in documents:
         storage.delete_document(doc.storedPath)
         db.delete(doc)
     db.commit()
+
+    if had_savings_document:
+        db.expire(case, ["documents"])
+        refresh_case_savings_quietly(db, case)
     return {"ok": True, "deletedCount": len(documents)}

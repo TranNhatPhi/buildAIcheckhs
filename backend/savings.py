@@ -40,6 +40,13 @@ def refresh_case_savings(db: Session, case: Case) -> str | None:
     số AI đọc (xem completeness.assess_savings). Chạy lại chỉ làm mới phần AI đề xuất."""
     documents_text = collect_savings_text(case)
     if not documents_text.strip():
+        # Khi giấy tờ tiết kiệm cuối cùng bị gỡ/xoá, giữ số AI cũ sẽ khiến hồ sơ tiếp tục
+        # hiện "đủ tiền" dù nguồn chứng minh đã không còn. Chỉ xoá phần AI; số nhân viên
+        # nhập tay là quyết định độc lập nên vẫn được giữ nguyên.
+        case.savingsAiVnd = None
+        case.savingsAiNote = None
+        case.savingsUpdatedAt = now_utc()
+        db.commit()
         return "Hồ sơ chưa có giấy tờ tài chính nào đã được phân loại để đọc số dư."
 
     total_vnd, note, error = extract_savings_balance(documents_text)

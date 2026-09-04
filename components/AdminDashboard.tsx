@@ -30,12 +30,6 @@ export function AdminDashboard() {
   // đó (bước 2, bấm "← Danh sách khách hàng" để quay lại bước 1).
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
 
-  // Về lại danh sách khách hàng mỗi khi đổi tab (vd rời tab rồi quay lại qua sidebar) — tránh
-  // kẹt ở màn hình chi tiết của lần xem trước.
-  useEffect(() => {
-    setSelectedCaseId(null);
-  }, [activeTab]);
-
   const load = useCallback(async () => {
     setState("loading");
     setLoginError(null);
@@ -63,11 +57,16 @@ export function AdminDashboard() {
   }, []);
 
   useEffect(() => {
-    if (getAdminPassword()) {
-      load();
-    } else {
-      setState("needs-login");
-    }
+    // localStorage là hệ thống bên ngoài React và chỉ đọc được sau khi hydrate. Chạy trong
+    // callback bất đồng bộ để lần render đầu không phải setState dây chuyền ngay trong effect.
+    const timer = window.setTimeout(() => {
+      if (getAdminPassword()) {
+        void load();
+      } else {
+        setState("needs-login");
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   function handleLogin(e: React.FormEvent) {
@@ -183,7 +182,11 @@ export function AdminDashboard() {
 
   return (
     <div className="min-h-screen flex" style={{ backgroundColor: "#f0f2f5" }}>
-      <AdminSidebar activeTab={activeTab} />
+      <AdminSidebar
+        activeTab={activeTab}
+        onNavigate={() => setSelectedCaseId(null)}
+        onLogout={() => setState("needs-login")}
+      />
 
       <div className="flex-1 min-w-0">
         <header className="h-14 bg-white border-b border-neutral-200 flex items-center px-6">

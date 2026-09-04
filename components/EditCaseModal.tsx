@@ -28,19 +28,24 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
     setSubmitting(true);
     setError(null);
 
-    const res = await fetch(`${API_URL}/cases/${caseItem.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientName, maritalStatus, numberOfChildren, skillLevel, notes }),
-    });
+    try {
+      const res = await fetch(`${API_URL}/cases/${caseItem.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientName, maritalStatus, numberOfChildren, skillLevel, notes }),
+      });
 
-    if (!res.ok) {
-      setError("Không lưu được thay đổi.");
+      if (!res.ok) {
+        setError("Không lưu được thay đổi.");
+        return;
+      }
+
+      onSaved(await res.json());
+    } catch {
+      setError("Không kết nối được máy chủ. Vui lòng thử lại.");
+    } finally {
       setSubmitting(false);
-      return;
     }
-
-    onSaved(await res.json());
   }
 
   return (
@@ -59,6 +64,7 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
           <label className="block text-sm font-semibold mb-1.5">Tên khách hàng</label>
           <input
             required
+            maxLength={191}
             value={clientName}
             onChange={(e) => setClientName(e.target.value)}
             className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"

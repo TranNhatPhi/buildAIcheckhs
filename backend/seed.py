@@ -374,6 +374,18 @@ CHECKLIST_ITEMS = LOW_SKILL_ITEMS + HIGH_SKILL_ITEMS
 # information_schema trước. Chỉ THÊM cột, không bao giờ sửa/xoá — để chạy lại nhiều lần vẫn
 # an toàn và không có cách nào làm mất dữ liệu đang có.
 ADDED_COLUMNS = [
+    # Các cột này đã được thêm vào models.py ở những phiên bản trước khi ensure_columns()
+    # tồn tại. Giữ chúng trong danh sách để DB cũ/DB khôi phục cũng nâng cấp được đầy đủ;
+    # production hiện tại có cột rồi thì truy vấn information_schema sẽ bỏ qua an toàn.
+    ("Case", "deletedAt", "DATETIME NULL"),
+    ("Case", "aiAnalysisStatus", "VARCHAR(191) NOT NULL DEFAULT 'IDLE'"),
+    ("Case", "aiAnalysisSummary", "TEXT NULL"),
+    ("Case", "aiAnalysisError", "TEXT NULL"),
+    ("Case", "aiAnalysisUpdatedAt", "DATETIME NULL"),
+    ("Case", "skillLevel", "VARCHAR(191) NOT NULL DEFAULT 'LOW_SKILL'"),
+    ("ChecklistItem", "eitherWithId", "VARCHAR(191) NULL"),
+    ("ChecklistItem", "skillLevel", "VARCHAR(191) NOT NULL DEFAULT 'LOW_SKILL'"),
+    ("Document", "manualCorrectedText", "TEXT NULL"),
     ("Case", "savingsAiVnd", "BIGINT NULL"),
     ("Case", "savingsAiNote", "TEXT NULL"),
     ("Case", "savingsManualVnd", "BIGINT NULL"),

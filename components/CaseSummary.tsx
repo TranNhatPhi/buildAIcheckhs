@@ -10,6 +10,7 @@ import {
   formatMinuteRange,
   parseUtcDate,
 } from "@/lib/format";
+import { useHydrated } from "@/lib/useHydrated";
 import type {
   CaseAnalysisResponse,
   CaseDetailDTO,
@@ -54,16 +55,11 @@ export function CaseSummary({
   const [startedAt, setStartedAt] = useState(initialAnalysisUpdatedAt);
   const analyzing = status === "RUNNING";
 
-  // Đồng hồ đếm 1s/lần để cập nhật "đã chạy bao lâu / còn khoảng bao lâu". Khởi tạo bằng 0 và
-  // gác mọi phần phụ thuộc thời gian sau cờ `mounted` — KHÔNG dùng Date.now() làm giá trị khởi
-  // tạo: server và client sẽ ra 2 mốc thời gian khác nhau, gây lỗi hydration mismatch (đã gặp
-  // và sửa đúng lỗi này ở CaseDetail.tsx).
-  const [nowTick, setNowTick] = useState(0);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-    setNowTick(Date.now());
-  }, []);
+  // Đồng hồ đếm 1s/lần để cập nhật "đã chạy bao lâu / còn khoảng bao lâu". Giá trị Date.now()
+  // khác nhau giữa server/client được gác sau useHydrated(), nên không xuất hiện trong HTML
+  // của lần hydrate đầu và không cần setState đồng bộ trong effect.
+  const [nowTick, setNowTick] = useState(Date.now);
+  const mounted = useHydrated();
   useEffect(() => {
     if (!analyzing) return;
     const timer = setInterval(() => setNowTick(Date.now()), 1000);

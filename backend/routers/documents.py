@@ -1,3 +1,4 @@
+import re
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -25,7 +26,10 @@ def _content_disposition(filename: str) -> str:
     Dùng chuẩn RFC 5987 (filename*=UTF-8''...): trình duyệt hiện đại ưu tiên đọc filename*
     (UTF-8, percent-encoded), fallback filename= thuần ASCII (thay ký tự ngoài ASCII bằng
     "_") cho các client cũ không hiểu filename*."""
-    ascii_fallback = filename.encode("ascii", errors="replace").decode("ascii").replace("?", "_")
+    ascii_name = filename.encode("ascii", errors="replace").decode("ascii")
+    # Dấu nháy, gạch chéo ngược và ký tự điều khiển có thể làm hỏng cú pháp header; tên
+    # UTF-8 thật vẫn nằm nguyên vẹn trong filename* đã percent-encode ở dưới.
+    ascii_fallback = re.sub(r'[\x00-\x1f\x7f"\\?]', "_", ascii_name)
     encoded = quote(filename, safe="")
     return f'inline; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
 
@@ -40,6 +44,17 @@ def patch_document(document_id: str, body: PatchDocumentRequest, db: Session = D
     # tổng số dư cũng phải tính lại, không chỉ khi họ GÁN vào. Không nhớ mục cũ thì trường
     # hợp gỡ ra sẽ để lại con số cũ đã sai trên màn hình.
     was_savings = is_savings_item(doc.matchedChecklistItemId)
+
+    if body.matchedChecklistItemId:
+        target = db.get(ChecklistItem, body.matchedChecklistItemId)
+        if not target:
+            raise HTTPException(status_code=400, detail="Mục checklist không tồn tại")
+        if not is_item_applicable(
+            target, doc.case.maritalStatus, doc.case.numberOfChildren, doc.case.skillLevel
+        ):
+            raise HTTPException(
+                status_code=400, detail="Mục checklist không áp dụng cho hồ sơ này"
+            )
 
     doc.matchedChecklistItemId = body.matchedChecklistItemId
     doc.status = "MANUALLY_SET" if body.matchedChecklistItemId else "NEEDS_REVIEW"
@@ -76,9 +91,18 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Không tìm thấy file")
 
+    was_savings = is_savings_item(doc.matchedChecklistItemId)
+    case = doc.case
+
     storage.delete_document(doc.storedPath)
     db.delete(doc)
     db.commit()
+
+    if was_savings:
+        # Quan hệ đã được đọc ở trên; hết transaction phải buộc tải lại để tài liệu vừa xoá
+        # không còn lọt vào phép tính số dư kế tiếp.
+        db.expire(case, ["documents"])
+        refresh_case_savings_quietly(db, case)
     return {"ok": True}
 
 

@@ -40,6 +40,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 
 from llm import GEMINI_LOW_REASONING, _env_int, complete_with_fallback, describe_error
 from models import ChecklistItem
@@ -400,6 +401,25 @@ Quy tắc BẮT BUỘC:
 """
 
 
+MYSQL_BIGINT_MAX = 9_223_372_036_854_775_807
+
+
+def _parse_vnd_amount(value: object) -> int | None:
+    """Đổi số tiền AI trả về mà không làm tròn âm thầm hoặc vượt giới hạn cột BIGINT."""
+    if isinstance(value, bool):
+        return None
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not amount.is_finite() or amount != amount.to_integral_value():
+        return None
+    parsed = int(amount)
+    if parsed < -MYSQL_BIGINT_MAX - 1 or parsed > MYSQL_BIGINT_MAX:
+        return None
+    return parsed
+
+
 def extract_savings_balance(documents_text: str) -> tuple[int | None, str | None, str | None]:
     """Đọc tổng số dư tiết kiệm từ văn bản các giấy tờ tài chính đã nộp.
 
@@ -426,15 +446,18 @@ def extract_savings_balance(documents_text: str) -> tuple[int | None, str | None
         logger.warning("Lỗi đọc số dư tiết kiệm: %s", e)
         return None, None, describe_error(e)
 
+    if not isinstance(parsed, dict):
+        logger.warning("AI trả về dữ liệu số dư không phải JSON object: %r", parsed)
+        return None, None, "AI trả về dữ liệu số dư không đúng định dạng."
+
     total = parsed.get("total_vnd")
     if total is None:
         return None, str(parsed.get("note") or "AI không đọc được số dư nào."), None
 
-    try:
-        # float() trước rồi mới int(): model đôi khi trả "400000000.0" hoặc "4e8" thay vì số
-        # nguyên thuần, ép thẳng int() sẽ ném ValueError và mất luôn kết quả đọc đúng.
-        total_vnd = int(float(total))
-    except (TypeError, ValueError):
+    # Decimal nhận cả "400000000.0" và "4e8" nhưng không làm mất độ chính xác như float;
+    # đồng thời chặn NaN/vô cực/số lẻ và số vượt BIGINT trước khi ghi MySQL.
+    total_vnd = _parse_vnd_amount(total)
+    if total_vnd is None:
         logger.warning("AI trả về total_vnd không phải số: %r", total)
         return None, None, "AI trả về số dư không đọc được thành số."
 
@@ -450,7 +473,8 @@ def extract_savings_balance(documents_text: str) -> tuple[int | None, str | None
             continue
         bits = [str(acc.get(k)) for k in ("bank", "account_no") if acc.get(k)]
         amount = acc.get("amount_vnd")
-        amount_str = f"{int(float(amount)):,} đ".replace(",", ".") if amount is not None else "?"
+        parsed_amount = _parse_vnd_amount(amount)
+        amount_str = f"{parsed_amount:,} đ".replace(",", ".") if parsed_amount is not None else "?"
         lines.append(f"- {acc.get('source') or 'không rõ nguồn'}: {amount_str}"
                      + (f" ({', '.join(bits)})" if bits else ""))
 

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getAdminPassword } from "@/lib/adminAuth";
 import { API_URL } from "@/lib/format";
+import { useHydrated } from "@/lib/useHydrated";
 import { downloadFile } from "@/lib/download";
 import { EL, STATUS_LABEL, STATUS_COLOR, Tag, AdminSidebar } from "@/components/adminUi";
 import type { CaseDetailDTO } from "@/lib/client-types";
@@ -12,11 +12,8 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
   // Endpoint GET /cases/{id} không cần mật khẩu admin (dùng chung với trang chính), nhưng
   // trang này vẫn nằm trong khu vực /admin — kiểm tra mềm phía client để không cho xem nếu
   // chưa đăng nhập admin, tránh việc share thẳng link này ra ngoài mà vẫn xem được.
-  const [authorized, setAuthorized] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    setAuthorized(!!getAdminPassword());
-  }, []);
+  const hydrated = useHydrated();
+  const authorized = hydrated ? !!getAdminPassword() : null;
 
   if (authorized === null) return null;
 

@@ -370,6 +370,10 @@ def cancel_analyze_case(case_id: str, db: Session = Depends(get_db)):
 
 
 def _dedupe_filename(name: str, used_names: set[str]) -> str:
+    # Không để tên file do client gửi tạo entry "../..." hoặc thư mục con trong ZIP; lúc
+    # giải nén, mọi tài liệu phải nằm ngay trong thư mục người dùng đã chọn.
+    name = name.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    name = re.sub(r"[\x00-\x1f\x7f]", "_", name) or "file"
     if name not in used_names:
         used_names.add(name)
         return name
@@ -432,8 +436,8 @@ def download_all_documents(case_id: str, db: Session = Depends(get_db)):
     # không hợp lệ nếu nhét thẳng vào filename= thường (đã xác nhận: UnicodeEncodeError khi
     # test thật). Dùng filename= ASCII an toàn làm fallback + filename*=UTF-8'' theo đúng
     # chuẩn RFC 5987/6266 để trình duyệt hiện đúng tên tiếng Việt lúc tải về.
-    ascii_fallback = re.sub(r"[^\x00-\x7f]", "_", case.clientName).strip() or "ho-so"
-    utf8_name = urllib.parse.quote(f"{case.clientName}.zip")
+    ascii_fallback = re.sub(r'[^\x20-\x7e]|["\\]', "_", case.clientName).strip() or "ho-so"
+    utf8_name = urllib.parse.quote(f"{case.clientName}.zip", safe="")
     return Response(
         content=buffer.getvalue(),
         media_type="application/zip",

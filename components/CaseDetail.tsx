@@ -8,6 +8,7 @@ import { GeneralNotesBanner } from "@/components/GeneralNotesBanner";
 import { SavingsCard } from "@/components/SavingsCard";
 import { STAGE_LABEL, UploadDropzone } from "@/components/UploadDropzone";
 import { API_URL, estimateProcessingSeconds, formatRemaining, parseUtcDate } from "@/lib/format";
+import { useHydrated } from "@/lib/useHydrated";
 import type { CaseDetailDTO } from "@/lib/client-types";
 
 interface Props {
@@ -40,19 +41,13 @@ export function CaseDetail({ caseId, initialData }: Props) {
   // lâu" mỗi giây cho mượt) — tách khỏi interval refetch 4s ở dưới vì mục đích khác nhau: cái
   // dưới lấy DỮ LIỆU THẬT, cái này chỉ ép re-render để cập nhật số giây hiển thị.
   //
-  // QUAN TRỌNG: khởi tạo bằng Date.now() ngay trong useState (vd `useState(() => Date.now())`)
-  // gây lỗi hydration mismatch — server render 1 lúc gọi Date.now(), client hydrate lúc SAU đó
-  // vài trăm ms gọi Date.now() LẦN NỮA ra số khác, khiến text hiển thị (vd "còn khoảng 59s" vs
-  // "1 phút") khác nhau giữa server/client, React coi là lỗi. Khởi tạo bằng giá trị CỐ ĐỊNH
-  // (0) — giống nhau tuyệt đối ở cả server lẫn lần render đầu của client — rồi dùng `mounted`
-  // để CHỈ hiển thị phần đếm giờ SAU khi đã qua khỏi lần hydrate đầu tiên (trong useEffect,
-  // không chạy trên server và không tính vào lần so khớp hydrate).
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  const [nowTick, setNowTick] = useState(0);
+  // Date.now() ở server và client chắc chắn lệch nhau, nên mọi phần dùng giá trị này chỉ được
+  // hiện sau khi useHydrated() trả true. Nhờ vậy lần hydrate đầu vẫn khớp HTML từ server mà
+  // đồng hồ có ngay mốc hợp lệ, không cần setState đồng bộ thêm một lượt trong effect.
+  const mounted = useHydrated();
+  const [nowTick, setNowTick] = useState(Date.now);
   useEffect(() => {
     if (!hasProcessingDocs) return;
-    setNowTick(Date.now());
     const interval = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(interval);
   }, [hasProcessingDocs]);

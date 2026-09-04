@@ -4,6 +4,7 @@
 // AdminCaseDetail.tsx) — theo phong cách vue-element-admin (xem AdminDashboard.tsx để biết
 // lý do chọn template này).
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { clearAdminPassword } from "@/lib/adminAuth";
 import type { DocumentDTO } from "@/lib/client-types";
 
@@ -54,10 +55,21 @@ export function Tag({ color, children }: { color: string; children: React.ReactN
 // state cục bộ) để bấm từ bất kỳ trang admin nào (kể cả AdminCaseDetail) cũng quay lại đúng
 // tab trên AdminDashboard. activeTab để trống (undefined) ở các trang không phải 2 tab chính
 // (vd trang chi tiết 1 hồ sơ) — khi đó không mục nào được tô sáng.
-export function AdminSidebar({ activeTab }: { activeTab?: "overview" | "documents" }) {
+export function AdminSidebar({
+  activeTab,
+  onNavigate,
+  onLogout,
+}: {
+  activeTab?: "overview" | "documents";
+  onNavigate?: () => void;
+  onLogout?: () => void;
+}) {
+  const router = useRouter();
+
   function handleLogout() {
     clearAdminPassword();
-    window.location.href = "/admin";
+    onLogout?.();
+    router.replace("/admin");
   }
 
   return (
@@ -71,6 +83,7 @@ export function AdminSidebar({ activeTab }: { activeTab?: "overview" | "document
       <nav className="flex-1 px-2 py-3 flex flex-col gap-1">
         <Link
           href="/admin"
+          onClick={onNavigate}
           className="flex items-center gap-2.5 text-sm font-medium px-3.5 py-3 rounded text-left transition-colors"
           style={activeTab === "overview" ? { backgroundColor: EL.primary, color: "white" } : { color: "#bfcbd9" }}
         >
@@ -78,6 +91,7 @@ export function AdminSidebar({ activeTab }: { activeTab?: "overview" | "document
         </Link>
         <Link
           href="/admin?tab=documents"
+          onClick={onNavigate}
           className="flex items-center gap-2.5 text-sm font-medium px-3.5 py-3 rounded text-left transition-colors"
           style={activeTab === "documents" ? { backgroundColor: EL.primary, color: "white" } : { color: "#bfcbd9" }}
         >
