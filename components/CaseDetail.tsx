@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ChecklistSection } from "@/components/ChecklistSection";
+import { DocumentScene3D } from "@/components/DocumentScene3D";
 import { DocumentList } from "@/components/DocumentList";
 import { GeneralNotesBanner } from "@/components/GeneralNotesBanner";
 import { SavingsCard } from "@/components/SavingsCard";
@@ -126,6 +127,11 @@ export function CaseDetail({ caseId, initialData }: Props) {
               style={{ width: `${processedPercent}%` }}
             />
           </div>
+          <DocumentScene3D
+            cheDo="xu-ly"
+            tienDo={processedPercent}
+            className="mt-3 h-36 rounded-xl border border-indigo-200 shadow-inner"
+          />
           {/* Ước tính "còn khoảng bao lâu" chỉ là ƯỚC TÍNH MỀM (xem estimateProcessingSeconds ở
               lib/format.ts) — thời gian thật đo được dao động từ vài giây đến hơn 7 phút tuỳ độ
               khó tài liệu, không thể chính xác tuyệt đối. Đếm lùi dần theo giây (nowTick) cho

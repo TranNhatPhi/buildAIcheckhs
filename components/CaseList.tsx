@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { ChecklistOverview3D } from "@/components/ChecklistOverview3D";
 import { EditCaseModal } from "@/components/EditCaseModal";
 import { API_URL } from "@/lib/format";
 import type { CaseListItemDTO } from "@/lib/client-types";
@@ -80,6 +81,15 @@ export function CaseList({ initialCases }: Props) {
       });
   }, [cases, maritalFilter, searchQuery, skillFilter, sortOption, statusFilter]);
 
+  const overview = useMemo(() => {
+    const daHoanThanh = cases.filter((caseItem) => caseItem.percent === 100).length;
+    const canXemLai = cases.reduce((tong, caseItem) => tong + caseItem.needsReviewCount, 0);
+    const tienDoTrungBinh = cases.length
+      ? Math.round(cases.reduce((tong, caseItem) => tong + caseItem.percent, 0) / cases.length)
+      : 0;
+    return { daHoanThanh, canXemLai, tienDoTrungBinh };
+  }, [cases]);
+
   function resetFilters() {
     setSearchQuery("");
     setStatusFilter("ALL");
@@ -102,11 +112,23 @@ export function CaseList({ initialCases }: Props) {
   }
 
   if (cases.length === 0) {
-    return <p className="text-neutral-500">Chưa có hồ sơ nào.</p>;
+    return (
+      <>
+        <ChecklistOverview3D
+          tongHoSo={0}
+          daHoanThanh={0}
+          canXemLai={0}
+          tienDoTrungBinh={0}
+        />
+        <p className="text-neutral-500">Chưa có hồ sơ nào.</p>
+      </>
+    );
   }
 
   return (
     <>
+      <ChecklistOverview3D tongHoSo={cases.length} {...overview} />
+
       <section className="mb-5 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <label className="md:col-span-2 lg:col-span-4">
