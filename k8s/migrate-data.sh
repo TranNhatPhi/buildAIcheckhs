@@ -70,7 +70,13 @@ pv_path() {  # $1 = ten PVC
 DST=$(pv_path data-minio-0)
 echo "    nguồn : $SRC"
 echo "    đích  : $DST"
-[[ -d "$SRC" && -n "$DST" ]] || { echo "!! Không xác định được đường dẫn — DỪNG, làm tay."; exit 1; }
+# `sudo test -d` chứ KHÔNG phải `[[ -d ]]`: script chạy dưới tài khoản thường, mà
+# /var/lib/docker/volumes/ và /var/lib/rancher/ đều chỉ root đọc được (mode 700). Test
+# thường trả về SAI dù thư mục có thật, khiến script dừng ngay sau khi đã dump xong MySQL
+# và đã tắt MinIO hai bên — đúng lúc tệ nhất. ĐÃ XẢY RA THẬT trên VM.
+[[ -n "$DST" ]] || { echo "!! Không đọc được đường dẫn ổ đĩa của minio-0 — DỪNG, làm tay."; exit 1; }
+sudo test -d "$SRC" || { echo "!! Không thấy thư mục nguồn $SRC — DỪNG, làm tay."; exit 1; }
+sudo test -d "$DST" || { echo "!! Không thấy thư mục đích $DST — DỪNG, làm tay."; exit 1; }
 
 sudo cp -a "$SRC/." "$DST/"
 echo "    đã chép $(sudo du -sh "$DST" | cut -f1)"
@@ -84,7 +90,7 @@ kubectl -n "$NS" rollout status statefulset/minio --timeout=300s
 echo "==> Chép chứng chỉ HTTPS của Caddy..."
 CSRC=$(docker volume ls -q | grep -i 'caddy_data' | head -1 | xargs -r docker volume inspect --format '{{.Mountpoint}}')
 CDST=$(pv_path caddy-data)
-if [[ -d "$CSRC" && -n "$CDST" ]]; then
+if [[ -n "$CDST" ]] && sudo test -d "$CSRC"; then
   kubectl -n "$NS" scale deployment/caddy --replicas=0 2>/dev/null || true
   sudo cp -a "$CSRC/." "$CDST/"
   echo "    xong"
