@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: checklist
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: checklist
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: checklist-frontend:IMAGE_TAG
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          # LƯU Ý: NEXT_PUBLIC_API_URL được nướng thẳng vào JS bundle LÚC BUILD (xem
+          # Dockerfile) — đổi domain API thì phải BUILD LẠI ảnh, đặt biến môi trường ở
+          # đây KHÔNG có tác dụng gì. Đây là chỗ rất dễ mất thời gian dò nếu quên.
+          readinessProbe:
+            httpGet: { path: /, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "1Gi" }

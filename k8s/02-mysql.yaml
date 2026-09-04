@@ -1,0 +1,70 @@
+# StatefulSet chứ không Deployment: ổ dữ liệu là RWO (chỉ 1 pod mount được cùng lúc).
+# Deployment mặc định RollingUpdate sẽ tạo pod MỚI trước khi xoá pod cũ -> pod mới treo
+# vĩnh viễn ở ContainerCreating vì ổ vẫn đang bị pod cũ giữ. StatefulSet luôn xoá xong
+# mới tạo, đúng thứ tự cần cho database.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: checklist
+spec:
+  # Không mở ra ngoài — chỉ backend/phpmyadmin trong cluster gọi vào, y như compose.
+  clusterIP: None
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: checklist
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          env:
+            - name: MYSQL_DATABASE
+              value: canada_checklist
+            - name: MYSQL_USER
+              value: canada_checklist_app
+            - name: MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: app-secrets, key: MYSQL_PASSWORD } }
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: app-secrets, key: MYSQL_ROOT_PASSWORD } }
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          # readinessProbe thay cho `condition: service_healthy` của compose: pod chỉ được
+          # nhận traffic khi mysqladmin ping trả lời được.
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -u root -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 10
+          resources:
+            requests: { cpu: "200m", memory: "512Mi" }
+            limits: { memory: "2Gi" }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

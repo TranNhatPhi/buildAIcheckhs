@@ -1,0 +1,138 @@
+# GIỮ NGUYÊN Caddy làm lớp vào thay vì đổi sang Traefik Ingress + cert-manager.
+#
+# Lý do: Caddy hiện đã tự xin/gia hạn HTTPS và đã khoá phpMyAdmin bằng basic_auth — cả hai
+# đều đang chạy tốt. Đổi sang Ingress nghĩa là phải dựng lại cert-manager + ClusterIssuer
+# Let's Encrypt + Traefik middleware cho basic_auth, tức thay 3 thứ đang chạy được bằng 3
+# thứ chưa chạy lần nào, ngay trong lần đầu đụng Kubernetes.
+#
+# CẢNH BÁO khi thử trên cluster ở MÁY KHÁC (laptop, staging): Caddy sẽ lập tức đi xin
+# chứng chỉ Let's Encrypt cho ĐÚNG các domain production trong .env.prod. DNS trỏ về VM
+# thật nên thử thách ACME thất bại, và thất bại nhiều lần có thể chạm hạn mức của Let's
+# Encrypt. Muốn thử ở nơi khác thì thêm `acme_ca https://acme-staging-v02.api.letsencrypt.org/directory`
+# vào khối global của Caddyfile, hoặc đơn giản là `kubectl scale deployment/caddy --replicas=0`.
+#
+# BẮT BUỘC khi cài k3s: thêm cờ --disable traefik. k3s mặc định cài sẵn Traefik và Traefik
+# GIỮ cổng 80/443 của máy — không tắt thì Caddy không bind được cổng, toàn bộ site không
+# vào được và thông báo lỗi sẽ rất khó lần ra.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caddyfile
+  namespace: checklist
+data:
+  Caddyfile: |
+    {$APP_DOMAIN} {
+    	reverse_proxy frontend:3000
+    }
+
+    {$API_DOMAIN} {
+    	# CHỈ CÒN MỘT ĐÍCH, không phải "backend:8001 backend2:8001" như bản compose:
+    	# Service "backend" của Kubernetes đã tự cân bằng tải sang mọi pod đang Ready.
+    	# Nhờ vậy đổi số replica chỉ sửa 06-backend.yaml, không phải sửa kèm file này.
+    	reverse_proxy backend:8001
+    }
+
+    {$DB_DOMAIN} {
+    	basic_auth {
+    		admin {$ADMIN_TOOLS_PASSWORD_HASH}
+    	}
+    	reverse_proxy phpmyadmin:80
+    }
+
+    {$STORAGE_DOMAIN} {
+    	reverse_proxy minio:9001
+    }
+---
+# PVC riêng cho chứng chỉ HTTPS. BẮT BUỘC phải có: mất thư mục này là mỗi lần khởi động
+# lại Caddy sẽ xin chứng chỉ mới từ Let's Encrypt, vài lần là chạm hạn mức và site nằm
+# luôn không có HTTPS trong nhiều giờ.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: caddy-data
+  namespace: checklist
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: caddy
+  namespace: checklist
+spec:
+  # LoadBalancer trên k3s = klipper-lb, nó gắn thẳng cổng 80/443 của VM vào Service này.
+  # Không cần mua Load Balancer của Google.
+  type: LoadBalancer
+  selector:
+    app: caddy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caddy
+  namespace: checklist
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: caddy
+  strategy:
+    # Recreate chứ không RollingUpdate: pod giữ ổ chứng chỉ dạng RWO, hai pod không mount
+    # cùng lúc được — rolling update sẽ treo vĩnh viễn ở ContainerCreating.
+    #
+    # Đánh đổi: khi CHÍNH Caddy được cập nhật thì có gián đoạn vài giây. Chấp nhận được vì
+    # Caddy chỉ dựng lại khi sửa Caddyfile (hiếm) — deploy backend/frontend hàng ngày không
+    # đụng tới nó, nên việc cập nhật app vẫn không gián đoạn.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: caddy
+      annotations:
+        # Sửa Caddyfile trong ConfigMap KHÔNG tự làm pod khởi động lại — Kubernetes chỉ cập
+        # nhật file trong volume, Caddy không đọc lại. deploy-k8s.sh vì vậy luôn chạy
+        # `kubectl rollout restart deployment/caddy` sau khi apply.
+        note: "sua Caddyfile -> phai rollout restart, xem deploy-k8s.sh"
+    spec:
+      containers:
+        - name: caddy
+          image: caddy:2-alpine
+          env:
+            - name: APP_DOMAIN
+              valueFrom: { secretKeyRef: { name: app-secrets, key: APP_DOMAIN } }
+            - name: API_DOMAIN
+              valueFrom: { secretKeyRef: { name: app-secrets, key: API_DOMAIN } }
+            - name: DB_DOMAIN
+              valueFrom: { secretKeyRef: { name: app-secrets, key: DB_DOMAIN } }
+            - name: STORAGE_DOMAIN
+              valueFrom: { secretKeyRef: { name: app-secrets, key: STORAGE_DOMAIN } }
+            - name: ADMIN_TOOLS_PASSWORD_HASH
+              valueFrom: { secretKeyRef: { name: app-secrets, key: ADMIN_TOOLS_PASSWORD_HASH } }
+          ports:
+            - containerPort: 80
+            - containerPort: 443
+          volumeMounts:
+            - name: caddyfile
+              mountPath: /etc/caddy
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+      volumes:
+        - name: caddyfile
+          configMap:
+            name: caddyfile
+        - name: data
+          persistentVolumeClaim:
+            claimName: caddy-data

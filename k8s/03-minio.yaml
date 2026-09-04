@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: checklist
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+    - name: console
+      port: 9001
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: checklist
+spec:
+  serviceName: minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: { secretKeyRef: { name: app-secrets, key: MINIO_ROOT_USER } }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: app-secrets, key: MINIO_ROOT_PASSWORD } }
+            # STORAGE_DOMAIN phải khai TRƯỚC dòng dùng "$(STORAGE_DOMAIN)" bên dưới:
+            # Kubernetes chỉ thay thế biến đã được định nghĩa TRƯỚC ĐÓ trong cùng danh sách
+            # env; đảo thứ tự thì chuỗi "$(STORAGE_DOMAIN)" đi thẳng vào container y nguyên.
+            - name: STORAGE_DOMAIN
+              valueFrom: { secretKeyRef: { name: app-secrets, key: STORAGE_DOMAIN } }
+            # Thiếu biến này Console vẫn đăng nhập được nhưng sau đó trắng trang — đã gặp
+            # thật, xem ghi chú ở docker-compose.prod.yml.
+            - name: MINIO_BROWSER_REDIRECT_URL
+              value: "https://$(STORAGE_DOMAIN)"
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: 9000 }
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { memory: "1Gi" }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 50Gi

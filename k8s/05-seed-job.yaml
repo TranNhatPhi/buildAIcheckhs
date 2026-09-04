@@ -1,0 +1,69 @@
+# Chạy MỘT LẦN mỗi lần deploy rồi thoát — thay cho service "seed" trong compose.
+#
+# Job trong Kubernetes là BẤT BIẾN: apply đè lên Job đã tồn tại sẽ báo lỗi field
+# immutable. Vì vậy deploy-k8s.sh luôn xoá Job cũ trước khi apply lại — xem script.
+#
+# KHÔNG có "depends_on: service_completed_successfully" trong Kubernetes. Thứ tự
+# seed-xong-rồi-mới-tới-backend do deploy-k8s.sh bảo đảm bằng `kubectl wait`.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed
+  namespace: checklist
+spec:
+  # Thất bại thì thử lại 2 lần rồi thôi — seed hỏng là phải dừng deploy để người xem log,
+  # không phải để nó lặp vô hạn.
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      # Thay cho `depends_on: condition: service_healthy` của compose.
+      initContainers:
+        - name: wait-for-mysql
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - 'until nc -z mysql 3306; do echo "cho mysql..."; sleep 2; done'
+      containers:
+        - name: seed
+          image: checklist-backend:IMAGE_TAG
+          # IfNotPresent: ảnh được nạp thẳng vào containerd của k3s trên VM, không có
+          # registry để kéo về. Always sẽ khiến pod chết với ImagePullBackOff.
+          imagePullPolicy: IfNotPresent
+          command: ["python", "seed.py"]
+          envFrom:
+            - configMapRef: { name: app-config }
+          env:
+            - name: MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: app-secrets, key: MYSQL_PASSWORD } }
+            - name: DATABASE_URL
+              value: "mysql://canada_checklist_app:$(MYSQL_PASSWORD)@mysql:3306/canada_checklist"
+            - name: MINIO_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: app-secrets, key: MINIO_ROOT_USER } }
+            - name: MINIO_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: app-secrets, key: MINIO_ROOT_PASSWORD } }
+            - name: DEEPSEEK_API_KEY
+              valueFrom: { secretKeyRef: { name: app-secrets, key: DEEPSEEK_API_KEY } }
+            - name: ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: app-secrets, key: ADMIN_PASSWORD } }
+            - name: APP_DOMAIN
+              valueFrom: { secretKeyRef: { name: app-secrets, key: APP_DOMAIN } }
+            - name: CORS_ORIGINS
+              value: "https://$(APP_DOMAIN)"
+            # 5 key Gemini. optional:true để thiếu key nào thì bỏ qua thay vì pod không khởi
+            # động nổi — khớp đúng cách backend/llm.py xử lý (os.getenv, quét tới key đầu
+            # tiên không có thì dừng).
+            - name: GEMINI_API_KEYv1
+              valueFrom: { secretKeyRef: { name: app-secrets, key: GEMINI_API_KEYv1, optional: true } }
+            - name: GEMINI_API_KEYv2
+              valueFrom: { secretKeyRef: { name: app-secrets, key: GEMINI_API_KEYv2, optional: true } }
+            - name: GEMINI_API_KEYv3
+              valueFrom: { secretKeyRef: { name: app-secrets, key: GEMINI_API_KEYv3, optional: true } }
+            - name: GEMINI_API_KEYv4
+              valueFrom: { secretKeyRef: { name: app-secrets, key: GEMINI_API_KEYv4, optional: true } }
+            - name: GEMINI_API_KEYv5
+              valueFrom: { secretKeyRef: { name: app-secrets, key: GEMINI_API_KEYv5, optional: true } }
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { memory: "1Gi" }

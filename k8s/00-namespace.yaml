@@ -1,0 +1,6 @@
+# Gom toàn bộ app vào 1 namespace riêng — xoá sạch để làm lại chỉ cần
+# `kubectl delete namespace checklist`, và không đụng gì tới phần còn lại của cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: checklist

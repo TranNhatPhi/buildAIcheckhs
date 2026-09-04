@@ -1,0 +1,27 @@
+# Cấu hình KHÔNG bí mật. Phần bí mật (mật khẩu, API key) nằm ở Secret "app-secrets",
+# tạo bằng lệnh sau — CỐ Ý không đưa vào git:
+#
+#   kubectl -n checklist create secret generic app-secrets \
+#     --from-env-file=.env.prod --dry-run=client -o yaml | kubectl apply -f -
+#
+# --from-env-file đọc thẳng .env.prod đang có sẵn nên không phải chép tay từng biến;
+# `--dry-run | apply` để chạy lại được nhiều lần (create thuần sẽ báo AlreadyExists).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: checklist
+data:
+  MINIO_ENDPOINT: "http://minio:9000"
+  MINIO_BUCKET: "canada-checklist-docs"
+  DEEPSEEK_BASE_URL: "https://api.deepseek.com"
+  DEEPSEEK_MODEL: "deepseek-v4-flash"
+  CONFIDENCE_THRESHOLD: "0.6"
+  # QUAN TRỌNG — phải đặt TAY, không để code tự suy ra.
+  #
+  # Mặc định trong backend/ocr.py là os.cpu_count()//2. Nhưng trong container,
+  # os.cpu_count() trả về số vCPU của CẢ NODE (8), KHÔNG PHẢI hạn mức CPU của pod —
+  # Python không đọc cgroup. Để trống thì MỖI pod backend tự cho phép 4 tiến trình
+  # Tesseract, 2 pod thành 8, đúng lại kiểu tranh CPU đã làm tài liệu lỗi "đọc quá 90s".
+  # 2 x 2 pod = 4, vừa khít limit CPU đặt ở 06-backend.yaml.
+  TESSERACT_MAX_WORKERS: "2"
