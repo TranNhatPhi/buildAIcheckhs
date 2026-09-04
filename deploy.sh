@@ -19,6 +19,23 @@ if [[ ! -f .env.prod ]]; then
   exit 1
 fi
 
+# Production đã chuyển sang k3s (04/09/2026). Chạy nhầm script này khi k3s đang phục vụ sẽ
+# dựng lại cụm Compose song song: container Caddy tranh cổng 80/443 với Caddy của k3s, còn
+# mysql/minio thì gắn lại volume Compose CŨ — hai bản dữ liệu cùng chạy, rất khó nhận ra.
+#
+# Kiểm bằng chính cụm k8s đang sống chứ không phải bằng cờ hay biến: k3s đã dừng (đường lùi)
+# thì kubectl lỗi, guard tự thông, đúng lúc cần dùng script này thật.
+if command -v kubectl >/dev/null 2>&1 && kubectl -n checklist get deployment caddy >/dev/null 2>&1; then
+  echo "!! ============================ DỪNG ============================"
+  echo "!! Hệ thống đang chạy trên k3s, KHÔNG phải Docker Compose."
+  echo "!! Deploy bằng:  ./k8s/deploy-k8s.sh"
+  echo "!!"
+  echo "!! Chỉ dùng script này khi CỐ Ý quay lui về Compose, và phải dừng"
+  echo "!! k3s trước:    sudo systemctl stop k3s"
+  echo "!! =============================================================="
+  exit 1
+fi
+
 # .env.prod có APP_DOMAIN/API_DOMAIN — dùng để gọi qua HTTPS công khai (backend không mở
 # port ra host trong docker-compose.prod.yml, chỉ Caddy mới thấy được backend nội bộ).
 export API_DOMAIN
