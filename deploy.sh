@@ -132,7 +132,11 @@ echo "==> Restart Caddy để áp dụng Caddyfile mới nhất..."
 docker compose -f docker-compose.prod.yml --env-file .env.prod restart caddy
 
 echo "==> Trạng thái container:"
-docker compose -f docker-compose.prod.yml ps
+# --env-file .env.prod: thiếu nó, Compose vẫn CHẠY ĐƯỢC lệnh ps nhưng in ra hàng chục dòng
+# WARN "variable is not set, defaulting to blank string" — vì nó vẫn phải nội suy biến trong
+# docker-compose.prod.yml để dựng lại model. Vô hại (ps không tạo/sửa gì), nhưng nhìn y hệt
+# một sự cố nghiêm trọng ngay giữa lúc deploy, đúng lúc người đọc đang căng thẳng nhất.
+docker compose -f docker-compose.prod.yml --env-file .env.prod ps
 
 # Xác nhận TỪNG service thật sự đang chạy — "docker compose up" có thể kết thúc mà vẫn để lại
 # container ở trạng thái "Created"/"Exited" (đã gặp thật trên production: toàn bộ container
