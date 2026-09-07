@@ -80,6 +80,19 @@ def _build_template_params(cases: list[Case], sent_at: datetime) -> dict[str, ob
     }
 
 
+def _che(value: str) -> str:
+    """Che bớt để log được trên VM mà không lộ nguyên khoá."""
+    return f"{value[:4]}…{value[-2:]} ({len(value)} ký tự)" if len(value) > 8 else "(quá ngắn)"
+
+
+def _mo_ta_config(config: dict[str, str]) -> str:
+    # service_id/template_id/public key vốn không phải bí mật nên in đủ; chỉ che private key.
+    return (
+        f"service_id={config['service_id']}, template_id={config['template_id']}, "
+        f"user_id={config['user_id']}, accessToken={_che(config['accessToken'])}"
+    )
+
+
 def _send_template(template_params: dict[str, object]) -> None:
     config = {
         "service_id": os.getenv("EMAILJS_SERVICE_ID", "").strip(),
@@ -104,7 +117,12 @@ def _send_template(template_params: dict[str, object]) -> None:
                 raise RuntimeError(f"EmailJS trả về HTTP {response.status}.")
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"EmailJS trả lỗi HTTP {exc.code}: {detail}") from exc
+        # Kèm luôn giá trị đang dùng (che bớt) vì thông báo của EmailJS quá cụt để lần ra
+        # sai ở đâu: "Account not found" là sai service_id hoặc user_id, "Account not found"
+        # KHÔNG liên quan private key — nếu private key sai thì lỗi sẽ khác hẳn.
+        raise RuntimeError(
+            f"EmailJS trả lỗi HTTP {exc.code}: {detail}. Đang dùng {_mo_ta_config(config)}"
+        ) from exc
     except URLError as exc:
         raise RuntimeError(f"Không kết nối được EmailJS: {exc.reason}") from exc
 

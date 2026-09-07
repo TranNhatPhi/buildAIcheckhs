@@ -89,6 +89,24 @@ nhận đúng lỗi nghiệp vụ của họ. `status_reminder.py` đã gửi s�
 `User-Agent: lnc-status-reminder/1.0` — nếu lỗi này quay lại thì kiểm tra xem header đó có
 còn được gửi không.
 
+**`RuntimeError: EmailJS trả lỗi HTTP 404: Account not found`**
+
+EmailJS chết ngay ở bước tìm tài khoản, tức sai `EMAILJS_PUBLIC_KEY` hoặc `EMAILJS_SERVICE_ID`.
+**Không phải** private key: đã đo, bỏ hẳn `accessToken` ra khỏi request thì lỗi đổi thành
+`400 The parameters are invalid` — nghĩa là EmailJS chưa kiểm tới private key. Public key
+thật mà nhận đúng câu trả lời như một chuỗi rác thì giá trị đó không còn khớp tài khoản nào.
+
+Xem container đang thật sự nhận giá trị nào (không phải giá trị bạn nghĩ nó nhận):
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod \
+  exec status-reminder env | grep EMAILJS
+```
+
+So từng ký tự với Dashboard EmailJS: **Account → General → Public Key**, và **Email Services →**
+service tương ứng. Đúng rồi thì `docker compose ... up -d status-reminder` để nạp lại biến môi
+trường — sửa `.env.prod` xong mà không dựng lại container thì container vẫn giữ giá trị cũ.
+
 ## Quy tắc gửi
 
 Email chỉ liệt kê hồ sơ đang ở một trong các trạng thái:
