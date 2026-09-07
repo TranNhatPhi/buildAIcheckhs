@@ -10,3 +10,23 @@
     transform: translateY(0);
   }
 }
+
+/* Thông báo nổi ở góc DƯỚI trôi lên; fadeIn ở trên trôi xuống nên không dùng lại được. */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Người bật "giảm chuyển động" trong hệ điều hành thì bỏ hiệu ứng, giữ nguyên nội dung. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-\[fadeInUp_\.25s_ease-out\] {
+    animation: none;
+  }
+}
+

@@ -137,6 +137,10 @@ export interface CaseListItemDTO {
   financialThreshold: FinancialThresholdDTO;
   expiredDocCount: number;
   expiringSoonDocCount: number;
+  // Chỉ PATCH /cases/{id} mới trả về true: lần đổi trạng thái vừa rồi có kích hoạt email báo
+  // tức thì hay không. Backend quyết định (INSTANT_EMAIL_STATUSES), frontend chỉ hiển thị —
+  // đừng tự dựng lại danh sách trạng thái ở đây, sẽ lệch.
+  statusEmailQueued?: boolean;
 }
 
 export interface AdminStatsDTO {

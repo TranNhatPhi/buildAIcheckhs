@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChecklistSection } from "@/components/ChecklistSection";
 import { DocumentScene3D } from "@/components/DocumentScene3D";
 import { DocumentList } from "@/components/DocumentList";
@@ -18,7 +18,12 @@ import {
 } from "@/lib/application-status";
 import { API_URL, estimateProcessingSeconds, formatRemaining, parseUtcDate } from "@/lib/format";
 import { useHydrated } from "@/lib/useHydrated";
-import type { ApplicationStatus, CaseDetailDTO, TagDefinition } from "@/lib/client-types";
+import type {
+  ApplicationStatus,
+  CaseDetailDTO,
+  CaseListItemDTO,
+  TagDefinition,
+} from "@/lib/client-types";
 
 /** Ánh xạ tên màu từ API sang Tailwind class. */
 const TAG_COLOR_MAP: Record<string, string> = {
@@ -48,6 +53,10 @@ export function CaseDetail({ caseId, initialData }: Props) {
   const [notFound, setNotFound] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  // Thông báo "đã gửi email" tự tắt sau 5 giây. Giữ id timer trong ref để lần đổi trạng thái
+  // kế tiếp huỷ được timer cũ — không huỷ thì timer của lần trước sẽ tắt sớm thông báo mới.
+  const [emailNotice, setEmailNotice] = useState<string | null>(null);
+  const emailNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // --- Tag management ---
   const [caseTags, setCaseTags] = useState<string[]>(initialData.case.tags ?? []);
@@ -102,6 +111,17 @@ export function CaseDetail({ caseId, initialData }: Props) {
     setData(await res.json());
   }, [caseId]);
 
+  function showEmailNotice(message: string) {
+    if (emailNoticeTimer.current) clearTimeout(emailNoticeTimer.current);
+    setEmailNotice(message);
+    emailNoticeTimer.current = setTimeout(() => setEmailNotice(null), 5000);
+  }
+
+  // Huỷ timer khi rời trang, tránh setState trên component đã unmount.
+  useEffect(() => () => {
+    if (emailNoticeTimer.current) clearTimeout(emailNoticeTimer.current);
+  }, []);
+
   async function updateApplicationStatus(applicationStatus: ApplicationStatus) {
     setStatusSaving(true);
     setStatusError(null);
@@ -114,6 +134,14 @@ export function CaseDetail({ caseId, initialData }: Props) {
       if (!res.ok) {
         setStatusError("Không cập nhật được trạng thái hồ sơ.");
         return;
+      }
+      // Backend quyết định trạng thái nào gửi email (INSTANT_EMAIL_STATUSES) và trả về cờ
+      // này — frontend chỉ hiển thị, không tự dựng lại danh sách để khỏi lệch nhau.
+      const updated: CaseListItemDTO = await res.json();
+      if (updated.statusEmailQueued) {
+        showEmailNotice(
+          `Đã gửi email thông báo hồ sơ chuyển sang “${getApplicationStatus(applicationStatus).label}”.`,
+        );
       }
       await refetch();
     } catch {
@@ -184,6 +212,34 @@ export function CaseDetail({ caseId, initialData }: Props) {
 
   return (
     <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-10 flex flex-col gap-7">
+      {/* Thông báo nổi góc dưới phải, tự tắt sau 5 giây. Đặt fixed để không đẩy layout —
+          nội dung trang không được nhảy chỗ ngay lúc nhân viên vừa thao tác xong. */}
+      {emailNotice ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 flex max-w-sm items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-lg animate-[fadeInUp_.25s_ease-out]"
+        >
+          <span aria-hidden="true" className="text-lg leading-none">
+            ✉️
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-emerald-900">{emailNotice}</p>
+            <p className="mt-0.5 text-xs text-emerald-700">
+              Gửi tới hộp thư quản trị. Thông báo này tự tắt sau 5 giây.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setEmailNotice(null)}
+            aria-label="Đóng thông báo"
+            className="ml-1 text-emerald-600 hover:text-emerald-900 transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between flex-wrap gap-3">
         <Link
           href="/"

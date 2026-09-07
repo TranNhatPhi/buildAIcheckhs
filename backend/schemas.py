@@ -227,8 +227,8 @@ class CaseDTO(BaseModel):
     createdAt: datetime
     applicationStatus: ApplicationStatus
     applicationStatusUpdatedAt: datetime | None
-    # Chưa gửi email trong phiên bản này; hai field dưới là lịch đã tính sẵn để scheduler
-    # sau này biết hồ sơ nào tới hạn và lần nhắc gần nhất là khi nào.
+    # Lịch nhắc định kỳ: service status-reminder dựa vào hai field này để biết hồ sơ nào
+    # tới hạn và lần nhắc gần nhất là khi nào (xem backend/status_reminder.py).
     lastStatusReminderAt: datetime | None
     nextStatusReminderAt: datetime | None
     statusReminderDue: bool
@@ -245,6 +245,11 @@ class CaseListItemDTO(CaseDTO):
     percent: int
     needsReviewCount: int
     financialThreshold: FinancialThresholdDTO
+    # CHỈ có ý nghĩa ở response của PATCH /cases/{id}: lần đổi trạng thái vừa rồi có kích
+    # hoạt email báo tức thì hay không, để UI báo lại cho nhân viên. Đặt ở backend thay vì
+    # để frontend tự đoán theo danh sách trạng thái — nếu không, INSTANT_EMAIL_STATUSES đổi
+    # mà quên sửa frontend thì UI sẽ báo sai. Mọi endpoint khác luôn là False.
+    statusEmailQueued: bool = False
     # Có mặc định để các endpoint phụ (khôi phục hồ sơ đã xoá...) không phải tính lại; endpoint
     # danh sách chính thì luôn điền số thật.
     expiredDocCount: int = 0

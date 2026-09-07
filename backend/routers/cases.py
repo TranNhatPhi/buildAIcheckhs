@@ -575,7 +575,8 @@ def update_case(
 
     # Đọc giá trị ra NGAY tại đây rồi mới xếp lịch gửi: BackgroundTask chạy sau khi session
     # DB đã đóng, chạm vào thuộc tính ORM lúc đó có thể nổ DetachedInstanceError.
-    if status_changed and case.applicationStatus in INSTANT_EMAIL_STATUSES:
+    status_email_queued = status_changed and case.applicationStatus in INSTANT_EMAIL_STATUSES
+    if status_email_queued:
         # Gửi ở background chứ không gửi thẳng trong request: EmailJS mất khoảng 1 giây,
         # không có lý do bắt nhân viên ngồi nhìn ô trạng thái quay trong lúc chờ mạng.
         background_tasks.add_task(
@@ -608,6 +609,7 @@ def update_case(
         percent=summary.percent,
         needsReviewCount=summary.needs_review_count,
         financialThreshold=financial_threshold_to_dto(threshold),
+        statusEmailQueued=status_email_queued,
     )
 
 
