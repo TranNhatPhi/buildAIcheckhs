@@ -192,6 +192,29 @@ Backend cần đủ 4 biến `EMAILJS_*` + `APP_BASE_URL` giống `status-remind
 (`docker-compose.prod.yml`, khối `x-backend-common`). Thiếu thì đổi trạng thái vẫn chạy, chỉ là
 không có email.
 
+## Nhật ký email (bảng `EmailLog`)
+
+Mọi email gửi đi đều được ghi lại, xem ở **/admin → Nhật ký email**. Mỗi dòng mở ra được để
+thấy đúng nội dung đã gửi: tiêu đề, câu mở đầu, danh sách hồ sơ kèm trạng thái, câu kết.
+
+Vài điểm cố ý làm như vậy:
+
+- **`emailjs.send_cases()` là cửa DUY NHẤT để gửi**, và nó ghi nhật ký ngay bên trong. Không
+  có đường nào gửi được mà không bị ghi. Thêm đường gửi mới thì gọi hàm này, đừng gọi thẳng
+  `send_template()`.
+- **Ghi cả lần gửi HỎNG** (`status = "FAILED"`, kèm `errorMessage`). "Vì sao khách không nhận
+  được email" là câu hỏi hay gặp nhất; chỉ ghi lần thành công thì nhật ký im lặng đúng lúc
+  cần nó nói.
+- **Lưu nội dung đã dựng sẵn**, không lưu id rồi dựng lại lúc xem. Template và câu chữ sẽ còn
+  đổi, mà nhật ký phải phản ánh thứ ĐÃ gửi ngày đó.
+- **Không đặt ForeignKey sang `Case`.** Xoá vĩnh viễn một hồ sơ ở trang admin không được xoá
+  theo nhật ký — đó chính là thứ cần tra lại sau. Tên khách vì vậy cũng chép cứng vào bảng.
+- **Ghi nhật ký nuốt mọi lỗi.** Nhật ký hỏng không được làm hỏng việc gửi email.
+
+Bảng `EmailLog` là bảng MỚI nên `Base.metadata.create_all()` trong `seed.py` tự tạo được —
+KHÔNG phải khai gì vào `ADDED_COLUMNS` (danh sách đó chỉ dành cho cột thêm vào bảng đã có).
+Deploy bình thường là seed tự tạo bảng.
+
 ## Quy tắc gửi
 
 Email chỉ liệt kê hồ sơ đang ở một trong các trạng thái:

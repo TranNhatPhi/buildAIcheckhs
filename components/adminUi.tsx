@@ -60,7 +60,7 @@ export function AdminSidebar({
   onNavigate,
   onLogout,
 }: {
-  activeTab?: "overview" | "documents";
+  activeTab?: "overview" | "documents" | "emails";
   onNavigate?: () => void;
   onLogout?: () => void;
 }) {
@@ -96,6 +96,14 @@ export function AdminSidebar({
           style={activeTab === "documents" ? { backgroundColor: EL.primary, color: "white" } : { color: "#bfcbd9" }}
         >
           📄 Hồ sơ đã nộp
+        </Link>
+        <Link
+          href="/admin?tab=emails"
+          onClick={onNavigate}
+          className="flex items-center gap-2.5 text-sm font-medium px-3.5 py-3 rounded text-left transition-colors"
+          style={activeTab === "emails" ? { backgroundColor: EL.primary, color: "white" } : { color: "#bfcbd9" }}
+        >
+          ✉️ Nhật ký email
         </Link>
       </nav>
       <button

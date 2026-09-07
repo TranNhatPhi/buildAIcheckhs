@@ -508,7 +508,7 @@ def download_all_documents(case_id: str, db: Session = Depends(get_db)):
     )
 
 
-def _bao_doi_trang_thai(row: dict, sent_at) -> None:
+def _bao_doi_trang_thai(row: dict, sent_at, case_id: str, application_status: str) -> None:
     """Gửi email báo đổi trạng thái. NUỐT mọi lỗi — chạy trong BackgroundTask nên ném ra
     cũng không ai bắt, mà trạng thái thì đã lưu xong rồi: để EmailJS chết kéo theo cả thao
     tác đổi trạng thái là đánh đổi tệ. Lỗi vào log, hồ sơ vẫn được nhắc lại sau 14 ngày.
@@ -526,6 +526,10 @@ def _bao_doi_trang_thai(row: dict, sent_at) -> None:
                 "Email này gửi ngay lúc đổi trạng thái, không phải nhắc định kỳ. Nếu chưa xử "
                 f"lý xong, hồ sơ sẽ được nhắc lại sau {STATUS_REMINDER_INTERVAL_DAYS} ngày."
             ),
+            trigger="STATUS_CHANGE",
+            case_id=case_id,
+            case_client_name=row["client_name"],
+            application_status=application_status,
         )
         logger.info("Đã gửi email báo đổi trạng thái: %s.", row["client_name"])
     except Exception:
@@ -578,6 +582,8 @@ def update_case(
                 updated_at=case.applicationStatusUpdatedAt,
             ),
             now_utc(),
+            case.id,
+            case.applicationStatus,
         )
 
     checklist_items = db.scalars(select(ChecklistItem)).all()

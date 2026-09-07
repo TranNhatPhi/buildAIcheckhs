@@ -65,25 +65,24 @@ def _build_template_params(cases: list[Case], sent_at: datetime) -> dict[str, ob
 
 def send_test_email() -> None:
     now = now_utc()
-    emailjs.send_template(
-        emailjs.build_template_params(
-            [
-                {
-                    "client_name": "Hồ sơ kiểm tra EmailJS",
-                    "status_label": "Đang kiểm tra hồ sơ",
-                    "status_color": "#4F46E5",
-                    "updated_at": emailjs.format_datetime(now),
-                    "case_url": os.getenv("APP_BASE_URL", "").strip() or "#",
-                }
-            ],
-            now,
-            title="Email kiểm tra cấu hình EmailJS",
-            intro=(
-                "Đây là email kiểm tra, không phải nhắc hồ sơ thật. Nhận được thư này nghĩa "
-                "là cấu hình EmailJS đang hoạt động."
-            ),
-            footer="Không cần làm gì với email này.",
-        )
+    emailjs.send_cases(
+        [
+            {
+                "client_name": "Hồ sơ kiểm tra EmailJS",
+                "status_label": "Đang kiểm tra hồ sơ",
+                "status_color": "#4F46E5",
+                "updated_at": emailjs.format_datetime(now),
+                "case_url": os.getenv("APP_BASE_URL", "").strip() or "#",
+            }
+        ],
+        now,
+        title="Email kiểm tra cấu hình EmailJS",
+        intro=(
+            "Đây là email kiểm tra, không phải nhắc hồ sơ thật. Nhận được thư này nghĩa "
+            "là cấu hình EmailJS đang hoạt động."
+        ),
+        footer="Không cần làm gì với email này.",
+        trigger="TEST",
     )
     logger.info("Đã gửi email kiểm tra tới %s.", DEFAULT_ADMIN_EMAIL)
 
@@ -121,7 +120,16 @@ def run_once(*, dry_run: bool = False) -> int:
             )
             return len(due_cases)
 
-        emailjs.send_template(template_params)
+        emailjs.send_cases(
+            template_params["cases"],  # type: ignore[arg-type]
+            now,
+            title=template_params["email_title"],  # type: ignore[arg-type]
+            intro=template_params["email_intro"],  # type: ignore[arg-type]
+            footer=template_params["email_footer"],  # type: ignore[arg-type]
+            trigger="PERIODIC_REMINDER",
+            # Một email gộp nhiều hồ sơ nên không gắn được vào một caseId cụ thể; danh sách
+            # hồ sơ nằm đủ trong casesJson của nhật ký.
+        )
         for case in due_cases:
             case.lastStatusReminderAt = now
         db.commit()

@@ -316,6 +316,33 @@ class AdminStatsDTO(BaseModel):
     casesByTag: dict[str, int] = {}
 
 
+class EmailLogCaseRowDTO(BaseModel):
+    """Một dòng hồ sơ bên trong email đã gửi."""
+
+    client_name: str = ""
+    status_label: str = ""
+    status_color: str = "#909399"
+    updated_at: str = ""
+    case_url: str = "#"
+
+
+class EmailLogDTO(BaseModel):
+    id: str
+    createdAt: datetime
+    trigger: str
+    caseId: str | None
+    caseClientName: str | None
+    applicationStatus: str | None
+    title: str
+    intro: str | None
+    footer: str | None
+    # Đã tách sẵn từ casesJson để giao diện không phải tự parse chuỗi JSON.
+    cases: list[EmailLogCaseRowDTO] = []
+    recipient: str | None
+    status: str
+    errorMessage: str | None
+
+
 class AdminDocumentDTO(DocumentDTO):
     # Ghép thêm thông tin case vào để tab "Tài liệu" trong /admin không cần gọi thêm request
     # riêng để tra người nộp là ai — mỗi dòng tài liệu tự đủ thông tin hiển thị.

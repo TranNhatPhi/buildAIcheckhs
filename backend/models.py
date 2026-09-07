@@ -15,7 +15,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
-from db import engine
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -197,7 +196,55 @@ class Document(Base):
     matchedChecklistItem = relationship("ChecklistItem", back_populates="documents")
 
 
-# Không tạo/sửa bảng ở đây — schema đã được Prisma migrate + seed từ trước, giữ
-# nguyên để không phải chạy lại migration/seed 29 mục checklist. Models ở trên
-# chỉ map vào bảng đã có sẵn.
-Base.metadata.bind = engine
+class EmailLog(Base):
+    """Nhật ký mọi email đã gửi qua EmailJS — để admin xem lại đã báo gì cho khách khi nào.
+
+    Bảng MỚI nên `Base.metadata.create_all()` trong seed.py tự tạo được; không phải khai gì
+    vào ADDED_COLUMNS (danh sách đó chỉ dành cho cột thêm vào bảng ĐÃ CÓ).
+
+    Nội dung email lưu ở dạng đã dựng sẵn (tiêu đề/mở đầu/kết + JSON danh sách hồ sơ) chứ
+    không lưu id rồi dựng lại lúc xem: template và câu chữ sẽ còn đổi, mà nhật ký phải cho
+    thấy đúng thứ ĐÃ gửi ngày đó, không phải thứ hôm nay dựng ra từ cùng dữ liệu.
+    """
+
+    __tablename__ = "EmailLog"
+
+    id = Column(String(191), primary_key=True, default=new_id)
+    createdAt = Column(DateTime, nullable=False, default=now_utc)
+
+    # "STATUS_CHANGE" (báo tức thì lúc đổi trạng thái) | "PERIODIC_REMINDER" (nhắc 14 ngày)
+    # | "TEST" (lệnh --test-email).
+    trigger = Column(String(191), nullable=False)
+
+    # KHÔNG đặt ForeignKey sang Case: xoá vĩnh viễn một hồ sơ ở trang admin không được phép
+    # xoá theo nhật ký đã gửi — đó chính là thứ cần tra lại về sau. Vì vậy tên khách cũng
+    # được chép cứng vào đây thay vì join sang Case lúc hiển thị.
+    caseId = Column(String(191), nullable=True)
+    caseClientName = Column(String(191), nullable=True)
+    # Trạng thái hồ sơ tại THỜI ĐIỂM gửi; hồ sơ đổi trạng thái sau đó không làm sai nhật ký.
+    applicationStatus = Column(String(191), nullable=True)
+
+    # Nội dung đã gửi, đúng như EmailJS nhận.
+    title = Column(String(500), nullable=False)
+    intro = Column(Text, nullable=True)
+    footer = Column(Text, nullable=True)
+    # JSON mảng các dòng hồ sơ trong email (client_name, status_label, updated_at, case_url).
+    # Email nhắc định kỳ gộp nhiều hồ sơ trong một thư nên cần cả mảng, không chỉ một dòng.
+    casesJson = Column(Text, nullable=True)
+
+    recipient = Column(String(191), nullable=True)
+    # "SENT" | "FAILED" — ghi CẢ lần gửi hỏng, vì "vì sao khách không nhận được email" là câu
+    # hỏi hay gặp nhất, mà chỉ ghi lần thành công thì nhật ký im lặng đúng lúc cần nói.
+    status = Column(String(191), nullable=False)
+    errorMessage = Column(Text, nullable=True)
+
+
+# Không tạo/sửa bảng ở file này. Bảng do Prisma migrate + seed.py lo:
+#   - Bảng THIẾU: `Base.metadata.create_all()` trong seed.py tự tạo (EmailLog đi đường này).
+#   - Cột thêm vào bảng ĐÃ CÓ: create_all KHÔNG làm được, phải khai vào ADDED_COLUMNS của
+#     seed.py — quên là production chết ngay ở query đầu tiên với "Unknown column".
+#
+# Trước đây chỗ này có dòng `Base.metadata.bind = engine`. Đã xoá: `MetaData.bind` là API
+# của SQLAlchemy 1.x, bản 2.0 đã bỏ. Đo trên chính venv của repo (2.0.52): gán được nhưng
+# `"bind" in MetaData.__dict__` là False — tức chỉ tạo ra một thuộc tính không ai đọc, không
+# nối engine với gì cả. Đừng thêm lại.

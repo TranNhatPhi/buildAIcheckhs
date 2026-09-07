@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { adminFetch, AdminUnauthorizedError } from "@/lib/adminApi";
 import { getAdminPassword, setAdminPassword, clearAdminPassword } from "@/lib/adminAuth";
-import { API_URL } from "@/lib/format";
+import { API_URL, parseUtcDate } from "@/lib/format";
 import { downloadFile } from "@/lib/download";
 import {
   APPLICATION_STATUSES,
@@ -15,12 +15,13 @@ import {
 import { EL, STATUS_LABEL, STATUS_COLOR, Tag, AdminSidebar } from "@/components/adminUi";
 import type {
   AdminDocumentDTO,
+  EmailLogDTO,
   AdminStatsDTO,
   CaseListItemDTO,
 } from "@/lib/client-types";
 
 type LoadState = "checking" | "needs-login" | "loading" | "ready" | "error";
-type Tab = "overview" | "documents";
+type Tab = "overview" | "documents" | "emails";
 
 // Màu hiển thị của nhãn hồ sơ. Tên màu do backend quy định (ALLOWED_TAGS trong
 // backend/schemas.py); ở đây quy ra mã hex để dùng chung với component Tag/biểu đồ. Nhãn mới
@@ -41,12 +42,15 @@ export function AdminDashboard() {
   // (components/adminUi.tsx) điều hướng bằng Link thật hoạt động nhất quán từ mọi trang
   // admin, kể cả từ AdminCaseDetail quay lại đúng tab.
   const searchParams = useSearchParams();
-  const activeTab: Tab = searchParams.get("tab") === "documents" ? "documents" : "overview";
+  const tabParam = searchParams.get("tab");
+  const activeTab: Tab =
+    tabParam === "documents" ? "documents" : tabParam === "emails" ? "emails" : "overview";
   const [passwordInput, setPasswordInput] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [stats, setStats] = useState<AdminStatsDTO | null>(null);
   const [cases, setCases] = useState<CaseListItemDTO[]>([]);
   const [documents, setDocuments] = useState<AdminDocumentDTO[]>([]);
+  const [emailLogs, setEmailLogs] = useState<EmailLogDTO[]>([]);
   const [actionId, setActionId] = useState<string | null>(null);
   // null = đang hiện danh sách khách hàng (bước 1); có id = đang hiện file của khách hàng
   // đó (bước 2, bấm "← Danh sách khách hàng" để quay lại bước 1).
@@ -56,16 +60,20 @@ export function AdminDashboard() {
     setState("loading");
     setLoginError(null);
     try {
-      const [statsRes, casesRes, documentsRes] = await Promise.all([
+      const [statsRes, casesRes, documentsRes, emailLogsRes] = await Promise.all([
         adminFetch("/admin/stats"),
         adminFetch("/admin/cases"),
         adminFetch("/admin/documents"),
+        adminFetch("/admin/email-logs"),
       ]);
       if (!statsRes.ok || !casesRes.ok || !documentsRes.ok)
         throw new Error("Không tải được dữ liệu admin");
       setStats(await statsRes.json());
       setDocuments(await documentsRes.json());
       setCases(await casesRes.json());
+      // Nhật ký email KHÔNG nằm trong điều kiện throw ở trên: backend bản cũ chưa có endpoint
+      // này sẽ trả 404, và mất nhật ký thì không đáng để hỏng cả trang admin.
+      setEmailLogs(emailLogsRes.ok ? await emailLogsRes.json() : []);
       setState("ready");
     } catch (e) {
       if (e instanceof AdminUnauthorizedError) {
@@ -215,7 +223,11 @@ export function AdminDashboard() {
           <p className="text-sm text-neutral-400">
             Quản trị <span className="mx-1.5 text-neutral-300">/</span>
             <span className={activeTab === "documents" && selectedCaseId ? "text-neutral-500" : "text-neutral-700 font-medium"}>
-              {activeTab === "overview" ? "Tổng quan" : "Hồ sơ đã nộp"}
+              {activeTab === "overview"
+                ? "Tổng quan"
+                : activeTab === "emails"
+                  ? "Nhật ký email"
+                  : "Hồ sơ đã nộp"}
             </span>
             {activeTab === "documents" && selectedCaseId && (
               <>
@@ -231,6 +243,8 @@ export function AdminDashboard() {
         <div className="p-6">
           {state === "loading" && !stats ? (
             <p className="text-neutral-500 text-sm">Đang tải...</p>
+          ) : activeTab === "emails" ? (
+            <EmailLogTable logs={emailLogs} />
           ) : activeTab === "documents" ? (
             <CaseDocumentsBrowser
               cases={cases}
@@ -748,6 +762,191 @@ function DocumentStatusChart({ documents }: { documents: AdminDocumentDTO[] }) {
         </div>
       )}
     </div>
+  );
+}
+
+const TRIGGER_LABEL: Record<string, string> = {
+  STATUS_CHANGE: "Đổi trạng thái",
+  PERIODIC_REMINDER: "Nhắc 14 ngày",
+  TEST: "Email kiểm tra",
+};
+
+const TRIGGER_COLOR: Record<string, string> = {
+  STATUS_CHANGE: EL.warning,
+  PERIODIC_REMINDER: EL.primary,
+  TEST: EL.info,
+};
+
+const EMAIL_LOG_DATE = new Intl.DateTimeFormat("vi-VN", {
+  dateStyle: "short",
+  timeStyle: "short",
+  timeZone: "Asia/Ho_Chi_Minh",
+});
+
+// Nhật ký email đã gửi. Mỗi dòng mở ra được để xem ĐÚNG nội dung đã gửi hôm đó — nội dung
+// lấy từ bản lưu trong DB chứ không dựng lại từ template hiện tại, vì câu chữ template sẽ
+// còn đổi mà nhật ký thì phải phản ánh thứ khách thật sự nhận được.
+function EmailLogTable({ logs }: { logs: EmailLogDTO[] }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<string>("ALL");
+
+  const rows = filter === "ALL" ? logs : logs.filter((l) => l.trigger === filter);
+
+  if (logs.length === 0) {
+    return (
+      <div className="bg-white rounded shadow-sm p-8 text-center">
+        <p className="text-4xl mb-3">✉️</p>
+        <p className="text-sm font-semibold text-neutral-700">Chưa có email nào được gửi.</p>
+        <p className="text-xs text-neutral-400 mt-1.5">
+          Nhật ký sẽ tự ghi khi hồ sơ chuyển sang “Đã nộp” / “Cần bổ sung giấy tờ”, khi tới
+          chu kỳ nhắc 14 ngày, hoặc khi chạy lệnh gửi email kiểm tra.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {[
+          ["ALL", `Tất cả (${logs.length})`],
+          ...Object.keys(TRIGGER_LABEL).map((k) => [
+            k,
+            `${TRIGGER_LABEL[k]} (${logs.filter((l) => l.trigger === k).length})`,
+          ]),
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setFilter(value)}
+            className="text-xs font-semibold px-3 py-1.5 rounded transition-colors"
+            style={
+              filter === value
+                ? { backgroundColor: EL.primary, color: "white" }
+                : { backgroundColor: "white", color: "#606266" }
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-white rounded shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-neutral-50 text-left text-xs font-semibold text-neutral-500 border-b border-neutral-200">
+                <th className="px-4 py-3">Thời điểm</th>
+                <th className="px-4 py-3">Loại</th>
+                <th className="px-4 py-3">Hồ sơ</th>
+                <th className="px-4 py-3">Tiêu đề email</th>
+                <th className="px-4 py-3">Kết quả</th>
+                <th className="px-4 py-3 text-right">Nội dung</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {rows.map((log) => {
+                const isOpen = openId === log.id;
+                return (
+                  <Fragment key={log.id}>
+                    <tr className="hover:bg-neutral-50 transition-colors">
+                      <td className="px-4 py-3 whitespace-nowrap text-neutral-600">
+                        {EMAIL_LOG_DATE.format(parseUtcDate(log.createdAt))}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Tag color={TRIGGER_COLOR[log.trigger] ?? EL.info}>
+                          {TRIGGER_LABEL[log.trigger] ?? log.trigger}
+                        </Tag>
+                      </td>
+                      <td className="px-4 py-3">
+                        {log.caseId ? (
+                          <Link
+                            href={`/admin/cases/${log.caseId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-medium hover:underline"
+                            style={{ color: EL.primary }}
+                          >
+                            {log.caseClientName ?? "Xem hồ sơ"}
+                          </Link>
+                        ) : (
+                          <span className="text-neutral-400 text-xs">
+                            {log.cases.length > 1 ? `${log.cases.length} hồ sơ` : "—"}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-neutral-700">{log.title}</td>
+                      <td className="px-4 py-3">
+                        {log.status === "SENT" ? (
+                          <Tag color={EL.success}>Đã gửi</Tag>
+                        ) : (
+                          <Tag color={EL.danger}>Gửi lỗi</Tag>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setOpenId(isOpen ? null : log.id)}
+                          aria-expanded={isOpen}
+                          className="text-xs font-semibold px-3 py-1.5 rounded border border-neutral-200 text-neutral-600 hover:bg-neutral-50 transition-colors"
+                        >
+                          {isOpen ? "Thu gọn" : "Xem"}
+                        </button>
+                      </td>
+                    </tr>
+
+                    {isOpen && (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-4 bg-neutral-50">
+                          <div className="max-w-3xl">
+                            <p className="text-xs font-semibold text-neutral-500 mb-1">
+                              Gửi tới: {log.recipient ?? "—"}
+                            </p>
+                            <p className="text-base font-bold text-neutral-800 mb-2">{log.title}</p>
+                            {log.intro && (
+                              <p className="text-sm text-neutral-600 mb-3">{log.intro}</p>
+                            )}
+
+                            <div className="flex flex-col gap-2 mb-3">
+                              {log.cases.map((row, i) => (
+                                <div
+                                  key={i}
+                                  className="bg-white border border-neutral-200 rounded p-3"
+                                  style={{ borderLeft: `4px solid ${row.status_color}` }}
+                                >
+                                  <p className="text-sm font-semibold text-neutral-800">
+                                    {row.client_name}
+                                  </p>
+                                  <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                                    <Tag color={row.status_color}>{row.status_label}</Tag>
+                                    <span className="text-xs text-neutral-400">
+                                      Cập nhật: {row.updated_at}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {log.footer && (
+                              <p className="text-xs text-neutral-500">{log.footer}</p>
+                            )}
+                            {log.errorMessage && (
+                              <p className="mt-3 text-xs font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded p-2.5 break-words">
+                                Lỗi khi gửi: {log.errorMessage}
+                              </p>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
   );
 }
 

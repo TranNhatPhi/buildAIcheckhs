@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -9,8 +11,15 @@ from completeness import compute_checklist_summary, compute_financial_threshold_
 from db import get_db
 from doc_checks import dem_han_tai_lieu
 from mappers import financial_threshold_to_dto
-from models import Case, ChecklistItem, Document, now_utc
-from schemas import AdminDocumentDTO, AdminStatsDTO, CaseListItemDTO, DocumentDTO, parse_tags
+from models import Case, ChecklistItem, Document, EmailLog, now_utc
+from schemas import (
+    AdminDocumentDTO,
+    AdminStatsDTO,
+    CaseListItemDTO,
+    DocumentDTO,
+    EmailLogDTO,
+    parse_tags,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -141,3 +150,42 @@ def permanently_delete_case(case_id: str, db: Session = Depends(get_db)):
     db.delete(case)  # cascade="all, delete-orphan" (models.py) tự xoá các Document liên quan
     db.commit()
     return {"ok": True}
+
+
+@router.get("/email-logs", response_model=list[EmailLogDTO])
+def list_email_logs(limit: int = 200, db: Session = Depends(get_db)):
+    """Nhật ký email đã gửi, mới nhất trước.
+
+    Có `limit` vì bảng này chỉ tăng chứ không bao giờ giảm — một hồ sơ chạy hết vòng đời có
+    thể sinh hàng chục email, trả về tất cả sẽ ngày càng nặng mà không ai đọc tới cuối.
+    """
+    logs = db.scalars(
+        select(EmailLog).order_by(EmailLog.createdAt.desc()).limit(max(1, min(limit, 1000)))
+    ).all()
+
+    result = []
+    for log in logs:
+        # Nhật ký cũ / dòng ghi lỗi có thể không có casesJson hợp lệ — nhật ký hỏng một dòng
+        # không được phép làm chết cả trang, nên bọc lại và trả về mảng rỗng.
+        try:
+            rows = json.loads(log.casesJson) if log.casesJson else []
+        except (TypeError, ValueError):
+            rows = []
+        result.append(
+            EmailLogDTO(
+                id=log.id,
+                createdAt=log.createdAt,
+                trigger=log.trigger,
+                caseId=log.caseId,
+                caseClientName=log.caseClientName,
+                applicationStatus=log.applicationStatus,
+                title=log.title,
+                intro=log.intro,
+                footer=log.footer,
+                cases=rows,
+                recipient=log.recipient,
+                status=log.status,
+                errorMessage=log.errorMessage,
+            )
+        )
+    return result

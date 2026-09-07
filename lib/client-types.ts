@@ -159,6 +159,34 @@ export interface AdminStatsDTO {
   casesByTag: Record<string, number>;
 }
 
+/** Một dòng hồ sơ bên trong email đã gửi. */
+export interface EmailLogCaseRowDTO {
+  client_name: string;
+  status_label: string;
+  status_color: string;
+  updated_at: string;
+  case_url: string;
+}
+
+/** Nhật ký email, lấy từ GET /admin/email-logs. */
+export interface EmailLogDTO {
+  id: string;
+  createdAt: string;
+  /** "STATUS_CHANGE" | "PERIODIC_REMINDER" | "TEST" */
+  trigger: string;
+  caseId: string | null;
+  caseClientName: string | null;
+  applicationStatus: string | null;
+  title: string;
+  intro: string | null;
+  footer: string | null;
+  cases: EmailLogCaseRowDTO[];
+  recipient: string | null;
+  /** "SENT" | "FAILED" */
+  status: string;
+  errorMessage: string | null;
+}
+
 export interface AdminDocumentDTO extends DocumentDTO {
   caseClientName: string;
   caseDeletedAt: string | null;

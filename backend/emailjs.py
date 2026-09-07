@@ -26,6 +26,9 @@ EMAILJS_SEND_URL = "https://api.emailjs.com/api/v1.0/email/send"
 # Đã đo: cùng payload, chỉ cần đặt User-Agent bất kỳ khác mặc định là request vào tới
 # EmailJS (nhận đúng lỗi nghiệp vụ của họ). Không cần giả làm trình duyệt.
 EMAILJS_USER_AGENT = "lnc-status-reminder/1.0"
+# Người nhận thật do template trên dashboard EmailJS quy định; hằng số này chỉ để ghi vào
+# nhật ký cho admin biết thư đi đâu.
+DEFAULT_RECIPIENT = "documentlncglobal@gmail.com"
 
 STATUS_LABELS = {item["value"]: item["label"] for item in CASE_STATUS_DEFINITIONS}
 STATUS_COLORS = {item["value"]: item["color"] for item in CASE_STATUS_DEFINITIONS}
@@ -130,7 +133,84 @@ def build_template_params(
     }
 
 
-def send_cases(
-    rows: list[dict[str, str]], sent_at: datetime, *, title: str, intro: str, footer: str
+def _ghi_nhat_ky(
+    *,
+    trigger: str,
+    rows: list[dict[str, str]],
+    title: str,
+    intro: str,
+    footer: str,
+    case_id: str | None,
+    case_client_name: str | None,
+    application_status: str | None,
+    status: str,
+    error_message: str | None,
 ) -> None:
-    send_template(build_template_params(rows, sent_at, title=title, intro=intro, footer=footer))
+    """Ghi một dòng nhật ký email. Tự mở session riêng và NUỐT mọi lỗi.
+
+    Session riêng vì hàm này còn chạy trong BackgroundTask của FastAPI, tức sau khi session
+    của request đã đóng. Nuốt lỗi vì nhật ký hỏng không được phép làm hỏng việc gửi email —
+    thứ tự ưu tiên là email tới nơi trước, ghi chép sau.
+    """
+    try:
+        from db import SessionLocal
+        from models import EmailLog
+
+        db = SessionLocal()
+        try:
+            db.add(
+                EmailLog(
+                    trigger=trigger,
+                    caseId=case_id,
+                    caseClientName=case_client_name,
+                    applicationStatus=application_status,
+                    title=title,
+                    intro=intro,
+                    footer=footer,
+                    casesJson=json.dumps(rows, ensure_ascii=False),
+                    recipient=os.getenv("ADMIN_EMAIL", "").strip() or DEFAULT_RECIPIENT,
+                    status=status,
+                    errorMessage=error_message,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("Không ghi được nhật ký email (email vẫn đã gửi/thử gửi bình thường).")
+
+
+def send_cases(
+    rows: list[dict[str, str]],
+    sent_at: datetime,
+    *,
+    title: str,
+    intro: str,
+    footer: str,
+    trigger: str,
+    case_id: str | None = None,
+    case_client_name: str | None = None,
+    application_status: str | None = None,
+) -> None:
+    """Gửi email VÀ ghi nhật ký. Đây là cửa DUY NHẤT để gửi — mọi đường gửi đều đi qua đây
+    nên không có email nào lọt sổ. Ném lại lỗi cho nơi gọi sau khi đã ghi nhật ký thất bại.
+    """
+    loi: str | None = None
+    try:
+        send_template(build_template_params(rows, sent_at, title=title, intro=intro, footer=footer))
+    except Exception as exc:
+        loi = str(exc)
+        raise
+    finally:
+        _ghi_nhat_ky(
+            trigger=trigger,
+            rows=rows,
+            title=title,
+            intro=intro,
+            footer=footer,
+            case_id=case_id,
+            case_client_name=case_client_name,
+            application_status=application_status,
+            status="FAILED" if loi else "SENT",
+            error_message=loi,
+        )
