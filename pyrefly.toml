@@ -20,9 +20,9 @@ python-version = "3.9"
 # models.py khai cột theo kiểu CŨ của SQLAlchemy (`id = Column(String(191), ...)`) chứ
 # không phải kiểu 2.0 (`id: Mapped[str] = mapped_column(...)`). Với kiểu cũ, bộ kiểm tra
 # kiểu thấy `case.id` là `Column[str]` chứ không phải `str` — trong khi lúc chạy thật
-# SQLAlchemy trả về đúng giá trị. Đo được: bật đủ 3 nhóm lỗi này lên thì backend/ có 211
-# lỗi, tắt đi còn 11 — tức ~200 lỗi là báo nhầm vì kiểu khai cột, không phải bug thật.
-# Muốn bật lại 3 dòng dưới thì phải chuyển hết 60 cột trong models.py sang `Mapped[...]` +
+# SQLAlchemy trả về đúng giá trị. Đo được: bật đủ 4 nhóm lỗi này lên thì backend/ có 211
+# lỗi, tắt đi còn 9 — tức hơn 200 lỗi là báo nhầm vì kiểu khai cột, không phải bug thật.
+# Muốn bật lại 4 dòng dưới thì phải chuyển hết 60 cột trong models.py sang `Mapped[...]` +
 # `mapped_column(...)` trước, đừng chỉ xoá dòng.
 [errors]
 bad-argument-type = false
