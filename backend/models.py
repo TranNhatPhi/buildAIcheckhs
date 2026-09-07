@@ -53,6 +53,13 @@ class Case(Base):
     # phục lại được. NULL nghĩa là hồ sơ đang hoạt động bình thường.
     deletedAt = Column(DateTime, nullable=True)
 
+    # Trạng thái NGHIỆP VỤ của cả hồ sơ, tách biệt với Document.status (OCR/phân loại) và
+    # aiAnalysisStatus. Hai mốc thời gian bên dưới chừa sẵn nền cho email nhắc admin: trạng
+    # thái chưa phải APPROVED/REJECTED sẽ đến hạn nhắc sau mỗi 14 ngày (xem case_status.py).
+    applicationStatus = Column(String(191), nullable=False, default="PENDING")
+    applicationStatusUpdatedAt = Column(DateTime, nullable=True, default=now_utc)
+    lastStatusReminderAt = Column(DateTime, nullable=True)
+
     # Lưu lại kết quả "Phân tích AI chuyên sâu" vào DB (thay vì chỉ giữ trong state React)
     # — bước phân tích có thể chạy 2-4+ phút với hồ sơ nhiều file, nếu nhân viên bấm F5
     # giữa chừng thì trước đây mất trắng kết quả dù backend vẫn chạy xong bình thường.

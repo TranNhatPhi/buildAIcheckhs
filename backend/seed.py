@@ -403,6 +403,11 @@ ADDED_COLUMNS = [
     ("Document", "aiFieldsNote", "TEXT NULL"),
     # Tag (nhãn) do nhân viên gắn cho hồ sơ — JSON array, vd '["GẤP","VIP"]'.
     ("Case", "tags", "TEXT NULL"),
+    # Trạng thái nghiệp vụ + mốc nhắc admin. Mỗi lần deploy seed tự thêm đủ cả ba cột cho
+    # DB đang chạy; nếu thiếu bước này production sẽ lỗi Unknown column ngay lần query đầu.
+    ("Case", "applicationStatus", "VARCHAR(191) NOT NULL DEFAULT 'PENDING'"),
+    ("Case", "applicationStatusUpdatedAt", "DATETIME NULL"),
+    ("Case", "lastStatusReminderAt", "DATETIME NULL"),
 ]
 
 

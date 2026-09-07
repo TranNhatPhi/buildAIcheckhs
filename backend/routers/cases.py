@@ -11,6 +11,12 @@ from sqlalchemy.orm import Session
 import pdf_export
 import storage
 from admin_auth import require_admin
+from case_status import (
+    CASE_STATUS_DEFINITIONS,
+    FINAL_CASE_STATUSES,
+    STATUS_REMINDER_INTERVAL_DAYS,
+    case_status_fields,
+)
 from classify import summarize_case_profile
 from completeness import (
     assess_savings,
@@ -77,6 +83,7 @@ def list_cases(db: Session = Depends(get_db)):
                 notes=c.notes,
                 tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
+                **case_status_fields(c),
                 percent=summary.percent,
                 needsReviewCount=summary.needs_review_count,
                 financialThreshold=financial_threshold_to_dto(threshold),
@@ -92,6 +99,20 @@ def list_tags():
     """Danh sách tag hợp lệ + màu hiển thị — frontend gọi 1 lần lúc load trang để render
     dropdown/chip đúng màu, không hardcode lại danh sách ở 2 nơi."""
     return [{"name": name, "color": color} for name, color in ALLOWED_TAGS.items()]
+
+
+@router.get("/statuses")
+def list_application_statuses():
+    """Danh sách có thứ tự để UI và chức năng email dùng cùng một quy ước trạng thái."""
+    return [
+        {
+            **definition,
+            "isFinal": definition["value"] in FINAL_CASE_STATUSES,
+            "reminderEnabled": definition["value"] not in FINAL_CASE_STATUSES,
+            "reminderIntervalDays": STATUS_REMINDER_INTERVAL_DAYS,
+        }
+        for definition in CASE_STATUS_DEFINITIONS
+    ]
 
 
 @router.post("", response_model=CaseListItemDTO, status_code=201)
@@ -117,6 +138,7 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
         notes=case.notes,
         tags=[],
         createdAt=case.createdAt,
+        **case_status_fields(case),
         percent=0,
         needsReviewCount=0,
         financialThreshold=financial_threshold_to_dto(threshold),
@@ -150,6 +172,7 @@ def list_deleted_cases(db: Session = Depends(get_db)):
                 tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
                 deletedAt=c.deletedAt,
+                **case_status_fields(c),
                 percent=summary.percent,
                 needsReviewCount=summary.needs_review_count,
                 financialThreshold=financial_threshold_to_dto(threshold),
@@ -187,6 +210,7 @@ def restore_case(case_id: str, db: Session = Depends(get_db)):
         notes=case.notes,
         tags=parse_tags(case.tags),
         createdAt=case.createdAt,
+        **case_status_fields(case),
         percent=summary.percent,
         needsReviewCount=summary.needs_review_count,
         financialThreshold=financial_threshold_to_dto(threshold),
@@ -218,6 +242,7 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
             "notes": case.notes,
             "tags": parse_tags(case.tags),
             "createdAt": case.createdAt,
+            **case_status_fields(case),
             "documents": sorted(case.documents, key=lambda d: d.uploadedAt),
             "aiAnalysisStatus": case.aiAnalysisStatus,
             "aiAnalysisSummary": case.aiAnalysisSummary,
@@ -497,8 +522,18 @@ def update_case(case_id: str, body: UpdateCaseRequest, db: Session = Depends(get
     # exclude_unset: chỉ áp field nào thực sự có trong request body — sửa 1 field (vd chỉ
     # đổi tên) không vô tình xoá/ghi đè các field khác không được gửi lên.
     updates = body.model_dump(exclude_unset=True)
+    old_application_status = case.applicationStatus
     for field, value in updates.items():
         setattr(case, field, value)
+
+    # Chỉ khởi động lại chu kỳ 14 ngày khi trạng thái THỰC SỰ đổi. Bấm lưu lại cùng một
+    # trạng thái không được trì hoãn email nhắc vô thời hạn.
+    if (
+        "applicationStatus" in updates
+        and updates["applicationStatus"] != old_application_status
+    ):
+        case.applicationStatusUpdatedAt = now_utc()
+        case.lastStatusReminderAt = None
 
     db.commit()
     db.refresh(case)
@@ -518,6 +553,7 @@ def update_case(case_id: str, body: UpdateCaseRequest, db: Session = Depends(get
         notes=case.notes,
         tags=parse_tags(case.tags),
         createdAt=case.createdAt,
+        **case_status_fields(case),
         percent=summary.percent,
         needsReviewCount=summary.needs_review_count,
         financialThreshold=financial_threshold_to_dto(threshold),

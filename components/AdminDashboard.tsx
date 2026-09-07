@@ -7,8 +7,16 @@ import { adminFetch, AdminUnauthorizedError } from "@/lib/adminApi";
 import { getAdminPassword, setAdminPassword, clearAdminPassword } from "@/lib/adminAuth";
 import { API_URL } from "@/lib/format";
 import { downloadFile } from "@/lib/download";
+import {
+  APPLICATION_STATUS_HEX_COLOR,
+  getApplicationStatus,
+} from "@/lib/application-status";
 import { EL, STATUS_LABEL, STATUS_COLOR, Tag, AdminSidebar } from "@/components/adminUi";
-import type { AdminDocumentDTO, AdminStatsDTO, CaseListItemDTO } from "@/lib/client-types";
+import type {
+  AdminDocumentDTO,
+  AdminStatsDTO,
+  CaseListItemDTO,
+} from "@/lib/client-types";
 
 type LoadState = "checking" | "needs-login" | "loading" | "ready" | "error";
 type Tab = "overview" | "documents";
@@ -219,12 +227,24 @@ export function AdminDashboard() {
           ) : (
             <>
               {stats && (
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
+                <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-4 mb-6">
                   <StatPanel icon="🗂️" label="Tổng hồ sơ" value={stats.totalCases} color={EL.primary} />
                   <StatPanel icon="✅" label="Đang hoạt động" value={stats.activeCases} color={EL.success} />
                   <StatPanel icon="🗑️" label="Đã xoá mềm" value={stats.deletedCases} color={EL.info} />
                   <StatPanel icon="⏳" label="Cần review" value={stats.needsReviewDocuments} color={EL.warning} />
                   <StatPanel icon="⚠️" label="File lỗi" value={stats.errorDocuments} color={EL.danger} />
+                  <StatPanel
+                    icon="⌛"
+                    label="Chưa có kết quả"
+                    value={stats.pendingDecisionCases}
+                    color={EL.primary}
+                  />
+                  <StatPanel
+                    icon="🔔"
+                    label="Đến hạn nhắc 14 ngày"
+                    value={stats.statusRemindersDue}
+                    color={stats.statusRemindersDue > 0 ? EL.danger : EL.info}
+                  />
                 </div>
               )}
 
@@ -276,9 +296,15 @@ export function AdminDashboard() {
                                 </p>
                               </td>
                               <td className="px-4 py-3">
-                                <Tag color={isDeleted ? EL.danger : EL.success}>
-                                  {isDeleted ? "Đã xoá" : "Hoạt động"}
-                                </Tag>
+                                <div className="flex flex-col items-start gap-1.5">
+                                  <Tag color={APPLICATION_STATUS_HEX_COLOR[c.applicationStatus]}>
+                                    {getApplicationStatus(c.applicationStatus).label}
+                                  </Tag>
+                                  {c.statusReminderDue && !isDeleted && (
+                                    <Tag color={EL.danger}>Đến hạn nhắc</Tag>
+                                  )}
+                                  {isDeleted && <Tag color={EL.danger}>Đã xoá</Tag>}
+                                </div>
                               </td>
                               <td className="px-4 py-3">
                                 <Tag color={c.percent === 100 ? EL.success : EL.primary}>{c.percent}%</Tag>
@@ -404,9 +430,15 @@ function CaseDocumentsBrowser({
                   </p>
                 </td>
                 <td className="px-4 py-3">
-                  <Tag color={c.deletedAt ? EL.danger : EL.success}>
-                    {c.deletedAt ? "Đã xoá" : "Hoạt động"}
-                  </Tag>
+                  <div className="flex flex-col items-start gap-1.5">
+                    <Tag color={APPLICATION_STATUS_HEX_COLOR[c.applicationStatus]}>
+                      {getApplicationStatus(c.applicationStatus).label}
+                    </Tag>
+                    {c.statusReminderDue && !c.deletedAt && (
+                      <Tag color={EL.danger}>Đến hạn nhắc</Tag>
+                    )}
+                    {c.deletedAt && <Tag color={EL.danger}>Đã xoá</Tag>}
+                  </div>
                 </td>
                 <td className="px-4 py-3 font-semibold" style={{ color: c.percent === 100 ? EL.success : EL.danger }}>
                   {docCountByCase.get(c.id) ?? 0}

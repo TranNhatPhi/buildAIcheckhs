@@ -9,9 +9,16 @@ import { DocChecksPanel } from "@/components/DocChecksPanel";
 import { GeneralNotesBanner } from "@/components/GeneralNotesBanner";
 import { SavingsCard } from "@/components/SavingsCard";
 import { STAGE_LABEL, UploadDropzone } from "@/components/UploadDropzone";
+import {
+  APPLICATION_STATUSES,
+  APPLICATION_STATUS_BADGE_CLASS,
+  APPLICATION_STATUS_HEX_COLOR,
+  FINAL_APPLICATION_STATUSES,
+  getApplicationStatus,
+} from "@/lib/application-status";
 import { API_URL, estimateProcessingSeconds, formatRemaining, parseUtcDate } from "@/lib/format";
 import { useHydrated } from "@/lib/useHydrated";
-import type { CaseDetailDTO, TagDefinition } from "@/lib/client-types";
+import type { ApplicationStatus, CaseDetailDTO, TagDefinition } from "@/lib/client-types";
 
 /** Ánh xạ tên màu từ API sang Tailwind class. */
 const TAG_COLOR_MAP: Record<string, string> = {
@@ -24,6 +31,11 @@ const TAG_COLOR_MAP: Record<string, string> = {
   purple: "bg-purple-100 text-purple-800 border-purple-200",
 };
 
+const REMINDER_DATE_FORMATTER = new Intl.DateTimeFormat("vi-VN", {
+  dateStyle: "long",
+  timeZone: "Asia/Ho_Chi_Minh",
+});
+
 interface Props {
   caseId: string;
   // Dữ liệu fetch sẵn từ server (app/cases/[id]/page.tsx) — có ngay khi trang render
@@ -34,6 +46,8 @@ interface Props {
 export function CaseDetail({ caseId, initialData }: Props) {
   const [data, setData] = useState<CaseDetailDTO | null>(initialData);
   const [notFound, setNotFound] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   // --- Tag management ---
   const [caseTags, setCaseTags] = useState<string[]>(initialData.case.tags ?? []);
@@ -88,6 +102,27 @@ export function CaseDetail({ caseId, initialData }: Props) {
     setData(await res.json());
   }, [caseId]);
 
+  async function updateApplicationStatus(applicationStatus: ApplicationStatus) {
+    setStatusSaving(true);
+    setStatusError(null);
+    try {
+      const res = await fetch(`${API_URL}/cases/${caseId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationStatus }),
+      });
+      if (!res.ok) {
+        setStatusError("Không cập nhật được trạng thái hồ sơ.");
+        return;
+      }
+      await refetch();
+    } catch {
+      setStatusError("Không kết nối được máy chủ. Vui lòng thử lại.");
+    } finally {
+      setStatusSaving(false);
+    }
+  }
+
   // Nếu còn document đang chờ OCR/AI xử lý (vd trang vừa được F5 lại giữa lúc đang xử
   // lý, hoặc nhân viên rời trang rồi quay lại), tự động poll lại định kỳ cho đến khi
   // xong — không bắt nhân viên phải tự F5 để biết kết quả.
@@ -138,6 +173,7 @@ export function CaseDetail({ caseId, initialData }: Props) {
 
   const { case: c, checklist } = data;
   const isComplete = checklist.percent === 100;
+  const applicationStatus = getApplicationStatus(c.applicationStatus);
   // Mục bắt buộc còn thiếu — liệt kê ngay đầu trang để nhân viên biết cần làm gì tiếp mà
   // không phải kéo xuống dò cả checklist dài bên dưới.
   const missingRequiredItems = checklist.items.filter((s) => !s.item.isOptional && !s.complete);
@@ -162,6 +198,66 @@ export function CaseDetail({ caseId, initialData }: Props) {
           📋 Xem tổng hợp thông tin
         </Link>
       </div>
+
+      <section
+        className="rounded-2xl border-2 border-neutral-200 bg-white p-5 shadow-sm"
+        style={{
+          borderLeftColor: APPLICATION_STATUS_HEX_COLOR[c.applicationStatus],
+          borderLeftWidth: 6,
+        }}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-indigo-600">
+              Trạng thái hồ sơ
+            </p>
+            <span
+              className={`mt-2 inline-flex rounded-full border px-3 py-1 text-sm font-semibold ${APPLICATION_STATUS_BADGE_CLASS[c.applicationStatus]}`}
+            >
+              {applicationStatus.label}
+            </span>
+            <p className="mt-2 text-sm text-neutral-600">{applicationStatus.description}</p>
+          </div>
+          <label className="min-w-56">
+            <span className="mb-1.5 block text-xs font-semibold text-neutral-600">
+              Cập nhật trạng thái
+            </span>
+            <select
+              value={c.applicationStatus}
+              disabled={statusSaving}
+              onChange={(event) =>
+                void updateApplicationStatus(event.target.value as ApplicationStatus)
+              }
+              className={`w-full rounded-xl border-2 px-3 py-2 text-sm font-semibold outline-none transition focus:border-indigo-400 disabled:opacity-50 ${APPLICATION_STATUS_BADGE_CLASS[c.applicationStatus]}`}
+            >
+              {APPLICATION_STATUSES.map((status) => (
+                <option key={status.value} value={status.value}>
+                  {status.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {FINAL_APPLICATION_STATUSES.has(c.applicationStatus) ? (
+          <p className="mt-3 text-xs font-medium text-neutral-500">
+            Hồ sơ đã có kết quả cuối nên không còn tính lịch nhắc admin.
+          </p>
+        ) : (
+          <p
+            className={`mt-3 text-xs font-medium ${
+              c.statusReminderDue ? "text-rose-700" : "text-neutral-500"
+            }`}
+          >
+            {c.statusReminderDue ? "Đã đến hạn nhắc admin" : "Mốc nhắc admin tiếp theo"}
+            {c.nextStatusReminderAt
+              ? `: ${REMINDER_DATE_FORMATTER.format(parseUtcDate(c.nextStatusReminderAt))}`
+              : ""}
+            {` · chu kỳ ${c.statusReminderIntervalDays} ngày/lần cho đến khi đậu hoặc rớt.`}
+          </p>
+        )}
+        {statusError && <p className="mt-2 text-sm text-red-600">{statusError}</p>}
+      </section>
 
       {hasProcessingDocs && (
         <div className="bg-amber-50 border-2 border-amber-200 rounded-xl px-4 py-3">
@@ -288,7 +384,9 @@ export function CaseDetail({ caseId, initialData }: Props) {
         </div>
 
         {isComplete && (
-          <p className="text-sm text-green-700 font-semibold mt-2">✓ Hồ sơ này đã hoàn thành</p>
+          <p className="text-sm text-green-700 font-semibold mt-2">
+            ✓ Checklist giấy tờ đã hoàn thành
+          </p>
         )}
       </div>
 

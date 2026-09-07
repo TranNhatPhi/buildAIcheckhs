@@ -4,10 +4,11 @@ from sqlalchemy.orm import Session
 
 import storage
 from admin_auth import require_admin
+from case_status import FINAL_CASE_STATUSES, case_status_fields, next_status_reminder_at
 from completeness import compute_checklist_summary, compute_financial_threshold_vnd
 from db import get_db
 from mappers import financial_threshold_to_dto
-from models import Case, ChecklistItem, Document
+from models import Case, ChecklistItem, Document, now_utc
 from schemas import AdminDocumentDTO, AdminStatsDTO, CaseListItemDTO, DocumentDTO, parse_tags
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -36,6 +37,7 @@ def list_all_cases(db: Session = Depends(get_db)):
                 tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
                 deletedAt=c.deletedAt,
+                **case_status_fields(c),
                 percent=summary.percent,
                 needsReviewCount=summary.needs_review_count,
                 financialThreshold=financial_threshold_to_dto(threshold),
@@ -52,6 +54,18 @@ def get_stats(db: Session = Depends(get_db)):
         select(func.count()).select_from(Document).where(Document.status == "NEEDS_REVIEW")
     )
     errors = db.scalar(select(func.count()).select_from(Document).where(Document.status == "ERROR"))
+    active_non_final_cases = db.scalars(
+        select(Case).where(
+            Case.deletedAt.is_(None),
+            Case.applicationStatus.not_in(FINAL_CASE_STATUSES),
+        )
+    ).all()
+    utc_now = now_utc()
+    reminders_due = sum(
+        1
+        for case in active_non_final_cases
+        if (next_due := next_status_reminder_at(case)) is not None and next_due <= utc_now
+    )
 
     return AdminStatsDTO(
         totalCases=active_cases + deleted_cases,
@@ -59,6 +73,8 @@ def get_stats(db: Session = Depends(get_db)):
         deletedCases=deleted_cases,
         needsReviewDocuments=needs_review,
         errorDocuments=errors,
+        pendingDecisionCases=len(active_non_final_cases),
+        statusRemindersDue=reminders_due,
     )
 
 

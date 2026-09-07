@@ -1,5 +1,17 @@
 // Kiểu dữ liệu dùng ở client, khớp với JSON trả về từ backend FastAPI (backend/schemas.py).
 
+export type ApplicationStatus =
+  | "PENDING"
+  | "COLLECTING_DOCUMENTS"
+  | "REVIEWING_DOCUMENTS"
+  | "READY_TO_SUBMIT"
+  | "SUBMITTED"
+  | "UNDER_REVIEW"
+  | "ADDITIONAL_DOCUMENTS_REQUIRED"
+  | "AWAITING_DECISION"
+  | "APPROVED"
+  | "REJECTED";
+
 export interface ChecklistItemDTO {
   id: string;
   order: number;
@@ -111,6 +123,12 @@ export interface CaseListItemDTO {
   notes: string | null;
   tags: string[];
   createdAt: string;
+  applicationStatus: ApplicationStatus;
+  applicationStatusUpdatedAt: string | null;
+  lastStatusReminderAt: string | null;
+  nextStatusReminderAt: string | null;
+  statusReminderDue: boolean;
+  statusReminderIntervalDays: number;
   // null ở danh sách hồ sơ đang hoạt động — chỉ có giá trị ở /admin/cases (bao gồm cả hồ sơ
   // đã xoá mềm) hoặc /cases/deleted.
   deletedAt: string | null;
@@ -127,6 +145,8 @@ export interface AdminStatsDTO {
   deletedCases: number;
   needsReviewDocuments: number;
   errorDocuments: number;
+  pendingDecisionCases: number;
+  statusRemindersDue: number;
 }
 
 export interface AdminDocumentDTO extends DocumentDTO {
@@ -148,6 +168,12 @@ export interface CaseDetailDTO {
     notes: string | null;
     tags: string[];
     createdAt: string;
+    applicationStatus: ApplicationStatus;
+    applicationStatusUpdatedAt: string | null;
+    lastStatusReminderAt: string | null;
+    nextStatusReminderAt: string | null;
+    statusReminderDue: boolean;
+    statusReminderIntervalDays: number;
     documents: DocumentDTO[];
     aiAnalysisStatus: string;
     aiAnalysisSummary: string | null;

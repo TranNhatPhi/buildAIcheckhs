@@ -5,8 +5,14 @@ import { useEffect, useMemo, useState } from "react";
 import { CanhCuonHoSo } from "@/components/CanhCuonHoSo";
 import { ChecklistOverview3D } from "@/components/ChecklistOverview3D";
 import { EditCaseModal } from "@/components/EditCaseModal";
+import {
+  APPLICATION_STATUSES,
+  APPLICATION_STATUS_BADGE_CLASS,
+  APPLICATION_STATUS_HEX_COLOR,
+  getApplicationStatus,
+} from "@/lib/application-status";
 import { API_URL } from "@/lib/format";
-import type { CaseListItemDTO, TagDefinition } from "@/lib/client-types";
+import type { ApplicationStatus, CaseListItemDTO, TagDefinition } from "@/lib/client-types";
 
 /** Ánh xạ tên màu từ API ("red", "yellow"...) sang Tailwind class cụ thể. Đặt ở đây thay vì
  *  hardcode dài dòng Tailwind ở mỗi chỗ render tag. */
@@ -24,7 +30,8 @@ interface Props {
   initialCases: CaseListItemDTO[];
 }
 
-type StatusFilter = "ALL" | "NEEDS_REVIEW" | "EXPIRED_DOCS" | "INCOMPLETE" | "COMPLETE";
+type ChecklistStatusFilter = "ALL" | "NEEDS_REVIEW" | "EXPIRED_DOCS" | "INCOMPLETE" | "COMPLETE";
+type ApplicationStatusFilter = "ALL" | ApplicationStatus;
 type SkillFilter = "ALL" | "HIGH_SKILL" | "LOW_SKILL";
 type MaritalFilter = "ALL" | "MARRIED" | "SINGLE";
 type SortOption = "NEWEST" | "OLDEST" | "NEEDS_ATTENTION" | "NAME";
@@ -45,7 +52,9 @@ export function CaseList({ initialCases }: Props) {
   const [editingCase, setEditingCase] = useState<CaseListItemDTO | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [checklistStatusFilter, setChecklistStatusFilter] = useState<ChecklistStatusFilter>("ALL");
+  const [applicationStatusFilter, setApplicationStatusFilter] =
+    useState<ApplicationStatusFilter>("ALL");
   const [skillFilter, setSkillFilter] = useState<SkillFilter>("ALL");
   const [maritalFilter, setMaritalFilter] = useState<MaritalFilter>("ALL");
   const [sortOption, setSortOption] = useState<SortOption>("NEWEST");
@@ -69,7 +78,8 @@ export function CaseList({ initialCases }: Props) {
 
   const hasActiveFilters =
     searchQuery.trim() !== "" ||
-    statusFilter !== "ALL" ||
+    checklistStatusFilter !== "ALL" ||
+    applicationStatusFilter !== "ALL" ||
     skillFilter !== "ALL" ||
     maritalFilter !== "ALL" ||
     tagFilter !== "ALL" ||
@@ -86,17 +96,27 @@ export function CaseList({ initialCases }: Props) {
         const matchesSearch = normalizedQuery === "" || searchableText.includes(normalizedQuery);
         const matchesTag =
           tagFilter === "ALL" || caseItem.tags.includes(tagFilter);
-        const matchesStatus =
-          statusFilter === "ALL" ||
-          (statusFilter === "NEEDS_REVIEW" && caseItem.needsReviewCount > 0) ||
-          (statusFilter === "EXPIRED_DOCS" &&
+        const matchesChecklistStatus =
+          checklistStatusFilter === "ALL" ||
+          (checklistStatusFilter === "NEEDS_REVIEW" && caseItem.needsReviewCount > 0) ||
+          (checklistStatusFilter === "EXPIRED_DOCS" &&
             (caseItem.expiredDocCount > 0 || caseItem.expiringSoonDocCount > 0)) ||
-          (statusFilter === "INCOMPLETE" && caseItem.percent < 100) ||
-          (statusFilter === "COMPLETE" && caseItem.percent === 100);
+          (checklistStatusFilter === "INCOMPLETE" && caseItem.percent < 100) ||
+          (checklistStatusFilter === "COMPLETE" && caseItem.percent === 100);
+        const matchesApplicationStatus =
+          applicationStatusFilter === "ALL" ||
+          caseItem.applicationStatus === applicationStatusFilter;
         const matchesSkill = skillFilter === "ALL" || caseItem.skillLevel === skillFilter;
         const matchesMarital = maritalFilter === "ALL" || caseItem.maritalStatus === maritalFilter;
 
-        return matchesSearch && matchesTag && matchesStatus && matchesSkill && matchesMarital;
+        return (
+          matchesSearch &&
+          matchesTag &&
+          matchesChecklistStatus &&
+          matchesApplicationStatus &&
+          matchesSkill &&
+          matchesMarital
+        );
       })
       .sort((a, b) => {
         if (sortOption === "OLDEST") {
@@ -114,7 +134,16 @@ export function CaseList({ initialCases }: Props) {
         }
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
-  }, [cases, maritalFilter, searchQuery, skillFilter, sortOption, statusFilter, tagFilter]);
+  }, [
+    applicationStatusFilter,
+    cases,
+    checklistStatusFilter,
+    maritalFilter,
+    searchQuery,
+    skillFilter,
+    sortOption,
+    tagFilter,
+  ]);
 
   const overview = useMemo(() => {
     const daHoanThanh = cases.filter((caseItem) => caseItem.percent === 100).length;
@@ -127,7 +156,8 @@ export function CaseList({ initialCases }: Props) {
 
   function resetFilters() {
     setSearchQuery("");
-    setStatusFilter("ALL");
+    setChecklistStatusFilter("ALL");
+    setApplicationStatusFilter("ALL");
     setSkillFilter("ALL");
     setMaritalFilter("ALL");
     setTagFilter("ALL");
@@ -169,8 +199,8 @@ export function CaseList({ initialCases }: Props) {
         id="danh-sach-ho-so"
         className="mb-5 scroll-mt-6 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"
       >
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <label className="md:col-span-2 lg:col-span-4">
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+          <label className="md:col-span-2 lg:col-span-5">
             <span className="mb-1.5 block text-sm font-medium text-neutral-700">
               Tìm hồ sơ
             </span>
@@ -184,13 +214,41 @@ export function CaseList({ initialCases }: Props) {
           </label>
 
           <label>
-            <span className="mb-1.5 block text-sm font-medium text-neutral-700">Trạng thái</span>
+            <span className="mb-1.5 block text-sm font-medium text-neutral-700">
+              Trạng thái hồ sơ
+            </span>
             <select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-              className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2.5 text-sm text-neutral-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              value={applicationStatusFilter}
+              onChange={(event) =>
+                setApplicationStatusFilter(event.target.value as ApplicationStatusFilter)
+              }
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm font-semibold outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 ${
+                applicationStatusFilter === "ALL"
+                  ? "border-neutral-300 bg-white text-neutral-800"
+                  : APPLICATION_STATUS_BADGE_CLASS[applicationStatusFilter]
+              }`}
             >
               <option value="ALL">Tất cả trạng thái</option>
+              {APPLICATION_STATUSES.map((status) => (
+                <option key={status.value} value={status.value}>
+                  {status.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span className="mb-1.5 block text-sm font-medium text-neutral-700">
+              Tình trạng checklist
+            </span>
+            <select
+              value={checklistStatusFilter}
+              onChange={(event) =>
+                setChecklistStatusFilter(event.target.value as ChecklistStatusFilter)
+              }
+              className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2.5 text-sm text-neutral-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+            >
+              <option value="ALL">Tất cả checklist</option>
               <option value="NEEDS_REVIEW">Có tài liệu cần review</option>
               <option value="EXPIRED_DOCS">Có giấy tờ quá hạn / sắp hết hạn</option>
               <option value="INCOMPLETE">Chưa hoàn thành</option>
@@ -291,14 +349,21 @@ export function CaseList({ initialCases }: Props) {
         <ul className="flex flex-col gap-3">
           {visibleCases.map((c) => {
             const isComplete = c.percent === 100;
+            const applicationStatus = getApplicationStatus(c.applicationStatus);
+            const cardClass =
+              c.applicationStatus === "APPROVED"
+                ? "border-green-300 bg-green-50 hover:border-green-400"
+                : c.applicationStatus === "REJECTED"
+                  ? "border-red-300 bg-red-50 hover:border-red-400"
+                  : "border-neutral-200 bg-white hover:border-indigo-300";
             return (
               <li key={c.id}>
                 <div
-                  className={`flex items-center gap-2 border-2 rounded-2xl p-5 hover:shadow-sm transition-all ${
-                    isComplete
-                      ? "border-green-300 bg-green-50 hover:border-green-400"
-                      : "border-neutral-200 bg-white hover:border-indigo-300"
-                  }`}
+                  className={`flex items-center gap-2 border-2 rounded-2xl p-5 hover:shadow-sm transition-all ${cardClass}`}
+                  style={{
+                    borderLeftColor: APPLICATION_STATUS_HEX_COLOR[c.applicationStatus],
+                    borderLeftWidth: 6,
+                  }}
                 >
                   <Link
                     href={`/cases/${c.id}`}
@@ -311,6 +376,18 @@ export function CaseList({ initialCases }: Props) {
                         {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
                         {" · "}
                         {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
+                      </p>
+                      <p className="mt-1.5 flex flex-wrap gap-1.5">
+                        <span
+                          className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${APPLICATION_STATUS_BADGE_CLASS[c.applicationStatus]}`}
+                        >
+                          {applicationStatus.label}
+                        </span>
+                        {c.statusReminderDue && (
+                          <span className="rounded-full border border-rose-200 bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800">
+                            Đã đến hạn nhắc admin
+                          </span>
+                        )}
                       </p>
                       {/* Tag badge — hiển ngay dưới thông tin cơ bản, trước cảnh báo hạn. */}
                       {c.tags.length > 0 && (
@@ -345,7 +422,7 @@ export function CaseList({ initialCases }: Props) {
                       )}
                       {isComplete && (
                         <p className="text-sm text-green-700 font-medium mt-1">
-                          ✓ Hồ sơ này đã hoàn thành
+                          ✓ Checklist giấy tờ đã hoàn thành
                         </p>
                       )}
                     </div>

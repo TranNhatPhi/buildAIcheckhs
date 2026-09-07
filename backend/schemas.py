@@ -21,6 +21,19 @@ ALLOWED_TAGS: dict[str, str] = {
     "VIP": "purple",
 }
 
+ApplicationStatus = Literal[
+    "PENDING",
+    "COLLECTING_DOCUMENTS",
+    "REVIEWING_DOCUMENTS",
+    "READY_TO_SUBMIT",
+    "SUBMITTED",
+    "UNDER_REVIEW",
+    "ADDITIONAL_DOCUMENTS_REQUIRED",
+    "AWAITING_DECISION",
+    "APPROVED",
+    "REJECTED",
+]
+
 
 def parse_tags(raw: str | None) -> list[str]:
     """Đọc cột tags (JSON text) thành list Python. NULL / rỗng / JSON hỏng → []."""
@@ -49,11 +62,19 @@ class UpdateCaseRequest(BaseModel):
     numberOfChildren: int | None = Field(default=None, ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] | None = None
     notes: str | None = None
+    applicationStatus: ApplicationStatus | None = None
 
-    @field_validator("clientName", "maritalStatus", "numberOfChildren", "skillLevel", mode="before")
+    @field_validator(
+        "clientName",
+        "maritalStatus",
+        "numberOfChildren",
+        "skillLevel",
+        "applicationStatus",
+        mode="before",
+    )
     @classmethod
     def reject_null_for_required_columns(cls, value):
-        # Các field được phép BỎ QUA trong PATCH nhưng không được gửi null, vì bốn cột này
+        # Các field được phép BỎ QUA trong PATCH nhưng không được gửi null, vì những cột này
         # đều NOT NULL trong MySQL; chặn ở validation để trả 422 thay vì IntegrityError 500.
         if value is None:
             raise ValueError("Trường này không được để null")
@@ -204,6 +225,14 @@ class CaseDTO(BaseModel):
     notes: str | None
     tags: list[str] = []
     createdAt: datetime
+    applicationStatus: ApplicationStatus
+    applicationStatusUpdatedAt: datetime | None
+    # Chưa gửi email trong phiên bản này; hai field dưới là lịch đã tính sẵn để scheduler
+    # sau này biết hồ sơ nào tới hạn và lần nhắc gần nhất là khi nào.
+    lastStatusReminderAt: datetime | None
+    nextStatusReminderAt: datetime | None
+    statusReminderDue: bool
+    statusReminderIntervalDays: int = 14
     # None ở các endpoint bình thường (hồ sơ đang hoạt động) — chỉ có giá trị khi trả về từ
     # endpoint danh sách hồ sơ đã xoá mềm (GET /cases/deleted), phục vụ giao diện admin sau.
     deletedAt: datetime | None = None
@@ -268,6 +297,9 @@ class AdminStatsDTO(BaseModel):
     deletedCases: int
     needsReviewDocuments: int
     errorDocuments: int
+    # Hồ sơ chưa có quyết định cuối và số hồ sơ đã chạm mốc nhắc 14 ngày.
+    pendingDecisionCases: int
+    statusRemindersDue: int
 
 
 class AdminDocumentDTO(DocumentDTO):

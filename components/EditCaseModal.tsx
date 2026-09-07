@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { API_URL } from "@/lib/format";
-import type { CaseListItemDTO, TagDefinition } from "@/lib/client-types";
+import {
+  APPLICATION_STATUSES,
+  APPLICATION_STATUS_BADGE_CLASS,
+} from "@/lib/application-status";
+import type { ApplicationStatus, CaseListItemDTO, TagDefinition } from "@/lib/client-types";
 
 /** Ánh xạ tên màu từ API sang Tailwind class. */
 const TAG_COLOR_MAP: Record<string, string> = {
@@ -31,6 +35,9 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
     caseItem.skillLevel as "LOW_SKILL" | "HIGH_SKILL",
   );
   const [notes, setNotes] = useState(caseItem.notes ?? "");
+  const [applicationStatus, setApplicationStatus] = useState<ApplicationStatus>(
+    caseItem.applicationStatus,
+  );
   const [selectedTags, setSelectedTags] = useState<string[]>(caseItem.tags ?? []);
   const [tagDefs, setTagDefs] = useState<TagDefinition[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -63,7 +70,14 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
       const res = await fetch(`${API_URL}/cases/${caseItem.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientName, maritalStatus, numberOfChildren, skillLevel, notes }),
+        body: JSON.stringify({
+          clientName,
+          maritalStatus,
+          numberOfChildren,
+          skillLevel,
+          notes,
+          applicationStatus,
+        }),
       });
 
       if (!res.ok) {
@@ -98,9 +112,27 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="flex flex-col gap-5 bg-white border-2 border-neutral-200 rounded-2xl p-7 shadow-lg w-full max-w-md"
+        className="flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col gap-5 overflow-y-auto rounded-2xl border-2 border-neutral-200 bg-white p-7 shadow-lg"
       >
         <h2 className="text-lg font-bold text-neutral-800">Sửa hồ sơ</h2>
+
+        <div>
+          <label className="block text-sm font-semibold mb-1.5">Trạng thái hồ sơ</label>
+          <select
+            value={applicationStatus}
+            onChange={(e) => setApplicationStatus(e.target.value as ApplicationStatus)}
+            className={`w-full rounded-xl border-2 px-4 py-2.5 text-sm outline-none transition-colors focus:border-indigo-400 ${APPLICATION_STATUS_BADGE_CLASS[applicationStatus]}`}
+          >
+            {APPLICATION_STATUSES.map((status) => (
+              <option key={status.value} value={status.value}>
+                {status.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-xs text-neutral-500">
+            Hồ sơ chưa đậu hoặc rớt sẽ được tính mốc nhắc admin sau mỗi 14 ngày.
+          </p>
+        </div>
 
         <div>
           <label className="block text-sm font-semibold mb-1.5">Tên khách hàng</label>

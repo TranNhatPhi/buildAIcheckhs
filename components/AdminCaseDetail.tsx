@@ -5,6 +5,11 @@ import { getAdminPassword } from "@/lib/adminAuth";
 import { API_URL } from "@/lib/format";
 import { useHydrated } from "@/lib/useHydrated";
 import { downloadFile } from "@/lib/download";
+import {
+  APPLICATION_STATUS_HEX_COLOR,
+  FINAL_APPLICATION_STATUSES,
+  getApplicationStatus,
+} from "@/lib/application-status";
 import { EL, STATUS_LABEL, STATUS_COLOR, Tag, AdminSidebar } from "@/components/adminUi";
 import type { CaseDetailDTO } from "@/lib/client-types";
 
@@ -33,6 +38,7 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
   }
 
   const { case: c, checklist } = data;
+  const applicationStatus = getApplicationStatus(c.applicationStatus);
   const missingRequired = checklist.items.filter((s) => !s.item.isOptional && !s.complete);
   const checklistNumberById = new Map(checklist.items.map((s, i) => [s.item.id, i + 1]));
 
@@ -63,7 +69,19 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
               {new Date(c.createdAt).toLocaleDateString("vi-VN")}
             </p>
           </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <InfoPanel
+            label="Trạng thái hồ sơ"
+            value={applicationStatus.label}
+            sub={
+              FINAL_APPLICATION_STATUSES.has(c.applicationStatus)
+                ? "đã có kết quả cuối"
+                : c.statusReminderDue
+                  ? "đã đến hạn nhắc admin"
+                  : `nhắc mỗi ${c.statusReminderIntervalDays} ngày`
+            }
+            color={APPLICATION_STATUS_HEX_COLOR[c.applicationStatus]}
+          />
           <InfoPanel
             label="Hoàn thành checklist"
             value={`${checklist.percent}%`}
