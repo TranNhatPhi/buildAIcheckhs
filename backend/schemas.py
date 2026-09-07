@@ -305,6 +305,15 @@ class AdminStatsDTO(BaseModel):
     # Hồ sơ chưa có quyết định cuối và số hồ sơ đã chạm mốc nhắc 14 ngày.
     pendingDecisionCases: int
     statusRemindersDue: int
+    # Theo dõi hạn giấy tờ (backend/doc_checks.py). Chỉ đếm trên hồ sơ CHƯA xoá mềm — giấy
+    # tờ của hồ sơ đã xoá thì hết hạn cũng không ai cần làm gì.
+    expiredDocuments: int = 0
+    expiringSoonDocuments: int = 0
+    # Phân bố hồ sơ theo trạng thái nghiệp vụ và theo nhãn, để dashboard vẽ biểu đồ mà không
+    # phải tự gom lại từ danh sách hồ sơ (danh sách sẽ phân trang khi dữ liệu lớn dần).
+    # Chỉ chứa khoá thực sự có hồ sơ; trạng thái/nhãn nào chưa dùng thì không xuất hiện.
+    casesByStatus: dict[str, int] = {}
+    casesByTag: dict[str, int] = {}
 
 
 class AdminDocumentDTO(DocumentDTO):

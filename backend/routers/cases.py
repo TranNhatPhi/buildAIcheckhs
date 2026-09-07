@@ -27,7 +27,7 @@ from completeness import (
     compute_financial_threshold_vnd,
 )
 from db import get_db
-from doc_checks import danh_gia_han, doi_chieu_cheo
+from doc_checks import danh_gia_han, dem_han_tai_lieu, doi_chieu_cheo
 from mappers import (
     checklist_summary_to_dto,
     doc_checks_to_dto,
@@ -54,16 +54,6 @@ logger = logging.getLogger("cases")
 router = APIRouter(prefix="/cases", tags=["cases"])
 
 
-def _dem_han(documents) -> tuple[int, int]:
-    """(số đã quá hạn, số sắp hết hạn) — dùng cho danh sách hồ sơ. Truyền items_by_id rỗng vì
-    danh sách chỉ cần con số, không cần tên mục checklist của từng file."""
-    han = danh_gia_han(list(documents), {})
-    return (
-        sum(1 for h in han if h.state == "EXPIRED"),
-        sum(1 for h in han if h.state == "EXPIRING_SOON"),
-    )
-
-
 @router.get("", response_model=list[CaseListItemDTO])
 def list_cases(db: Session = Depends(get_db)):
     cases = db.scalars(
@@ -77,7 +67,7 @@ def list_cases(db: Session = Depends(get_db)):
             checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel
         )
         threshold = compute_financial_threshold_vnd(c.maritalStatus, c.numberOfChildren)
-        qua_han, sap_han = _dem_han(c.documents)
+        qua_han, sap_han = dem_han_tai_lieu(c.documents)
         result.append(
             CaseListItemDTO(
                 id=c.id,

@@ -213,3 +213,17 @@ def doi_chieu_cheo(documents: list[Document]) -> list[DiemBatNhat]:
 
     ket_qua.sort(key=lambda d: (d.owner_label, d.field_label))
     return ket_qua
+
+
+def dem_han_tai_lieu(documents) -> tuple[int, int]:
+    """(số đã quá hạn, số sắp hết hạn) — dùng cho các danh sách hồ sơ.
+
+    Truyền items_by_id rỗng vì danh sách chỉ cần con số, không cần tên mục checklist của
+    từng file. Đặt ở đây thay vì trong router để /cases và /admin/cases đếm y hệt nhau —
+    trước đó admin không đếm gì cả nên luôn hiện 0, trông như mọi giấy tờ đều còn hạn.
+    """
+    han = danh_gia_han(list(documents), {})
+    return (
+        sum(1 for h in han if h.state == "EXPIRED"),
+        sum(1 for h in han if h.state == "EXPIRING_SOON"),
+    )

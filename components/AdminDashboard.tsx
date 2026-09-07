@@ -8,6 +8,7 @@ import { getAdminPassword, setAdminPassword, clearAdminPassword } from "@/lib/ad
 import { API_URL } from "@/lib/format";
 import { downloadFile } from "@/lib/download";
 import {
+  APPLICATION_STATUSES,
   APPLICATION_STATUS_HEX_COLOR,
   getApplicationStatus,
 } from "@/lib/application-status";
@@ -20,6 +21,19 @@ import type {
 
 type LoadState = "checking" | "needs-login" | "loading" | "ready" | "error";
 type Tab = "overview" | "documents";
+
+// Màu hiển thị của nhãn hồ sơ. Tên màu do backend quy định (ALLOWED_TAGS trong
+// backend/schemas.py); ở đây quy ra mã hex để dùng chung với component Tag/biểu đồ. Nhãn mới
+// mà quên thêm vào đây thì rơi về màu xám của EL.info, không vỡ giao diện.
+const TAG_HEX: Record<string, string> = {
+  "GẤP": "#F56C6C",
+  "ĐANG CHỜ KHÁCH": "#E6A23C",
+  "ĐÃ NỘP IRCC": "#67C23A",
+  "CẦN BỔ SUNG": "#EA580C",
+  "ĐÃ HOÀN THÀNH": "#409EFF",
+  "TẠM HOÃN": "#909399",
+  VIP: "#7C3AED",
+};
 
 export function AdminDashboard() {
   const [state, setState] = useState<LoadState>("checking");
@@ -226,8 +240,10 @@ export function AdminDashboard() {
             />
           ) : (
             <>
+              {/* Ép cả 9 thẻ vào một hàng thì nhãn bị cắt cụt ("Đến hạn nhắc 14 ngày" thành
+                  "Đến hạn ..."), đọc không ra nghĩa. Cho xuống 2 hàng để nhãn hiện đủ chữ. */}
               {stats && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-4 mb-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
                   <StatPanel icon="🗂️" label="Tổng hồ sơ" value={stats.totalCases} color={EL.primary} />
                   <StatPanel icon="✅" label="Đang hoạt động" value={stats.activeCases} color={EL.success} />
                   <StatPanel icon="🗑️" label="Đã xoá mềm" value={stats.deletedCases} color={EL.info} />
@@ -245,6 +261,18 @@ export function AdminDashboard() {
                     value={stats.statusRemindersDue}
                     color={stats.statusRemindersDue > 0 ? EL.danger : EL.info}
                   />
+                  <StatPanel
+                    icon="📛"
+                    label="Giấy tờ đã hết hạn"
+                    value={stats.expiredDocuments}
+                    color={stats.expiredDocuments > 0 ? EL.danger : EL.info}
+                  />
+                  <StatPanel
+                    icon="🕒"
+                    label="Giấy tờ sắp hết hạn"
+                    value={stats.expiringSoonDocuments}
+                    color={stats.expiringSoonDocuments > 0 ? EL.warning : EL.info}
+                  />
                 </div>
               )}
 
@@ -252,6 +280,8 @@ export function AdminDashboard() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
                   <CaseCompletionChart cases={cases} />
                   <DocumentStatusChart documents={documents} />
+                  {stats && <CaseStatusChart counts={stats.casesByStatus} />}
+                  {stats && <CaseTagChart counts={stats.casesByTag} />}
                 </div>
               )}
 
@@ -294,6 +324,15 @@ export function AdminDashboard() {
                                   {" · "}
                                   {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
                                 </p>
+                                {c.tags.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1.5">
+                                    {c.tags.map((tag) => (
+                                      <Tag key={tag} color={TAG_HEX[tag] ?? EL.info}>
+                                        {tag}
+                                      </Tag>
+                                    ))}
+                                  </div>
+                                )}
                               </td>
                               <td className="px-4 py-3">
                                 <div className="flex flex-col items-start gap-1.5">
@@ -304,6 +343,14 @@ export function AdminDashboard() {
                                     <Tag color={EL.danger}>Đến hạn nhắc</Tag>
                                   )}
                                   {isDeleted && <Tag color={EL.danger}>Đã xoá</Tag>}
+                                  {c.expiredDocCount > 0 && (
+                                    <Tag color={EL.danger}>{c.expiredDocCount} giấy tờ hết hạn</Tag>
+                                  )}
+                                  {c.expiringSoonDocCount > 0 && (
+                                    <Tag color={EL.warning}>
+                                      {c.expiringSoonDocCount} sắp hết hạn
+                                    </Tag>
+                                  )}
                                 </div>
                               </td>
                               <td className="px-4 py-3">
@@ -704,6 +751,86 @@ function DocumentStatusChart({ documents }: { documents: AdminDocumentDTO[] }) {
   );
 }
 
+// Phân bố hồ sơ theo trạng thái nghiệp vụ. Số liệu lấy từ /admin/stats (backend GROUP BY)
+// chứ không gom lại từ mảng `cases` — để khi danh sách hồ sơ được phân trang sau này, biểu đồ
+// vẫn phản ánh TOÀN BỘ hồ sơ chứ không phải mỗi trang đang xem.
+function CaseStatusChart({ counts }: { counts: Record<string, number> }) {
+  const rows = APPLICATION_STATUSES.map((s) => ({
+    value: s.value,
+    label: s.label,
+    count: counts?.[s.value] ?? 0,
+  })).filter((r) => r.count > 0);
+  const max = Math.max(1, ...rows.map((r) => r.count));
+
+  return (
+    <div className="bg-white rounded shadow-sm p-4">
+      <p className="text-sm font-semibold text-neutral-700 mb-4">Hồ sơ theo trạng thái</p>
+      {rows.length === 0 ? (
+        <p className="text-sm text-neutral-400">Chưa có hồ sơ đang hoạt động.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {rows.map((r) => (
+            <div key={r.value} className="flex items-center gap-3" title={`${r.label}: ${r.count}`}>
+              <span className="w-28 shrink-0 text-xs text-neutral-600 truncate">{r.label}</span>
+              <div className="flex-1 h-5 rounded-full bg-neutral-100 overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{
+                    width: `${(r.count / max) * 100}%`,
+                    backgroundColor: APPLICATION_STATUS_HEX_COLOR[r.value],
+                  }}
+                />
+              </div>
+              <span className="w-10 shrink-0 text-xs font-semibold text-neutral-600 text-right">
+                {r.count}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Nhãn hồ sơ (GẤP, VIP...). Một hồ sơ có thể mang nhiều nhãn nên tổng các cột ở đây LỚN HƠN
+// số hồ sơ — cố ý, vì câu hỏi cần trả lời là "đang có bao nhiêu việc gấp", không phải chia
+// hồ sơ thành các nhóm rời nhau.
+function CaseTagChart({ counts }: { counts: Record<string, number> }) {
+  // `?? {}`: lúc rolling deploy, backend bản cũ chưa trả field này thì Object.entries(undefined)
+  // sẽ ném lỗi và làm trắng cả trang admin.
+  const rows = Object.entries(counts ?? {})
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+  const max = Math.max(1, ...rows.map((r) => r.count));
+
+  return (
+    <div className="bg-white rounded shadow-sm p-4">
+      <p className="text-sm font-semibold text-neutral-700 mb-1">Nhãn hồ sơ</p>
+      <p className="text-xs text-neutral-400 mb-4">Một hồ sơ có thể mang nhiều nhãn.</p>
+      {rows.length === 0 ? (
+        <p className="text-sm text-neutral-400">Chưa hồ sơ nào được gắn nhãn.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {rows.map((r) => (
+            <div key={r.name} className="flex items-center gap-3" title={`${r.name}: ${r.count}`}>
+              <span className="w-28 shrink-0 text-xs text-neutral-600 truncate">{r.name}</span>
+              <div className="flex-1 h-5 rounded-full bg-neutral-100 overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${(r.count / max) * 100}%`, backgroundColor: TAG_HEX[r.name] ?? EL.info }}
+                />
+              </div>
+              <span className="w-10 shrink-0 text-xs font-semibold text-neutral-600 text-right">
+                {r.count}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatPanel({
   icon,
   label,
@@ -725,7 +852,9 @@ function StatPanel({
       </span>
       <div className="min-w-0">
         <p className="text-2xl font-bold text-neutral-800 leading-tight">{value}</p>
-        <p className="text-xs text-neutral-400 mt-0.5 truncate">{label}</p>
+        {/* KHÔNG dùng truncate: nhãn dài như "Đến hạn nhắc 14 ngày" bị cắt thành
+            "Đến hạn ..." thì mất hẳn ý nghĩa. Cho xuống dòng, thẻ cao thêm chút. */}
+        <p className="text-xs text-neutral-400 mt-0.5 leading-snug">{label}</p>
       </div>
     </div>
   );

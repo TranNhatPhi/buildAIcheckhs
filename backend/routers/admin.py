@@ -7,6 +7,7 @@ from admin_auth import require_admin
 from case_status import FINAL_CASE_STATUSES, case_status_fields, next_status_reminder_at
 from completeness import compute_checklist_summary, compute_financial_threshold_vnd
 from db import get_db
+from doc_checks import dem_han_tai_lieu
 from mappers import financial_threshold_to_dto
 from models import Case, ChecklistItem, Document, now_utc
 from schemas import AdminDocumentDTO, AdminStatsDTO, CaseListItemDTO, DocumentDTO, parse_tags
@@ -26,6 +27,7 @@ def list_all_cases(db: Session = Depends(get_db)):
             checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel
         )
         threshold = compute_financial_threshold_vnd(c.maritalStatus, c.numberOfChildren)
+        qua_han, sap_han = dem_han_tai_lieu(c.documents)
         result.append(
             CaseListItemDTO(
                 id=c.id,
@@ -41,6 +43,8 @@ def list_all_cases(db: Session = Depends(get_db)):
                 percent=summary.percent,
                 needsReviewCount=summary.needs_review_count,
                 financialThreshold=financial_threshold_to_dto(threshold),
+                expiredDocCount=qua_han,
+                expiringSoonDocCount=sap_han,
             )
         )
     return result
@@ -67,6 +71,31 @@ def get_stats(db: Session = Depends(get_db)):
         if (next_due := next_status_reminder_at(case)) is not None and next_due <= utc_now
     )
 
+    # Ba nhóm số liệu dưới đây đều tính trên hồ sơ CHƯA xoá mềm: đây là số liệu để biết
+    # "còn việc gì phải làm", mà hồ sơ đã xoá thì không còn việc gì.
+    # Phân bố trạng thái gom bằng GROUP BY chứ không đếm trong Python: chỉ 1 query trả về
+    # đúng 10 dòng, thay vì kéo cả bảng Case về rồi lặp.
+    cases_by_status = {
+        status: count
+        for status, count in db.execute(
+            select(Case.applicationStatus, func.count())
+            .where(Case.deletedAt.is_(None))
+            .group_by(Case.applicationStatus)
+        ).all()
+    }
+
+    # Nhãn và hạn giấy tờ thì phải duyệt object: nhãn lưu dạng chuỗi JSON trong 1 cột (không
+    # GROUP BY được), còn hạn thì phải chạy danh_gia_han trên từng file.
+    live_cases = db.scalars(select(Case).where(Case.deletedAt.is_(None))).all()
+    cases_by_tag: dict[str, int] = {}
+    expired_docs = expiring_soon_docs = 0
+    for case in live_cases:
+        for tag in parse_tags(case.tags):
+            cases_by_tag[tag] = cases_by_tag.get(tag, 0) + 1
+        qua_han, sap_han = dem_han_tai_lieu(case.documents)
+        expired_docs += qua_han
+        expiring_soon_docs += sap_han
+
     return AdminStatsDTO(
         totalCases=active_cases + deleted_cases,
         activeCases=active_cases,
@@ -75,6 +104,10 @@ def get_stats(db: Session = Depends(get_db)):
         errorDocuments=errors,
         pendingDecisionCases=len(active_non_final_cases),
         statusRemindersDue=reminders_due,
+        expiredDocuments=expired_docs,
+        expiringSoonDocuments=expiring_soon_docs,
+        casesByStatus=cases_by_status,
+        casesByTag=cases_by_tag,
     )
 
 

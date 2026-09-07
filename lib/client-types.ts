@@ -151,6 +151,12 @@ export interface AdminStatsDTO {
   errorDocuments: number;
   pendingDecisionCases: number;
   statusRemindersDue: number;
+  expiredDocuments: number;
+  expiringSoonDocuments: number;
+  /** Khoá là ApplicationStatus, chỉ có mặt trạng thái đang thật sự có hồ sơ. */
+  casesByStatus: Record<string, number>;
+  /** Khoá là tên nhãn (GẤP, VIP...), chỉ có mặt nhãn đang được dùng. */
+  casesByTag: Record<string, number>;
 }
 
 export interface AdminDocumentDTO extends DocumentDTO {
