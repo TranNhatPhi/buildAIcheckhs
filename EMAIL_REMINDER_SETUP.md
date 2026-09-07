@@ -114,19 +114,25 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod \
 ```
 
 Qua được bước tài khoản thì thông báo lỗi sẽ đổi (sang service hoặc template) — dấu hiệu đã đi
-thêm một bước. Chạy được rồi mới ghi vào `.env.prod`, và phải **dựng lại container** thì giá trị
-mới có hiệu lực; sửa file không thôi thì container đang chạy vẫn giữ giá trị cũ:
+thêm một bước. Chạy được rồi mới ghi vào `.env.prod`.
 
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d status-reminder
-```
-
-Xem container đang thật sự nhận giá trị nào (không phải giá trị bạn nghĩ nó nhận):
+**Sửa `.env.prod` xong thì BẮT BUỘC dựng lại container.** `docker-compose.prod.yml` truyền biến
+qua `environment:` với `${EMAILJS_PUBLIC_KEY:-}`, nên giá trị bị đóng băng vào container lúc nó
+được tạo. `docker compose exec` chạy tiến trình mới *bên trong container đang có sẵn* và thừa
+hưởng đúng bộ biến đã đóng băng đó — sửa file bao nhiêu lần `exec` cũng không thấy. Đã mất một
+vòng lặp vì chuyện này: file ghi `...gJk7-` mà log vẫn in `...glk7-`.
 
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env.prod \
-  exec status-reminder env | grep EMAILJS
+  up -d --force-recreate status-reminder
+
+# Phải in ra a4rsQiK-a4DVgJk7- rồi mới test tiếp
+docker compose -f docker-compose.prod.yml --env-file .env.prod \
+  exec status-reminder printenv EMAILJS_PUBLIC_KEY
 ```
+
+`--force-recreate` an toàn với riêng `status-reminder` vì nó không gắn volume nào. **Đừng** dùng
+với `mysql` hay `minio` — hai service đó có ổ đĩa riêng.
 
 ## Quy tắc gửi
 
