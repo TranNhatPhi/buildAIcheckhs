@@ -1,65 +1,77 @@
-# Thiết lập Gmail nhắc trạng thái hồ sơ
+# Thiết lập EmailJS nhắc trạng thái hồ sơ
 
-Email nhận thông báo mặc định là `documentlncglobal@gmail.com` (không có dấu `\` trước
-ký tự `@`). Hệ thống kiểm tra mỗi ngày nhưng mỗi hồ sơ chỉ được gửi lại sau đúng 14 ngày.
+Email nhận thông báo được cố định trong template EmailJS là
+`documentlncglobal@gmail.com`. Hệ thống kiểm tra mỗi ngày nhưng mỗi hồ sơ chỉ được gửi lại
+sau đúng 14 ngày.
 
-## 1. Bật xác minh 2 bước cho Gmail
+## 1. Cấu hình EmailJS
 
-1. Đăng nhập tài khoản `documentlncglobal@gmail.com`.
-2. Mở [Bảo mật Tài khoản Google](https://myaccount.google.com/security).
-3. Bật **Xác minh 2 bước** nếu tài khoản chưa bật.
+Các giá trị đã tạo trên EmailJS:
 
-## 2. Tạo mật khẩu ứng dụng
+```dotenv
+EMAILJS_SERVICE_ID=service_jj7v0ik
+EMAILJS_TEMPLATE_ID=template_2hsh71j
+```
 
-1. Mở [Mật khẩu ứng dụng](https://myaccount.google.com/apppasswords).
-2. Nhập tên ứng dụng: `Checklist hồ sơ Canada`.
-3. Bấm **Tạo** và sao chép mật khẩu 16 ký tự Google cung cấp.
+Template phải gửi tới `documentlncglobal@gmail.com` và dùng các biến:
 
-Không dùng mật khẩu đăng nhập Gmail thông thường. Mật khẩu ứng dụng là bí mật và không được
-gửi lên Git hoặc dán vào file nào ngoài `.env.prod` trên máy chủ.
+- `{{case_count}}`: số hồ sơ đến hạn nhắc.
+- `{{sent_at}}`: thời điểm gửi.
+- `{{#cases}} ... {{/cases}}`: danh sách hồ sơ.
+- Trong mỗi hồ sơ: `client_name`, `status_label`, `status_color`, `updated_at` và
+  `case_url`.
 
-## 3. Khai báo trên máy chủ production
+Nên bật **Do not save private data** để EmailJS không lưu tên và trạng thái hồ sơ trong
+lịch sử gửi.
 
-SSH vào VM, mở file cấu hình:
+## 2. Khai báo trên máy chủ production
+
+Mở **Account → API Keys** trên EmailJS để sao chép Public Key và Private Key. Không gửi
+Private Key qua tin nhắn, không đưa vào Git và không bấm **Refresh Keys** nếu chưa cần thu
+hồi khóa cũ.
+
+SSH vào VM rồi mở file cấu hình:
 
 ```bash
 cd ~/buildAIcheckhs
 nano .env.prod
 ```
 
-Thêm ba dòng sau, thay `16_KY_TU_GOOGLE_CAP` bằng mật khẩu ứng dụng vừa tạo:
+Thêm bốn dòng sau và thay hai giá trị khóa bằng giá trị lấy trực tiếp từ EmailJS:
 
 ```dotenv
-GMAIL_SENDER_EMAIL=documentlncglobal@gmail.com
-GMAIL_APP_PASSWORD=16_KY_TU_GOOGLE_CAP
-STATUS_REMINDER_TO_EMAIL=documentlncglobal@gmail.com
+EMAILJS_SERVICE_ID=service_jj7v0ik
+EMAILJS_TEMPLATE_ID=template_2hsh71j
+EMAILJS_PUBLIC_KEY=PUBLIC_KEY_LAY_TU_EMAILJS
+EMAILJS_PRIVATE_KEY=PRIVATE_KEY_LAY_TU_EMAILJS
 ```
 
-Không bọc giá trị trong dấu nháy. Nếu Google hiển thị mật khẩu thành bốn nhóm có khoảng
-trắng thì có thể dán nguyên; chương trình sẽ tự bỏ khoảng trắng trước khi đăng nhập SMTP.
+Không bọc giá trị trong dấu nháy vì `.env.prod` còn được dùng để tạo Secret khi chuyển
+sang k3s.
 
-## 4. Deploy
+## 3. Deploy
 
 ```bash
 cd ~/buildAIcheckhs
 ./deploy.sh
 ```
 
-Deploy sẽ tạo đúng một service `status-reminder`; không đặt việc gửi trong hai replica
-backend vì làm vậy có thể gửi trùng email.
+Deploy tạo đúng một service `status-reminder`; không đặt việc gửi trong hai replica backend
+vì làm vậy có thể gửi trùng email.
 
-## 5. Gửi email kiểm tra
+## 4. Gửi email kiểm tra
 
-Lệnh này gửi ngay một email kiểm tra và không thay đổi lịch nhắc của bất kỳ hồ sơ nào:
+Lệnh này gửi ngay một email kiểm tra qua EmailJS và không thay đổi lịch nhắc của hồ sơ:
 
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env.prod \
   exec status-reminder python status_reminder.py --test-email
 ```
 
-Sau đó kiểm tra hộp thư đến và mục Spam của `documentlncglobal@gmail.com`.
+Sau đó kiểm tra hộp thư đến và Spam của `documentlncglobal@gmail.com`, đồng thời kiểm tra
+**Email History** trên EmailJS.
 
-## 6. Kiểm tra nhật ký
+## 5. Kiểm tra nhật ký
 
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env.prod \
@@ -79,6 +91,7 @@ Email chỉ liệt kê hồ sơ đang ở một trong các trạng thái:
 7. Cần bổ sung giấy tờ
 8. Chờ kết quả
 
-Nội dung mỗi dòng gồm tên hồ sơ, trạng thái hiện tại, ngày cập nhật trạng thái và liên kết
-mở hồ sơ. Sau khi gửi thành công, mốc nhắc tiếp theo được đặt sau 14 ngày. Đổi trạng thái
-sẽ bắt đầu lại chu kỳ 14 ngày. Hồ sơ **Đã đậu** hoặc **Đã rớt** sẽ không được gửi nữa.
+Nội dung mỗi dòng gồm tên hồ sơ, trạng thái có màu tương ứng, ngày cập nhật trạng thái và
+liên kết mở hồ sơ. Sau khi EmailJS gửi thành công, mốc nhắc tiếp theo được đặt sau 14 ngày.
+Đổi trạng thái sẽ bắt đầu lại chu kỳ 14 ngày. Hồ sơ **Đã đậu** hoặc **Đã rớt** sẽ không
+được gửi nữa.

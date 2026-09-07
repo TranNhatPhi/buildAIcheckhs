@@ -161,7 +161,7 @@ services:
         condition: service_completed_successfully
 
   # Chỉ MỘT tiến trình gửi email để không gửi trùng dù backend có nhiều replica. Tiến trình
-  # kiểm tra mỗi ngày, nhưng từng hồ sơ chỉ đến hạn lại sau đúng 14 ngày; sau khi Gmail gửi
+  # kiểm tra mỗi ngày, nhưng từng hồ sơ chỉ đến hạn lại sau đúng 14 ngày; sau khi EmailJS gửi
   # thành công mới ghi lastStatusReminderAt vào DB (xem backend/status_reminder.py).
   status-reminder:
     build: ./backend
@@ -169,9 +169,10 @@ services:
     command: ["python", "status_reminder.py"]
     environment:
       DATABASE_URL: mysql://canada_checklist_app:${MYSQL_PASSWORD}@mysql:3306/canada_checklist
-      GMAIL_SENDER_EMAIL: ${GMAIL_SENDER_EMAIL:-documentlncglobal@gmail.com}
-      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
-      STATUS_REMINDER_TO_EMAIL: ${STATUS_REMINDER_TO_EMAIL:-documentlncglobal@gmail.com}
+      EMAILJS_SERVICE_ID: ${EMAILJS_SERVICE_ID:-}
+      EMAILJS_TEMPLATE_ID: ${EMAILJS_TEMPLATE_ID:-}
+      EMAILJS_PUBLIC_KEY: ${EMAILJS_PUBLIC_KEY:-}
+      EMAILJS_PRIVATE_KEY: ${EMAILJS_PRIVATE_KEY:-}
       APP_BASE_URL: https://${APP_DOMAIN}
       STATUS_REMINDER_POLL_SECONDS: "86400"
     depends_on:

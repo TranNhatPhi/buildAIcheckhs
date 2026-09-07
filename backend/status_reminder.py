@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import html
+import json
 import logging
 import os
-import smtplib
 import time
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 from sqlalchemy import select
@@ -32,7 +32,9 @@ logger = logging.getLogger("status-reminder")
 
 DEFAULT_ADMIN_EMAIL = "documentlncglobal@gmail.com"
 DEFAULT_POLL_SECONDS = 24 * 60 * 60
+EMAILJS_SEND_URL = "https://api.emailjs.com/api/v1.0/email/send"
 STATUS_LABELS = {item["value"]: item["label"] for item in CASE_STATUS_DEFINITIONS}
+STATUS_COLORS = {item["value"]: item["color"] for item in CASE_STATUS_DEFINITIONS}
 REMINDER_CASE_STATUSES = tuple(
     item["value"]
     for item in CASE_STATUS_DEFINITIONS
@@ -53,96 +55,72 @@ def _case_url(case_id: str) -> str | None:
     return f"{base_url}/cases/{case_id}" if base_url else None
 
 
-def _build_message(cases: list[Case], sent_at: datetime) -> EmailMessage:
-    recipient = os.getenv("STATUS_REMINDER_TO_EMAIL", DEFAULT_ADMIN_EMAIL).strip()
-    sender = os.getenv("GMAIL_SENDER_EMAIL", DEFAULT_ADMIN_EMAIL).strip()
-    subject = f"[LNC] Nhắc kiểm tra {len(cases)} hồ sơ chưa có kết quả"
+def _build_template_params(cases: list[Case], sent_at: datetime) -> dict[str, object]:
+    return {
+        "case_count": len(cases),
+        "sent_at": _format_datetime(sent_at),
+        "cases": [
+            {
+                "client_name": case.clientName,
+                "status_label": STATUS_LABELS[case.applicationStatus],
+                "status_color": STATUS_COLORS[case.applicationStatus],
+                "updated_at": _format_datetime(
+                    case.applicationStatusUpdatedAt or case.createdAt
+                ),
+                "case_url": _case_url(case.id) or "#",
+            }
+            for case in cases
+        ],
+    }
 
-    text_lines = [
-        f"Có {len(cases)} hồ sơ đã đến chu kỳ nhắc {STATUS_REMINDER_INTERVAL_DAYS} ngày:",
-        "",
-    ]
-    html_rows = []
-    for index, case in enumerate(cases, start=1):
-        status_label = STATUS_LABELS[case.applicationStatus]
-        updated_at = case.applicationStatusUpdatedAt or case.createdAt
-        url = _case_url(case.id)
-        case_lines = [
-            f"{index}. Hồ sơ: {case.clientName}",
-            f"   Trạng thái: {status_label}",
-            f"   Cập nhật trạng thái: {_format_datetime(updated_at)}",
-        ]
-        if url:
-            case_lines.append(f"   Mở hồ sơ: {url}")
-        case_lines.append("")
-        text_lines.extend(case_lines)
-        link_html = (
-            f'<a href="{html.escape(url)}">Mở hồ sơ</a>' if url else "Không có đường dẫn"
-        )
-        html_rows.append(
-            "<tr>"
-            f"<td>{index}</td>"
-            f"<td>{html.escape(case.clientName)}</td>"
-            f"<td>{html.escape(status_label)}</td>"
-            f"<td>{html.escape(_format_datetime(updated_at))}</td>"
-            f"<td>{link_html}</td>"
-            "</tr>"
-        )
 
-    text_lines.extend(
-        [
-            "Vui lòng kiểm tra và cập nhật trạng thái. Hồ sơ Đã đậu/Đã rớt sẽ tự ngừng nhắc.",
-            f"Email tự động tạo lúc {_format_datetime(sent_at)}.",
-        ]
+def _send_template(template_params: dict[str, object]) -> None:
+    config = {
+        "service_id": os.getenv("EMAILJS_SERVICE_ID", "").strip(),
+        "template_id": os.getenv("EMAILJS_TEMPLATE_ID", "").strip(),
+        "user_id": os.getenv("EMAILJS_PUBLIC_KEY", "").strip(),
+        "accessToken": os.getenv("EMAILJS_PRIVATE_KEY", "").strip(),
+    }
+    missing = [name for name, value in config.items() if not value]
+    if missing:
+        raise RuntimeError("Thiếu cấu hình EmailJS: " + ", ".join(missing))
+
+    payload = {**config, "template_params": template_params}
+    request = Request(
+        EMAILJS_SEND_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
-    html_body = f"""
-    <html><body>
-      <p>Có <strong>{len(cases)}</strong> hồ sơ đã đến chu kỳ nhắc
-      <strong>{STATUS_REMINDER_INTERVAL_DAYS} ngày</strong>:</p>
-      <table cellpadding="8" cellspacing="0" border="1" style="border-collapse:collapse">
-        <thead><tr><th>STT</th><th>Hồ sơ</th><th>Trạng thái</th><th>Cập nhật</th><th>Thao tác</th></tr></thead>
-        <tbody>{''.join(html_rows)}</tbody>
-      </table>
-      <p>Vui lòng kiểm tra và cập nhật trạng thái. Hồ sơ Đã đậu/Đã rớt sẽ tự ngừng nhắc.</p>
-    </body></html>
-    """
-
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = sender
-    message["To"] = recipient
-    message.set_content("\n".join(text_lines))
-    message.add_alternative(html_body, subtype="html")
-    return message
-
-
-def _send_message(message: EmailMessage) -> None:
-    sender = os.getenv("GMAIL_SENDER_EMAIL", DEFAULT_ADMIN_EMAIL).strip()
-    # Google hiển thị App Password thành từng nhóm có khoảng trắng; bỏ khoảng trắng giúp
-    # người cấu hình có thể dán nguyên giá trị mà SMTP vẫn đăng nhập đúng.
-    app_password = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
-    if not app_password:
-        raise RuntimeError("Thiếu GMAIL_APP_PASSWORD; chưa thể gửi email nhắc.")
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
-        smtp.login(sender, app_password)
-        smtp.send_message(message)
+    try:
+        with urlopen(request, timeout=30) as response:
+            if response.status != 200:
+                raise RuntimeError(f"EmailJS trả về HTTP {response.status}.")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"EmailJS trả lỗi HTTP {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Không kết nối được EmailJS: {exc.reason}") from exc
 
 
 def send_test_email() -> None:
-    recipient = os.getenv("STATUS_REMINDER_TO_EMAIL", DEFAULT_ADMIN_EMAIL).strip()
-    sender = os.getenv("GMAIL_SENDER_EMAIL", DEFAULT_ADMIN_EMAIL).strip()
-    message = EmailMessage()
-    message["Subject"] = "[LNC] Kiểm tra cấu hình email nhắc hồ sơ"
-    message["From"] = sender
-    message["To"] = recipient
-    message.set_content(
-        "Cấu hình email nhắc hồ sơ đã hoạt động. Hệ thống sẽ kiểm tra hằng ngày và chỉ "
-        f"nhắc lại từng hồ sơ sau mỗi {STATUS_REMINDER_INTERVAL_DAYS} ngày cho đến khi "
-        "trạng thái là Đã đậu hoặc Đã rớt."
+    now = now_utc()
+    _send_template(
+        {
+            "case_count": 1,
+            "sent_at": _format_datetime(now),
+            "cases": [
+                {
+                    "client_name": "Hồ sơ kiểm tra EmailJS",
+                    "status_label": "Đang kiểm tra hồ sơ",
+                    "status_color": "#4F46E5",
+                    "updated_at": _format_datetime(now),
+                    "case_url": os.getenv("APP_BASE_URL", "").strip() or "#",
+                }
+            ],
+        }
     )
-    _send_message(message)
-    logger.info("Đã gửi email kiểm tra tới %s.", recipient)
+    logger.info("Đã gửi email kiểm tra tới %s.", DEFAULT_ADMIN_EMAIL)
 
 
 def run_once(*, dry_run: bool = False) -> int:
@@ -168,21 +146,25 @@ def run_once(*, dry_run: bool = False) -> int:
             logger.info("Không có hồ sơ nào đến hạn nhắc.")
             return 0
 
-        message = _build_message(due_cases, now)
+        template_params = _build_template_params(due_cases, now)
         if dry_run:
             logger.info(
                 "DRY RUN — sẽ gửi %s hồ sơ tới %s.\n%s",
                 len(due_cases),
-                message["To"],
-                message.get_body(preferencelist=("plain",)).get_content(),
+                DEFAULT_ADMIN_EMAIL,
+                json.dumps(template_params, ensure_ascii=False, indent=2),
             )
             return len(due_cases)
 
-        _send_message(message)
+        _send_template(template_params)
         for case in due_cases:
             case.lastStatusReminderAt = now
         db.commit()
-        logger.info("Đã gửi email nhắc %s hồ sơ tới %s.", len(due_cases), message["To"])
+        logger.info(
+            "Đã gửi email nhắc %s hồ sơ tới %s qua EmailJS.",
+            len(due_cases),
+            DEFAULT_ADMIN_EMAIL,
+        )
         return len(due_cases)
     except Exception:
         db.rollback()
