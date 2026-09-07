@@ -1,5 +1,6 @@
 {
   "files.associations": {
     "Caddyfile": "caddyfile"
-  }
+  },
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/bin/python"
 }
