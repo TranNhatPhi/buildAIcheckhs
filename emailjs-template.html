@@ -3,108 +3,113 @@
      file này, không thì nó thành thông tin sai. Danh sách biến: EMAIL_REMINDER_SETUP.md -->
 <!doctype html>
 <html lang="vi">
-<body style="margin:0;padding:0;background-color:#eef1f6;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#111827;-webkit-font-smoothing:antialiased">
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#eef1f6">
-<tr>
-<td align="center" style="padding:24px 12px">
+<body
+  style="margin:0;padding:0;background-color:#eef1f6;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#111827;-webkit-font-smoothing:antialiased">
 
-  <!-- Khung 600px: chuẩn an toàn của email, vừa hết bề ngang màn hình điện thoại -->
-  <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(16,24,40,0.08)">
-
-    <!-- ── Dải thương hiệu ─────────────────────────────────────────────────────── -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#eef1f6">
     <tr>
-      <td style="background-color:#1d4ed8;padding:18px 28px">
-        <span style="color:#ffffff;font-size:15px;font-weight:bold;letter-spacing:0.3px">
-          Checklist Hồ Sơ Canada
-        </span>
-      </td>
-    </tr>
+      <td align="center" style="padding:24px 12px">
 
-    <!-- ── Tiêu đề + câu mở đầu ────────────────────────────────────────────────── -->
-    <tr>
-      <td style="padding:28px 28px 4px">
-        <h1 style="margin:0 0 10px;font-size:21px;line-height:1.35;color:#111827">
-          {{email_title}}
-        </h1>
-        <p style="margin:0;font-size:15px;line-height:1.65;color:#4b5563">
-          {{email_intro}}
-        </p>
-      </td>
-    </tr>
+        <!-- Khung 600px: chuẩn an toàn của email, vừa hết bề ngang màn hình điện thoại -->
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"
+          style="width:100%;max-width:600px;background-color:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(16,24,40,0.08)">
 
-    <!-- ── Danh sách hồ sơ, mỗi hồ sơ một thẻ ──────────────────────────────────── -->
-    <tr>
-      <td style="padding:20px 28px 4px">
-
-        {{#cases}}
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:14px;background-color:#f9fafb;border:1px solid #e5e7eb;border-left:4px solid {{status_color}};border-radius:10px">
+          <!-- ── Dải thương hiệu ─────────────────────────────────────────────────────── -->
           <tr>
-            <td style="padding:16px 18px">
+            <td style="background-color:#1d4ed8;padding:18px 28px">
+              <span style="color:#ffffff;font-size:15px;font-weight:bold;letter-spacing:0.3px">
+                Checklist Hồ Sơ Canada
+              </span>
+            </td>
+          </tr>
 
-              <p style="margin:0 0 10px;font-size:16px;font-weight:bold;line-height:1.4;color:#111827">
-                {{client_name}}
+          <!-- ── Tiêu đề + câu mở đầu ────────────────────────────────────────────────── -->
+          <tr>
+            <td style="padding:28px 28px 4px">
+              <h1 style="margin:0 0 10px;font-size:21px;line-height:1.35;color:#111827">
+                {{email_title}}
+              </h1>
+              <p style="margin:0;font-size:15px;line-height:1.65;color:#4b5563">
+                {{email_intro}}
               </p>
+            </td>
+          </tr>
 
-              <!-- Viên trạng thái: tô nền bằng đúng màu trạng thái trong app -->
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px">
+          <!-- ── Danh sách hồ sơ, mỗi hồ sơ một thẻ ──────────────────────────────────── -->
+          <tr>
+            <td style="padding:20px 28px 4px">
+
+              {{#cases}}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="margin-bottom:14px;background-color:#f9fafb;border:1px solid #e5e7eb;border-left:4px solid {{status_color}};border-radius:10px">
                 <tr>
-                  <td style="background-color:{{status_color}};border-radius:999px;padding:5px 12px">
-                    <span style="color:#ffffff;font-size:12px;font-weight:bold;letter-spacing:0.2px">
-                      {{status_label}}
-                    </span>
-                  </td>
-                </tr>
-              </table>
+                  <td style="padding:16px 18px">
 
-              <p style="margin:0 0 14px;font-size:13px;line-height:1.5;color:#6b7280">
-                Cập nhật lần cuối: {{updated_at}}
-              </p>
+                    <p style="margin:0 0 10px;font-size:16px;font-weight:bold;line-height:1.4;color:#111827">
+                      {{client_name}}
+                    </p>
 
-              <!-- Nút kiểu "bulletproof": nền đặt trên <td> chứ không phải trên <a>,
+                    <!-- Viên trạng thái: tô nền bằng đúng màu trạng thái trong app -->
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px">
+                      <tr>
+                        <td style="background-color:{{status_color}};border-radius:999px;padding:5px 12px">
+                          <span style="color:#ffffff;font-size:12px;font-weight:bold;letter-spacing:0.2px">
+                            {{status_label}}
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <p style="margin:0 0 14px;font-size:13px;line-height:1.5;color:#6b7280">
+                      Cập nhật lần cuối: {{updated_at}}
+                    </p>
+
+                    <!-- Nút kiểu "bulletproof": nền đặt trên <td> chứ không phải trên <a>,
                    vì Outlook không tô nền cho thẻ <a> -->
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td style="background-color:#1d4ed8;border-radius:8px">
-                    <a href="{{case_url}}"
-                       style="display:inline-block;padding:10px 20px;font-size:14px;font-weight:bold;color:#ffffff;text-decoration:none">
-                      Mở hồ sơ &rarr;
-                    </a>
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="background-color:#1d4ed8;border-radius:8px">
+                          <a href="{{case_url}}"
+                            style="display:inline-block;padding:10px 20px;font-size:14px;font-weight:bold;color:#ffffff;text-decoration:none">
+                            Mở hồ sơ &rarr;
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+
                   </td>
                 </tr>
               </table>
+              {{/cases}}
 
             </td>
           </tr>
+
+          <!-- ── Câu kết ─────────────────────────────────────────────────────────────── -->
+          <tr>
+            <td style="padding:12px 28px 28px">
+              <p style="margin:0;font-size:14px;line-height:1.65;color:#4b5563">
+                {{email_footer}}
+              </p>
+            </td>
+          </tr>
+
+          <!-- ── Chân thư ────────────────────────────────────────────────────────────── -->
+          <tr>
+            <td style="background-color:#f9fafb;border-top:1px solid #e5e7eb;padding:16px 28px">
+              <p style="margin:0;font-size:12px;line-height:1.5;color:#9ca3af">
+                Email tự động gửi lúc {{sent_at}}. Đây là hộp thư nội bộ, không cần trả lời.
+              </p>
+            </td>
+          </tr>
+
         </table>
-        {{/cases}}
 
       </td>
     </tr>
-
-    <!-- ── Câu kết ─────────────────────────────────────────────────────────────── -->
-    <tr>
-      <td style="padding:12px 28px 28px">
-        <p style="margin:0;font-size:14px;line-height:1.65;color:#4b5563">
-          {{email_footer}}
-        </p>
-      </td>
-    </tr>
-
-    <!-- ── Chân thư ────────────────────────────────────────────────────────────── -->
-    <tr>
-      <td style="background-color:#f9fafb;border-top:1px solid #e5e7eb;padding:16px 28px">
-        <p style="margin:0;font-size:12px;line-height:1.5;color:#9ca3af">
-          Email tự động gửi lúc {{sent_at}}. Đây là hộp thư nội bộ, không cần trả lời.
-        </p>
-      </td>
-    </tr>
-
   </table>
 
-</td>
-</tr>
-</table>
-
 </body>
+
 </html>
