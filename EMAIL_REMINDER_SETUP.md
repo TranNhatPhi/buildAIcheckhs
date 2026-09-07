@@ -134,6 +134,37 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod \
 `--force-recreate` an toàn với riêng `status-reminder` vì nó không gắn volume nào. **Đừng** dùng
 với `mysql` hay `minio` — hai service đó có ổ đĩa riêng.
 
+## Template email
+
+Template THẬT nằm trên dashboard EmailJS (Email Templates → template có `EMAILJS_TEMPLATE_ID`).
+`emailjs-template.html` ngoài thư mục gốc là **bản sao** để đối chiếu và review — code không đọc
+file đó. Sửa bên nào cũng phải đồng bộ bên kia.
+
+Biến backend truyền vào (`backend/emailjs.py`):
+
+| Biến | Nội dung |
+|---|---|
+| `email_title` | Tiêu đề. **Đặt luôn làm Subject** trên dashboard để tiêu đề thư khớp nội dung |
+| `email_intro` | Câu mở đầu — KHÁC NHAU giữa nhắc định kỳ và báo tức thì |
+| `email_footer` | Câu kết |
+| `sent_at` | Thời điểm gửi, giờ Việt Nam |
+| `cases[]` | `client_name`, `status_label`, `status_color`, `updated_at`, `case_url` |
+| `case_count` | Số hồ sơ — hiện template không dùng vì con số đã nằm trong `email_intro` |
+
+Ba chữ `email_*` là biến chứ không nằm cứng trong HTML: hai đường gửi nói hai chuyện khác nhau,
+đóng đinh chữ vào template thì một trong hai đường chắc chắn gửi email sai nội dung ("đã đến chu
+kỳ nhắc 14 ngày" trong khi thật ra vừa mới đổi trạng thái).
+
+Vài quy tắc của HTML email, đừng "dọn dẹp" mất:
+
+- Bố cục bằng `<table>` lồng nhau, không phải `<div>` + flexbox. Outlook trên Windows render
+  bằng engine của Word, bỏ qua gần hết CSS layout hiện đại.
+- Mọi style phải **inline**. Gmail cắt bỏ thẻ `<style>` trong `<head>`.
+- Nút bấm đặt `background-color` trên `<td>` chứ không phải trên `<a>` — Outlook không tô nền
+  cho thẻ `<a>`.
+- Mỗi hồ sơ là một thẻ xếp dọc, không phải một dòng trong bảng 4 cột: nhân viên hay mở mail
+  trên điện thoại, bảng 4 cột ở đó bị bóp lại đến mức không đọc nổi.
+
 ## Hai đường gửi email
 
 Cả hai dùng CHUNG một template EmailJS (`EMAILJS_TEMPLATE_ID`) — template nhận `cases` là một

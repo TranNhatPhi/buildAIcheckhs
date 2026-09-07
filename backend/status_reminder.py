@@ -39,28 +39,35 @@ REMINDER_CASE_STATUSES = tuple(
 
 
 def _build_template_params(cases: list[Case], sent_at: datetime) -> dict[str, object]:
-    return {
-        "case_count": len(cases),
-        "sent_at": emailjs.format_datetime(sent_at),
-        "cases": [
-            emailjs.build_case_row(
-                case_id=case.id,
-                client_name=case.clientName,
-                application_status=case.applicationStatus,
-                updated_at=case.applicationStatusUpdatedAt or case.createdAt,
-            )
-            for case in cases
-        ],
-    }
+    rows = [
+        emailjs.build_case_row(
+            case_id=case.id,
+            client_name=case.clientName,
+            application_status=case.applicationStatus,
+            updated_at=case.applicationStatusUpdatedAt or case.createdAt,
+        )
+        for case in cases
+    ]
+    return emailjs.build_template_params(
+        rows,
+        sent_at,
+        title="Nhắc kiểm tra trạng thái hồ sơ",
+        intro=(
+            f"Có {len(rows)} hồ sơ đã đến chu kỳ nhắc {STATUS_REMINDER_INTERVAL_DAYS} ngày "
+            "và vẫn chưa có kết quả đậu hoặc rớt."
+        ),
+        footer=(
+            "Vui lòng kiểm tra và cập nhật trạng thái. Hồ sơ chuyển sang Đã đậu hoặc Đã rớt "
+            "sẽ tự động ngừng nhận thông báo."
+        ),
+    )
 
 
 def send_test_email() -> None:
     now = now_utc()
     emailjs.send_template(
-        {
-            "case_count": 1,
-            "sent_at": emailjs.format_datetime(now),
-            "cases": [
+        emailjs.build_template_params(
+            [
                 {
                     "client_name": "Hồ sơ kiểm tra EmailJS",
                     "status_label": "Đang kiểm tra hồ sơ",
@@ -69,7 +76,14 @@ def send_test_email() -> None:
                     "case_url": os.getenv("APP_BASE_URL", "").strip() or "#",
                 }
             ],
-        }
+            now,
+            title="Email kiểm tra cấu hình EmailJS",
+            intro=(
+                "Đây là email kiểm tra, không phải nhắc hồ sơ thật. Nhận được thư này nghĩa "
+                "là cấu hình EmailJS đang hoạt động."
+            ),
+            footer="Không cần làm gì với email này.",
+        )
     )
     logger.info("Đã gửi email kiểm tra tới %s.", DEFAULT_ADMIN_EMAIL)
 

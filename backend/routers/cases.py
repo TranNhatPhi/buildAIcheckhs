@@ -524,7 +524,19 @@ def _bao_doi_trang_thai(row: dict, sent_at) -> None:
     tác đổi trạng thái là đánh đổi tệ. Lỗi vào log, hồ sơ vẫn được nhắc lại sau 14 ngày.
     """
     try:
-        emailjs.send_cases([row], sent_at)
+        emailjs.send_cases(
+            [row],
+            sent_at,
+            title=f"Hồ sơ chuyển sang: {row['status_label']}",
+            intro=(
+                f"Hồ sơ {row['client_name']} vừa được chuyển sang trạng thái "
+                f"“{row['status_label']}”."
+            ),
+            footer=(
+                "Email này gửi ngay lúc đổi trạng thái, không phải nhắc định kỳ. Nếu chưa xử "
+                f"lý xong, hồ sơ sẽ được nhắc lại sau {STATUS_REMINDER_INTERVAL_DAYS} ngày."
+            ),
+        )
         logger.info("Đã gửi email báo đổi trạng thái: %s.", row["client_name"])
     except Exception:
         logger.exception("Không gửi được email báo đổi trạng thái cho %s.", row["client_name"])

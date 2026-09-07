@@ -110,11 +110,27 @@ def send_template(template_params: dict[str, object]) -> None:
         raise RuntimeError(f"Không kết nối được EmailJS: {exc.reason}") from exc
 
 
-def send_cases(rows: list[dict[str, str]], sent_at: datetime) -> None:
-    send_template(
-        {
-            "case_count": len(rows),
-            "sent_at": format_datetime(sent_at),
-            "cases": rows,
-        }
-    )
+def build_template_params(
+    rows: list[dict[str, str]], sent_at: datetime, *, title: str, intro: str, footer: str
+) -> dict[str, object]:
+    """Gói dữ liệu cho template EmailJS.
+
+    title/intro/footer là BIẾN chứ không nằm cứng trong template, vì hai đường gửi nói hai
+    chuyện khác nhau: nhắc định kỳ nói "đã đến chu kỳ 14 ngày", báo tức thì nói "vừa đổi
+    trạng thái". Đóng đinh chữ trong template thì một trong hai đường sẽ gửi email sai nội
+    dung. Bản đối chiếu của template nằm ở emailjs-template.html ngoài thư mục gốc.
+    """
+    return {
+        "email_title": title,
+        "email_intro": intro,
+        "email_footer": footer,
+        "case_count": len(rows),
+        "sent_at": format_datetime(sent_at),
+        "cases": rows,
+    }
+
+
+def send_cases(
+    rows: list[dict[str, str]], sent_at: datetime, *, title: str, intro: str, footer: str
+) -> None:
+    send_template(build_template_params(rows, sent_at, title=title, intro=intro, footer=footer))
