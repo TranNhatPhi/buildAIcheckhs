@@ -91,10 +91,35 @@ còn được gửi không.
 
 **`RuntimeError: EmailJS trả lỗi HTTP 404: Account not found`**
 
-EmailJS chết ngay ở bước tìm tài khoản, tức sai `EMAILJS_PUBLIC_KEY` hoặc `EMAILJS_SERVICE_ID`.
-**Không phải** private key: đã đo, bỏ hẳn `accessToken` ra khỏi request thì lỗi đổi thành
-`400 The parameters are invalid` — nghĩa là EmailJS chưa kiểm tới private key. Public key
-thật mà nhận đúng câu trả lời như một chuỗi rác thì giá trị đó không còn khớp tài khoản nào.
+Sai `EMAILJS_PUBLIC_KEY`. Đã khoanh vùng bằng cách đo, không phải đoán:
+
+- Bỏ hẳn `accessToken` khỏi request → lỗi đổi thành `400 The parameters are invalid`, tức
+  EmailJS còn chưa kiểm tới private key. **Không phải** private key sai.
+- Public key thật + `service_id` **rác** → vẫn `Account not found`. Nếu public key hợp lệ thì
+  EmailJS đã tìm ra tài khoản và phải báo lỗi về service. Nó trượt ngay ở bước tra `user_id`.
+- Public key thật nhận đúng câu trả lời như một chuỗi rác → giá trị đó không khớp tài khoản nào.
+
+Lần đã gặp (07/09/2026), key chỉ sai **đúng một ký tự**: đang dùng `a4rsQiK-a4DVglk7-` (chữ `l`
+thường) trong khi key thật là `a4rsQiK-a4DVgJk7-` (chữ `J` hoa). EmailJS không hé lộ gì về
+chuyện đó, chỉ nói cụt lủn "Account not found". Nên **copy-paste** key chứ đừng gõ tay lại, và
+khi đối chiếu thì so từng ký tự.
+
+Lấy key ở **Dashboard → Account → General → Public Key**. Thử ngay không cần build lại image —
+`-e` chỉ ghi đè cho một lần chạy:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod \
+  exec -e EMAILJS_PUBLIC_KEY='<key mới>' \
+  status-reminder python status_reminder.py --test-email
+```
+
+Qua được bước tài khoản thì thông báo lỗi sẽ đổi (sang service hoặc template) — dấu hiệu đã đi
+thêm một bước. Chạy được rồi mới ghi vào `.env.prod`, và phải **dựng lại container** thì giá trị
+mới có hiệu lực; sửa file không thôi thì container đang chạy vẫn giữ giá trị cũ:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d status-reminder
+```
 
 Xem container đang thật sự nhận giá trị nào (không phải giá trị bạn nghĩ nó nhận):
 
@@ -102,10 +127,6 @@ Xem container đang thật sự nhận giá trị nào (không phải giá trị
 docker compose -f docker-compose.prod.yml --env-file .env.prod \
   exec status-reminder env | grep EMAILJS
 ```
-
-So từng ký tự với Dashboard EmailJS: **Account → General → Public Key**, và **Email Services →**
-service tương ứng. Đúng rồi thì `docker compose ... up -d status-reminder` để nạp lại biến môi
-trường — sửa `.env.prod` xong mà không dựng lại container thì container vẫn giữ giá trị cũ.
 
 ## Quy tắc gửi
 
