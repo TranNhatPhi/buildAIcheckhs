@@ -5,6 +5,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -78,6 +79,12 @@ class Case(Base):
     savingsManualVnd = Column(BigInteger, nullable=True)
     savingsUpdatedAt = Column(DateTime, nullable=True)
 
+    # Nhãn (tag) do nhân viên tự gắn cho hồ sơ, vd ["GẤP","VIP"]. Lưu JSON array dạng text
+    # thay vì kiểu JSON của MySQL vì: (1) MySQL JSON không cho DEFAULT ở mọi phiên bản, (2)
+    # pattern Text + parse JSON phía app đã dùng xuyên suốt codebase (aiFieldsNote, savings...),
+    # (3) không cần query JSON phức tạp — chỉ đọc/ghi nguyên mảng, lọc tag làm phía app.
+    tags = Column(Text, nullable=True)
+
     documents = relationship("Document", back_populates="case", cascade="all, delete-orphan")
 
 
@@ -142,6 +149,39 @@ class Document(Base):
     aiRawLabel = Column(String(191), nullable=True)
     aiConfidence = Column(Float, nullable=True)
     aiReasoning = Column(Text, nullable=True)
+
+    # --- Thông tin AI bóc ra từ chính giấy tờ, lấy KÈM trong lệnh phân loại ---
+    #
+    # Vì sao gộp chung lệnh phân loại chứ không gọi riêng: mỗi file đang mất 30-150 giây
+    # ĐỒNG BỘ trong request upload (xem AGENTS.md). Thêm một lượt gọi LLM nữa là đẩy thẳng
+    # vào lỗi "Failed to fetch" đã biết. Lệnh phân loại dù sao cũng đã phải đọc hết nội dung
+    # và đã bật reasoning để phán đoán "giấy tờ này của ai trong nhà" — bắt nó ghi luôn phán
+    # đoán đó ra thay vì vứt đi gần như không tốn thêm gì.
+    #
+    # Giấy tờ này của AI: "APPLICANT" | "SPOUSE" | "CHILD_1..3" | "FATHER" | "MOTHER" |
+    # "OTHER". NULL = không xác định được. Dùng để GOM NHÓM khi đối chiếu chéo: checklist
+    # KHÔNG cho biết chủ giấy tờ (mục "Căn cước công dân mẹ" vẫn là appliesTo="ALWAYS"),
+    # nên thiếu trường này thì mọi phép so tên/ngày sinh giữa các file sẽ báo lệch oan giữa
+    # giấy tờ của mẹ và của đương đơn.
+    aiDocOwner = Column(String(191), nullable=True)
+    aiHolderName = Column(String(191), nullable=True)
+    aiHolderDob = Column(Date, nullable=True)
+    aiIdNumber = Column(String(191), nullable=True)
+    # Loại của số trên: "CCCD" | "PASSPORT" | "OTHER". Có nó mới đối chiếu chéo được, vì số
+    # CCCD và số hộ chiếu của CÙNG MỘT NGƯỜI vốn dĩ khác nhau — so hai số khác loại với nhau
+    # là báo lệch oan ở mọi hồ sơ, đúng kiểu cảnh báo sai hàng loạt khiến nhân viên học cách
+    # bỏ qua rồi bỏ sót luôn cái lệch thật.
+    aiIdType = Column(String(191), nullable=True)
+    aiIssuedAt = Column(Date, nullable=True)
+    aiExpiresAt = Column(Date, nullable=True)
+    # Nhân viên đè lên ngày hết hạn khi AI đọc sai — giữ RIÊNG với aiExpiresAt theo đúng
+    # khuôn đã dùng cho correctedText/manualCorrectedText và savingsAiVnd/savingsManualVnd:
+    # con số này quyết định hồ sơ còn hiệu lực hay không, phải sửa được mà vẫn còn bản AI
+    # để đối chiếu khi nghi ngờ.
+    manualExpiresAt = Column(Date, nullable=True)
+    # AI ghi rõ đọc được gì từ đâu, chỗ nào không chắc — con số/ngày tháng một mình không đủ
+    # để tin khi nó quyết định "giấy tờ này còn dùng được hay không".
+    aiFieldsNote = Column(Text, nullable=True)
     status = Column(String(191), nullable=False)
     classificationError = Column(Text, nullable=True)
     isManualOverride = Column(Boolean, nullable=False, default=False)

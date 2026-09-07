@@ -390,6 +390,19 @@ ADDED_COLUMNS = [
     ("Case", "savingsAiNote", "TEXT NULL"),
     ("Case", "savingsManualVnd", "BIGINT NULL"),
     ("Case", "savingsUpdatedAt", "DATETIME NULL"),
+    # Thông tin AI bóc ra từ giấy tờ (xem models.Document) — phục vụ cảnh báo hạn giấy tờ
+    # và đối chiếu chéo bằng code thay vì bằng LLM.
+    ("Document", "aiDocOwner", "VARCHAR(191) NULL"),
+    ("Document", "aiHolderName", "VARCHAR(191) NULL"),
+    ("Document", "aiHolderDob", "DATE NULL"),
+    ("Document", "aiIdNumber", "VARCHAR(191) NULL"),
+    ("Document", "aiIdType", "VARCHAR(191) NULL"),
+    ("Document", "aiIssuedAt", "DATE NULL"),
+    ("Document", "aiExpiresAt", "DATE NULL"),
+    ("Document", "manualExpiresAt", "DATE NULL"),
+    ("Document", "aiFieldsNote", "TEXT NULL"),
+    # Tag (nhãn) do nhân viên gắn cho hồ sơ — JSON array, vd '["GẤP","VIP"]'.
+    ("Case", "tags", "TEXT NULL"),
 ]
 
 

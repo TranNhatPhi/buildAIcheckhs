@@ -1,4 +1,5 @@
 import io
+import json
 import re
 import urllib.parse
 import zipfile
@@ -17,10 +18,17 @@ from completeness import (
     compute_financial_threshold_vnd,
 )
 from db import get_db
-from mappers import checklist_summary_to_dto, financial_threshold_to_dto, savings_to_dto
+from doc_checks import danh_gia_han, doi_chieu_cheo
+from mappers import (
+    checklist_summary_to_dto,
+    doc_checks_to_dto,
+    financial_threshold_to_dto,
+    savings_to_dto,
+)
 from models import Case, ChecklistItem, now_utc
 from savings import refresh_case_savings
 from schemas import (
+    ALLOWED_TAGS,
     CaseAnalysisResponse,
     CaseDetailDTO,
     CaseListItemDTO,
@@ -28,9 +36,21 @@ from schemas import (
     SavingsAssessmentDTO,
     UpdateCaseRequest,
     UpdateSavingsRequest,
+    UpdateTagsRequest,
+    parse_tags,
 )
 
 router = APIRouter(prefix="/cases", tags=["cases"])
+
+
+def _dem_han(documents) -> tuple[int, int]:
+    """(số đã quá hạn, số sắp hết hạn) — dùng cho danh sách hồ sơ. Truyền items_by_id rỗng vì
+    danh sách chỉ cần con số, không cần tên mục checklist của từng file."""
+    han = danh_gia_han(list(documents), {})
+    return (
+        sum(1 for h in han if h.state == "EXPIRED"),
+        sum(1 for h in han if h.state == "EXPIRING_SOON"),
+    )
 
 
 @router.get("", response_model=list[CaseListItemDTO])
@@ -46,6 +66,7 @@ def list_cases(db: Session = Depends(get_db)):
             checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel
         )
         threshold = compute_financial_threshold_vnd(c.maritalStatus, c.numberOfChildren)
+        qua_han, sap_han = _dem_han(c.documents)
         result.append(
             CaseListItemDTO(
                 id=c.id,
@@ -54,13 +75,23 @@ def list_cases(db: Session = Depends(get_db)):
                 numberOfChildren=c.numberOfChildren,
                 skillLevel=c.skillLevel,
                 notes=c.notes,
+                tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
                 percent=summary.percent,
                 needsReviewCount=summary.needs_review_count,
                 financialThreshold=financial_threshold_to_dto(threshold),
+                expiredDocCount=qua_han,
+                expiringSoonDocCount=sap_han,
             )
         )
     return result
+
+
+@router.get("/tags")
+def list_tags():
+    """Danh sách tag hợp lệ + màu hiển thị — frontend gọi 1 lần lúc load trang để render
+    dropdown/chip đúng màu, không hardcode lại danh sách ở 2 nơi."""
+    return [{"name": name, "color": color} for name, color in ALLOWED_TAGS.items()]
 
 
 @router.post("", response_model=CaseListItemDTO, status_code=201)
@@ -84,6 +115,7 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
         notes=case.notes,
+        tags=[],
         createdAt=case.createdAt,
         percent=0,
         needsReviewCount=0,
@@ -115,6 +147,7 @@ def list_deleted_cases(db: Session = Depends(get_db)):
                 numberOfChildren=c.numberOfChildren,
                 skillLevel=c.skillLevel,
                 notes=c.notes,
+                tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
                 deletedAt=c.deletedAt,
                 percent=summary.percent,
@@ -152,6 +185,7 @@ def restore_case(case_id: str, db: Session = Depends(get_db)):
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
         notes=case.notes,
+        tags=parse_tags(case.tags),
         createdAt=case.createdAt,
         percent=summary.percent,
         needsReviewCount=summary.needs_review_count,
@@ -170,6 +204,9 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
         checklist_items, case.documents, case.maritalStatus, case.numberOfChildren, case.skillLevel
     )
     threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
+    items_by_id = {i.id: i for i in checklist_items}
+    han = danh_gia_han(list(case.documents), items_by_id)
+    bat_nhat = doi_chieu_cheo(list(case.documents))
 
     return CaseDetailDTO(
         case={
@@ -179,6 +216,7 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
             "numberOfChildren": case.numberOfChildren,
             "skillLevel": case.skillLevel,
             "notes": case.notes,
+            "tags": parse_tags(case.tags),
             "createdAt": case.createdAt,
             "documents": sorted(case.documents, key=lambda d: d.uploadedAt),
             "aiAnalysisStatus": case.aiAnalysisStatus,
@@ -189,6 +227,7 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
         checklist=checklist_summary_to_dto(summary),
         financialThreshold=financial_threshold_to_dto(threshold),
         savings=_savings_dto(case),
+        docChecks=doc_checks_to_dto(han, bat_nhat),
     )
 
 
@@ -477,11 +516,34 @@ def update_case(case_id: str, body: UpdateCaseRequest, db: Session = Depends(get
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
         notes=case.notes,
+        tags=parse_tags(case.tags),
         createdAt=case.createdAt,
         percent=summary.percent,
         needsReviewCount=summary.needs_review_count,
         financialThreshold=financial_threshold_to_dto(threshold),
     )
+
+
+@router.patch("/{case_id}/tags", response_model=list[str])
+def update_case_tags(case_id: str, body: UpdateTagsRequest, db: Session = Depends(get_db)):
+    """Ghi đè toàn bộ danh sách tag của hồ sơ. Gửi mảng rỗng để xoá hết tag."""
+    case = db.get(Case, case_id)
+    if not case or case.deletedAt is not None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+
+    # Validate + dedupe, giữ nguyên thứ tự nhân viên chọn.
+    seen: set[str] = set()
+    clean: list[str] = []
+    for tag in body.tags:
+        if tag not in ALLOWED_TAGS:
+            raise HTTPException(status_code=400, detail=f'Tag "{tag}" không hợp lệ.')
+        if tag not in seen:
+            seen.add(tag)
+            clean.append(tag)
+
+    case.tags = json.dumps(clean, ensure_ascii=False) if clean else None
+    db.commit()
+    return clean
 
 
 @router.delete("/{case_id}")

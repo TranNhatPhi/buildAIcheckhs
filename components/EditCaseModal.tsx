@@ -1,8 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { API_URL } from "@/lib/format";
-import type { CaseListItemDTO } from "@/lib/client-types";
+import type { CaseListItemDTO, TagDefinition } from "@/lib/client-types";
+
+/** Ánh xạ tên màu từ API sang Tailwind class. */
+const TAG_COLOR_MAP: Record<string, string> = {
+  red: "bg-red-100 text-red-800 border-red-200",
+  yellow: "bg-amber-100 text-amber-800 border-amber-200",
+  green: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  orange: "bg-orange-100 text-orange-800 border-orange-200",
+  blue: "bg-blue-100 text-blue-800 border-blue-200",
+  gray: "bg-neutral-100 text-neutral-600 border-neutral-200",
+  purple: "bg-purple-100 text-purple-800 border-purple-200",
+};
 
 interface Props {
   caseItem: CaseListItemDTO;
@@ -20,8 +31,28 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
     caseItem.skillLevel as "LOW_SKILL" | "HIGH_SKILL",
   );
   const [notes, setNotes] = useState(caseItem.notes ?? "");
+  const [selectedTags, setSelectedTags] = useState<string[]>(caseItem.tags ?? []);
+  const [tagDefs, setTagDefs] = useState<TagDefinition[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`${API_URL}/cases/tags`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: TagDefinition[]) => setTagDefs(data))
+      .catch(() => {});
+  }, []);
+
+  const tagColorByName = useMemo(
+    () => new Map(tagDefs.map((t) => [t.name, t.color])),
+    [tagDefs],
+  );
+
+  function toggleTag(tag: string) {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,7 +71,18 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
         return;
       }
 
-      onSaved(await res.json());
+      // Lưu tag riêng — không gộp vào PATCH /cases/{id} vì endpoint đó dùng UpdateCaseRequest
+      // không có field tags (tag là endpoint riêng PATCH /cases/{id}/tags).
+      await fetch(`${API_URL}/cases/${caseItem.id}/tags`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: selectedTags }),
+      });
+
+      const saved = await res.json();
+      // Gắn lại tag vào DTO trước khi trả về — vì PATCH /cases/{id} không trả tags mới nhất.
+      saved.tags = selectedTags;
+      onSaved(saved);
     } catch {
       setError("Không kết nối được máy chủ. Vui lòng thử lại.");
     } finally {
@@ -164,6 +206,31 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
             className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
           />
         </div>
+
+        {tagDefs.length > 0 && (
+          <div>
+            <label className="block text-sm font-semibold mb-1.5">Nhãn (tag)</label>
+            <div className="flex flex-wrap gap-2">
+              {tagDefs.map((t) => {
+                const active = selectedTags.includes(t.name);
+                return (
+                  <button
+                    key={t.name}
+                    type="button"
+                    onClick={() => toggleTag(t.name)}
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold transition-all ${
+                      active
+                        ? TAG_COLOR_MAP[tagColorByName.get(t.name) ?? ""] ?? TAG_COLOR_MAP.gray
+                        : "border-neutral-200 text-neutral-400 hover:border-neutral-300"
+                    }`}
+                  >
+                    {t.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 

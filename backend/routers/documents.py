@@ -7,12 +7,17 @@ from sqlalchemy.orm import Session
 
 import ocr
 import storage
-from classify import classify_ocr_text
+from classify import ap_thong_tin_boc_duoc, classify_ocr_text
 from completeness import is_item_applicable, is_savings_item
 from db import get_db
 from models import ChecklistItem, Document
 from savings import refresh_case_savings_quietly
-from schemas import DocumentDTO, PatchDocumentRequest, UpdateManualCorrectedTextRequest
+from schemas import (
+    DocumentDTO,
+    PatchDocumentRequest,
+    UpdateExpiresAtRequest,
+    UpdateManualCorrectedTextRequest,
+)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -80,6 +85,26 @@ def update_manual_corrected_text(
 
     trimmed = body.manualCorrectedText.strip()
     doc.manualCorrectedText = trimmed or None
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+@router.patch("/{document_id}/expires-at", response_model=DocumentDTO)
+def update_manual_expires_at(
+    document_id: str, body: UpdateExpiresAtRequest, db: Session = Depends(get_db)
+):
+    """Nhân viên sửa tay ngày hết hạn khi AI đọc sai — lưu riêng vào manualExpiresAt, KHÔNG
+    đụng aiExpiresAt để vẫn còn bản AI đối chiếu.
+
+    Con số này quyết định giấy tờ còn dùng được hay không, nên cho sửa tay là bắt buộc: OCR
+    trên giấy tờ đóng dấu/mờ đọc nhầm ngày là chuyện thường, mà đọc nhầm ở đây thì hồ sơ đã
+    quá hạn vẫn hiện là còn hạn."""
+    doc = db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Không tìm thấy file")
+
+    doc.manualExpiresAt = body.manualExpiresAt
     db.commit()
     db.refresh(doc)
     return doc
@@ -206,6 +231,7 @@ def reclassify_document(document_id: str, db: Session = Depends(get_db)):
     doc.aiConfidence = outcome.ai_confidence
     doc.aiReasoning = outcome.ai_reasoning
     doc.classificationError = outcome.classification_error
+    ap_thong_tin_boc_duoc(doc, outcome.fields)
     doc.isManualOverride = False
     db.commit()
 

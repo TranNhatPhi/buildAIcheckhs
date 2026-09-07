@@ -1,18 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CanhCuonHoSo } from "@/components/CanhCuonHoSo";
 import { ChecklistOverview3D } from "@/components/ChecklistOverview3D";
 import { EditCaseModal } from "@/components/EditCaseModal";
 import { API_URL } from "@/lib/format";
-import type { CaseListItemDTO } from "@/lib/client-types";
+import type { CaseListItemDTO, TagDefinition } from "@/lib/client-types";
+
+/** Ánh xạ tên màu từ API ("red", "yellow"...) sang Tailwind class cụ thể. Đặt ở đây thay vì
+ *  hardcode dài dòng Tailwind ở mỗi chỗ render tag. */
+const TAG_COLOR_MAP: Record<string, string> = {
+  red: "bg-red-100 text-red-800 border-red-200",
+  yellow: "bg-amber-100 text-amber-800 border-amber-200",
+  green: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  orange: "bg-orange-100 text-orange-800 border-orange-200",
+  blue: "bg-blue-100 text-blue-800 border-blue-200",
+  gray: "bg-neutral-100 text-neutral-600 border-neutral-200",
+  purple: "bg-purple-100 text-purple-800 border-purple-200",
+};
 
 interface Props {
   initialCases: CaseListItemDTO[];
 }
 
-type StatusFilter = "ALL" | "NEEDS_REVIEW" | "INCOMPLETE" | "COMPLETE";
+type StatusFilter = "ALL" | "NEEDS_REVIEW" | "EXPIRED_DOCS" | "INCOMPLETE" | "COMPLETE";
 type SkillFilter = "ALL" | "HIGH_SKILL" | "LOW_SKILL";
 type MaritalFilter = "ALL" | "MARRIED" | "SINGLE";
 type SortOption = "NEWEST" | "OLDEST" | "NEEDS_ATTENTION" | "NAME";
@@ -37,12 +49,30 @@ export function CaseList({ initialCases }: Props) {
   const [skillFilter, setSkillFilter] = useState<SkillFilter>("ALL");
   const [maritalFilter, setMaritalFilter] = useState<MaritalFilter>("ALL");
   const [sortOption, setSortOption] = useState<SortOption>("NEWEST");
+  const [tagFilter, setTagFilter] = useState<string>("ALL");
+  const [tagDefs, setTagDefs] = useState<TagDefinition[]>([]);
+
+  // Fetch danh sách tag hợp lệ + màu hiển thị 1 lần khi mount — không hardcode lại ở frontend,
+  // giữ backend làm single source of truth.
+  useEffect(() => {
+    fetch(`${API_URL}/cases/tags`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: TagDefinition[]) => setTagDefs(data))
+      .catch(() => {});
+  }, []);
+
+  // Map nhanh tên tag → màu, dùng khi render badge.
+  const tagColorByName = useMemo(
+    () => new Map(tagDefs.map((t) => [t.name, t.color])),
+    [tagDefs],
+  );
 
   const hasActiveFilters =
     searchQuery.trim() !== "" ||
     statusFilter !== "ALL" ||
     skillFilter !== "ALL" ||
     maritalFilter !== "ALL" ||
+    tagFilter !== "ALL" ||
     sortOption !== "NEWEST";
 
   const visibleCases = useMemo(() => {
@@ -54,15 +84,19 @@ export function CaseList({ initialCases }: Props) {
           `${caseItem.clientName} ${caseItem.notes ?? ""}`,
         );
         const matchesSearch = normalizedQuery === "" || searchableText.includes(normalizedQuery);
+        const matchesTag =
+          tagFilter === "ALL" || caseItem.tags.includes(tagFilter);
         const matchesStatus =
           statusFilter === "ALL" ||
           (statusFilter === "NEEDS_REVIEW" && caseItem.needsReviewCount > 0) ||
+          (statusFilter === "EXPIRED_DOCS" &&
+            (caseItem.expiredDocCount > 0 || caseItem.expiringSoonDocCount > 0)) ||
           (statusFilter === "INCOMPLETE" && caseItem.percent < 100) ||
           (statusFilter === "COMPLETE" && caseItem.percent === 100);
         const matchesSkill = skillFilter === "ALL" || caseItem.skillLevel === skillFilter;
         const matchesMarital = maritalFilter === "ALL" || caseItem.maritalStatus === maritalFilter;
 
-        return matchesSearch && matchesStatus && matchesSkill && matchesMarital;
+        return matchesSearch && matchesTag && matchesStatus && matchesSkill && matchesMarital;
       })
       .sort((a, b) => {
         if (sortOption === "OLDEST") {
@@ -80,7 +114,7 @@ export function CaseList({ initialCases }: Props) {
         }
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
-  }, [cases, maritalFilter, searchQuery, skillFilter, sortOption, statusFilter]);
+  }, [cases, maritalFilter, searchQuery, skillFilter, sortOption, statusFilter, tagFilter]);
 
   const overview = useMemo(() => {
     const daHoanThanh = cases.filter((caseItem) => caseItem.percent === 100).length;
@@ -96,6 +130,7 @@ export function CaseList({ initialCases }: Props) {
     setStatusFilter("ALL");
     setSkillFilter("ALL");
     setMaritalFilter("ALL");
+    setTagFilter("ALL");
     setSortOption("NEWEST");
   }
 
@@ -157,6 +192,7 @@ export function CaseList({ initialCases }: Props) {
             >
               <option value="ALL">Tất cả trạng thái</option>
               <option value="NEEDS_REVIEW">Có tài liệu cần review</option>
+              <option value="EXPIRED_DOCS">Có giấy tờ quá hạn / sắp hết hạn</option>
               <option value="INCOMPLETE">Chưa hoàn thành</option>
               <option value="COMPLETE">Đã hoàn thành</option>
             </select>
@@ -203,6 +239,24 @@ export function CaseList({ initialCases }: Props) {
               <option value="NAME">Tên A–Z</option>
             </select>
           </label>
+
+          {tagDefs.length > 0 && (
+            <label>
+              <span className="mb-1.5 block text-sm font-medium text-neutral-700">Nhãn (tag)</span>
+              <select
+                value={tagFilter}
+                onChange={(event) => setTagFilter(event.target.value)}
+                className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2.5 text-sm text-neutral-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              >
+                <option value="ALL">Tất cả nhãn</option>
+                {tagDefs.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-3">
@@ -258,6 +312,37 @@ export function CaseList({ initialCases }: Props) {
                         {" · "}
                         {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
                       </p>
+                      {/* Tag badge — hiển ngay dưới thông tin cơ bản, trước cảnh báo hạn. */}
+                      {c.tags.length > 0 && (
+                        <p className="mt-1.5 flex flex-wrap gap-1">
+                          {c.tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                                TAG_COLOR_MAP[tagColorByName.get(tag) ?? ""] ?? TAG_COLOR_MAP.gray
+                              }`}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </p>
+                      )}
+                      {/* Giấy tờ quá hạn làm hồ sơ trông đủ mà thực chất không dùng được —
+                          phải thấy ngay ở danh sách, không đợi mở từng hồ sơ ra mới biết. */}
+                      {(c.expiredDocCount > 0 || c.expiringSoonDocCount > 0) && (
+                        <p className="mt-1.5 flex flex-wrap gap-1.5">
+                          {c.expiredDocCount > 0 && (
+                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+                              {c.expiredDocCount} giấy tờ quá hạn
+                            </span>
+                          )}
+                          {c.expiringSoonDocCount > 0 && (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                              {c.expiringSoonDocCount} sắp hết hạn
+                            </span>
+                          )}
+                        </p>
+                      )}
                       {isComplete && (
                         <p className="text-sm text-green-700 font-medium mt-1">
                           ✓ Hồ sơ này đã hoàn thành

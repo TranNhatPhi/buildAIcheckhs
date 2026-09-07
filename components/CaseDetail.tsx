@@ -1,16 +1,28 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChecklistSection } from "@/components/ChecklistSection";
 import { DocumentScene3D } from "@/components/DocumentScene3D";
 import { DocumentList } from "@/components/DocumentList";
+import { DocChecksPanel } from "@/components/DocChecksPanel";
 import { GeneralNotesBanner } from "@/components/GeneralNotesBanner";
 import { SavingsCard } from "@/components/SavingsCard";
 import { STAGE_LABEL, UploadDropzone } from "@/components/UploadDropzone";
 import { API_URL, estimateProcessingSeconds, formatRemaining, parseUtcDate } from "@/lib/format";
 import { useHydrated } from "@/lib/useHydrated";
-import type { CaseDetailDTO } from "@/lib/client-types";
+import type { CaseDetailDTO, TagDefinition } from "@/lib/client-types";
+
+/** Ánh xạ tên màu từ API sang Tailwind class. */
+const TAG_COLOR_MAP: Record<string, string> = {
+  red: "bg-red-100 text-red-800 border-red-200",
+  yellow: "bg-amber-100 text-amber-800 border-amber-200",
+  green: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  orange: "bg-orange-100 text-orange-800 border-orange-200",
+  blue: "bg-blue-100 text-blue-800 border-blue-200",
+  gray: "bg-neutral-100 text-neutral-600 border-neutral-200",
+  purple: "bg-purple-100 text-purple-800 border-purple-200",
+};
 
 interface Props {
   caseId: string;
@@ -22,6 +34,50 @@ interface Props {
 export function CaseDetail({ caseId, initialData }: Props) {
   const [data, setData] = useState<CaseDetailDTO | null>(initialData);
   const [notFound, setNotFound] = useState(false);
+
+  // --- Tag management ---
+  const [caseTags, setCaseTags] = useState<string[]>(initialData.case.tags ?? []);
+  const [tagDefs, setTagDefs] = useState<TagDefinition[]>([]);
+  const [showTagPicker, setShowTagPicker] = useState(false);
+  const [tagSaving, setTagSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_URL}/cases/tags`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: TagDefinition[]) => setTagDefs(data))
+      .catch(() => {});
+  }, []);
+
+  const tagColorByName = useMemo(
+    () => new Map(tagDefs.map((t) => [t.name, t.color])),
+    [tagDefs],
+  );
+
+  async function updateTags(newTags: string[]) {
+    setTagSaving(true);
+    setCaseTags(newTags);
+    try {
+      const res = await fetch(`${API_URL}/cases/${caseId}/tags`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: newTags }),
+      });
+      if (res.ok) {
+        const saved: string[] = await res.json();
+        setCaseTags(saved);
+      }
+    } catch { /* bỏ qua lỗi mạng, tag vẫn hiển theo state client */ }
+    setTagSaving(false);
+  }
+
+  function addTag(tag: string) {
+    if (!caseTags.includes(tag)) updateTags([...caseTags, tag]);
+    setShowTagPicker(false);
+  }
+
+  function removeTag(tag: string) {
+    updateTags(caseTags.filter((t) => t !== tag));
+  }
 
   const refetch = useCallback(async () => {
     const res = await fetch(`${API_URL}/cases/${caseId}`, { cache: "no-store" });
@@ -179,6 +235,58 @@ export function CaseDetail({ caseId, initialData }: Props) {
           {checklist.completedRequiredItems}/{checklist.totalRequiredItems} mục bắt buộc)
         </p>
         {c.notes && <p className="text-sm text-neutral-500 mt-1">Ghi chú: {c.notes}</p>}
+
+        {/* Tag badges + picker */}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {caseTags.map((tag) => (
+            <button
+              key={tag}
+              onClick={() => removeTag(tag)}
+              disabled={tagSaving}
+              title={`Bỏ nhãn "${tag}"`}
+              className={`group rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-all hover:opacity-80 disabled:opacity-50 ${
+                TAG_COLOR_MAP[tagColorByName.get(tag) ?? ""] ?? TAG_COLOR_MAP.gray
+              }`}
+            >
+              {tag}
+              <span className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity">×</span>
+            </button>
+          ))}
+          <div className="relative">
+            <button
+              onClick={() => setShowTagPicker(!showTagPicker)}
+              disabled={tagSaving}
+              className="h-6 w-6 rounded-full border-2 border-dashed border-neutral-300 text-neutral-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors text-sm font-bold leading-none disabled:opacity-50"
+              title="Thêm nhãn"
+            >
+              +
+            </button>
+            {showTagPicker && (
+              <div className="absolute left-0 top-8 z-20 min-w-[180px] rounded-xl border border-neutral-200 bg-white p-1.5 shadow-lg">
+                {tagDefs
+                  .filter((t) => !caseTags.includes(t.name))
+                  .map((t) => (
+                    <button
+                      key={t.name}
+                      onClick={() => addTag(t.name)}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors text-left"
+                    >
+                      <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full border ${
+                          TAG_COLOR_MAP[t.color] ?? TAG_COLOR_MAP.gray
+                        }`}
+                      />
+                      {t.name}
+                    </button>
+                  ))}
+                {tagDefs.filter((t) => !caseTags.includes(t.name)).length === 0 && (
+                  <p className="px-3 py-1.5 text-xs text-neutral-400">Đã gắn hết nhãn</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
         {isComplete && (
           <p className="text-sm text-green-700 font-semibold mt-2">✓ Hồ sơ này đã hoàn thành</p>
         )}
@@ -200,6 +308,10 @@ export function CaseDetail({ caseId, initialData }: Props) {
           </ul>
         </div>
       )}
+
+      {/* Đặt TRƯỚC mọi thứ khác trong phần thân: giấy tờ đã quá hạn làm hồ sơ trông đủ mà
+          thực chất không dùng được — nhân viên phải thấy trước khi kịp nghĩ hồ sơ đã xong. */}
+      <DocChecksPanel checks={data.docChecks} onChanged={refetch} />
 
       <GeneralNotesBanner />
 

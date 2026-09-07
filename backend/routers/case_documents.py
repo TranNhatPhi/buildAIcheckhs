@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 import ocr
 import storage
-from classify import classify_ocr_text
+from classify import ap_thong_tin_boc_duoc, classify_ocr_text
 from completeness import is_item_applicable, is_savings_item
 from db import get_db
 from models import Case, ChecklistItem, Document
@@ -140,6 +140,7 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
         document.aiConfidence = outcome.ai_confidence
         document.aiReasoning = outcome.ai_reasoning
         document.classificationError = outcome.classification_error
+        ap_thong_tin_boc_duoc(document, outcome.fields)
 
     db.commit()
 

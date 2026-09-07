@@ -8,7 +8,7 @@ from completeness import compute_checklist_summary, compute_financial_threshold_
 from db import get_db
 from mappers import financial_threshold_to_dto
 from models import Case, ChecklistItem, Document
-from schemas import AdminDocumentDTO, AdminStatsDTO, CaseListItemDTO, DocumentDTO
+from schemas import AdminDocumentDTO, AdminStatsDTO, CaseListItemDTO, DocumentDTO, parse_tags
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -33,6 +33,7 @@ def list_all_cases(db: Session = Depends(get_db)):
                 numberOfChildren=c.numberOfChildren,
                 skillLevel=c.skillLevel,
                 notes=c.notes,
+                tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
                 deletedAt=c.deletedAt,
                 percent=summary.percent,

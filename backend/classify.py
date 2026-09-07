@@ -39,7 +39,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from llm import GEMINI_LOW_REASONING, _env_int, complete_with_fallback, describe_error
@@ -176,7 +177,115 @@ Quy tắc:
 - Nhiều mục có tên gần giống nhau (vd bằng cấp vs học bạ vs bảng điểm) — đọc kỹ nội dung để phân biệt loại giấy tờ chính xác.
 - "confidence" là số từ 0 đến 1, thể hiện mức độ chắc chắn.
 - "reasoning" là 1 câu ngắn gọn bằng tiếng Việt giải thích vì sao chọn mục đó.
-- Trả lời CHỈ bằng JSON hợp lệ theo đúng format: {{"matched_item_id": string, "confidence": number, "reasoning": string}}"""
+
+Ngoài việc phân loại, ghi luôn những thông tin đọc được TRÊN CHÍNH GIẤY TỜ này:
+- "doc_owner": giấy tờ này là của AI trong gia đình. Chọn đúng MỘT trong: "APPLICANT" (đương
+  đơn), "SPOUSE" (vợ/chồng), "CHILD_1", "CHILD_2", "CHILD_3", "FATHER" (bố), "MOTHER" (mẹ),
+  "OTHER" (người khác hoặc giấy tờ không của riêng ai, vd hợp đồng công ty). Không đoán được
+  thì để null.
+- "holder_name": họ tên đầy đủ ghi trên giấy tờ (giữ nguyên dấu tiếng Việt nếu đọc được).
+- "holder_dob": ngày sinh, dạng "YYYY-MM-DD".
+- "id_number": số định danh chính của giấy tờ (số CCCD/CMND, số hộ chiếu, số sổ tiết kiệm...).
+- "id_type": loại của số vừa ghi. Chọn đúng MỘT trong: "CCCD" (căn cước/chứng minh nhân dân),
+  "PASSPORT" (hộ chiếu), "OTHER" (mọi loại số khác). Không có số thì để null.
+- "issued_at": ngày cấp, dạng "YYYY-MM-DD".
+- "expires_at": ngày hết hạn / ngày hết hiệu lực, dạng "YYYY-MM-DD".
+- "fields_note": 1-2 câu tiếng Việt nói rõ đọc được từ đâu và chỗ nào không chắc.
+
+Quy tắc BẮT BUỘC cho phần thông tin này:
+- Giấy tờ không có trường nào thì để null cho trường đó. KHÔNG suy ra từ giấy tờ khác, KHÔNG bịa.
+- Chữ số mờ, không chắc chắn thì để null và ghi lý do vào "fields_note". Đoán sai một con số
+  ở đây nguy hiểm hơn hẳn để trống: ngày hết hạn sai làm hồ sơ đã quá hạn trông như còn hạn.
+- Ngày tháng PHẢI đúng dạng "YYYY-MM-DD". Giấy tờ Việt Nam thường ghi ngày/tháng/năm — đổi
+  đúng thứ tự, đừng để lẫn ngày với tháng.
+
+- Trả lời CHỈ bằng JSON hợp lệ theo đúng format: {{"matched_item_id": string, "confidence": number, "reasoning": string, "doc_owner": string|null, "holder_name": string|null, "holder_dob": string|null, "id_number": string|null, "id_type": string|null, "issued_at": string|null, "expires_at": string|null, "fields_note": string|null}}"""
+
+
+DOC_OWNERS = {"APPLICANT", "SPOUSE", "CHILD_1", "CHILD_2", "CHILD_3", "FATHER", "MOTHER", "OTHER"}
+LOAI_SO_DINH_DANH = {"CCCD", "PASSPORT", "OTHER"}
+
+# Ngoài khoảng này gần như chắc chắn là AI đọc nhầm (thường do lẫn 2 chữ số của năm) — thà
+# bỏ trống còn hơn để một ngày hết hạn năm 0202 làm cảnh báo hạn giấy tờ loạn hết.
+_NAM_SOM_NHAT = 1900
+_NAM_MUON_NHAT = 2100
+
+
+@dataclass
+class ExtractedFields:
+    """Thông tin đọc được từ chính giấy tờ. MỌI trường đều có thể None — giấy tờ không có
+    trường đó, hoặc AI không đọc chắc chắn nên cố ý bỏ trống."""
+
+    doc_owner: str | None = None
+    holder_name: str | None = None
+    holder_dob: date | None = None
+    id_number: str | None = None
+    id_type: str | None = None
+    issued_at: date | None = None
+    expires_at: date | None = None
+    fields_note: str | None = None
+
+
+def _parse_ngay(value: object) -> date | None:
+    """Chỉ nhận đúng dạng ISO "YYYY-MM-DD". KHÔNG cố đoán các dạng khác: "03/04/2026" là
+    ngày 3 tháng 4 hay tháng 3 ngày 4 tuỳ nơi viết, đoán sai ở đây làm hồ sơ hết hạn trông
+    như còn hạn — đúng loại lỗi âm thầm nguy hiểm nhất của tính năng này."""
+    if not isinstance(value, str):
+        return None
+    try:
+        ngay = date.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if not _NAM_SOM_NHAT <= ngay.year <= _NAM_MUON_NHAT:
+        return None
+    return ngay
+
+
+def _parse_chuoi(value: object, gioi_han: int) -> str | None:
+    """Cắt theo đúng độ dài cột VARCHAR — chuỗi dài hơn sẽ làm INSERT lỗi và mất TRỌN kết
+    quả phân loại của file, chỉ vì một trường phụ."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text[:gioi_han] if text else None
+
+
+def _parse_extracted_fields(parsed: dict) -> ExtractedFields:
+    """Bóc phần thông tin phụ. Bọc riêng khỏi phần phân loại và KHÔNG BAO GIỜ ném lỗi ra
+    ngoài: phân loại mới là việc chính, một trường phụ đọc hỏng không được phép làm cả file
+    rơi xuống trạng thái ERROR."""
+    try:
+        owner = _parse_chuoi(parsed.get("doc_owner"), 191)
+        loai_so = _parse_chuoi(parsed.get("id_type"), 191)
+        return ExtractedFields(
+            doc_owner=owner if owner in DOC_OWNERS else None,
+            holder_name=_parse_chuoi(parsed.get("holder_name"), 191),
+            holder_dob=_parse_ngay(parsed.get("holder_dob")),
+            id_number=_parse_chuoi(parsed.get("id_number"), 191),
+            id_type=loai_so if loai_so in LOAI_SO_DINH_DANH else None,
+            issued_at=_parse_ngay(parsed.get("issued_at")),
+            expires_at=_parse_ngay(parsed.get("expires_at")),
+            fields_note=_parse_chuoi(parsed.get("fields_note"), 2000),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Không bóc được thông tin phụ từ kết quả phân loại: %s", e)
+        return ExtractedFields()
+
+
+def ap_thong_tin_boc_duoc(document, fields) -> None:
+    """Ghi thông tin AI bóc từ giấy tờ vào Document. Tách thành hàm dùng chung cho cả đường
+    upload lần đầu lẫn đường chạy lại OCR, để hai chỗ không bao giờ lệch nhau khi thêm trường.
+
+    KHÔNG đụng tới manualExpiresAt: đó là số nhân viên đã sửa tay, chạy lại OCR mà đè lên là
+    xoá mất công sửa của họ đúng vào lúc họ vừa sửa vì AI đọc sai."""
+    document.aiDocOwner = fields.doc_owner
+    document.aiHolderName = fields.holder_name
+    document.aiHolderDob = fields.holder_dob
+    document.aiIdNumber = fields.id_number
+    document.aiIdType = fields.id_type
+    document.aiIssuedAt = fields.issued_at
+    document.aiExpiresAt = fields.expires_at
+    document.aiFieldsNote = fields.fields_note
 
 
 @dataclass
@@ -189,6 +298,7 @@ class ClassifyOutcome:
     ai_confidence: float | None
     ai_reasoning: str | None
     classification_error: str | None
+    fields: ExtractedFields = field(default_factory=ExtractedFields)
 
 
 EMPTY_TEXT_THRESHOLD = 5  # số ký tự — dưới mức này coi như "không đọc được chữ gì"
@@ -244,6 +354,7 @@ def classify_ocr_text(
         matched_item_id = str(parsed["matched_item_id"])
         confidence = float(parsed["confidence"])
         reasoning = str(parsed.get("reasoning", ""))
+        fields = _parse_extracted_fields(parsed)
 
         valid_ids = {i.id for i in applicable_items}
         is_known_match = matched_item_id != "unmatched" and matched_item_id in valid_ids
@@ -259,8 +370,11 @@ def classify_ocr_text(
                 ai_confidence=confidence,
                 ai_reasoning=reasoning,
                 classification_error=None,
+                fields=fields,
             )
 
+        # Chưa khớp được mục nào, nhưng thông tin bóc ra từ giấy tờ vẫn giữ lại: nhân viên
+        # gán tay xong là có ngay ngày hết hạn và thông tin chủ giấy tờ, không phải chạy lại.
         return ClassifyOutcome(
             ocr_text=ocr_text,
             corrected_text=corrected_text,
@@ -270,6 +384,7 @@ def classify_ocr_text(
             ai_confidence=confidence,
             ai_reasoning=reasoning,
             classification_error=None,
+            fields=fields,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("Lỗi phân loại DeepSeek: %s", e)

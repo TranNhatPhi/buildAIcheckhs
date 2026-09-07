@@ -10,9 +10,14 @@ from completeness import (
     FinancialThreshold,
     SavingsAssessment,
 )
+from doc_checks import NGAY_CANH_BAO_HAN, DiemBatNhat, HanGiayTo
 from schemas import (
     ChecklistItemStatusDTO,
     ChecklistSummaryDTO,
+    ConflictValueDTO,
+    DataConflictDTO,
+    DocChecksDTO,
+    DocExpiryDTO,
     FinancialThresholdDTO,
     SavingsAssessmentDTO,
 )
@@ -53,4 +58,35 @@ def checklist_summary_to_dto(s: ChecklistSummary) -> ChecklistSummaryDTO:
         totalRequiredItems=s.total_required_items,
         completedRequiredItems=s.completed_required_items,
         needsReviewCount=s.needs_review_count,
+    )
+
+
+def doc_checks_to_dto(
+    han: list[HanGiayTo], bat_nhat: list[DiemBatNhat]
+) -> DocChecksDTO:
+    return DocChecksDTO(
+        expiries=[
+            DocExpiryDTO(
+                documentId=h.document_id,
+                filename=h.filename,
+                itemName=h.item_name,
+                expiresAt=h.expires_at,
+                source=h.source,
+                daysLeft=h.days_left,
+                state=h.state,
+            )
+            for h in han
+        ],
+        conflicts=[
+            DataConflictDTO(
+                owner=d.owner,
+                ownerLabel=d.owner_label,
+                fieldLabel=d.field_label,
+                values=[ConflictValueDTO(value=v.value, filename=v.filename) for v in d.values],
+            )
+            for d in bat_nhat
+        ],
+        expiredCount=sum(1 for h in han if h.state == "EXPIRED"),
+        expiringSoonCount=sum(1 for h in han if h.state == "EXPIRING_SOON"),
+        warnDays=NGAY_CANH_BAO_HAN,
     )

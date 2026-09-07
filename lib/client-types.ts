@@ -34,6 +34,44 @@ export interface DocumentDTO {
   status: "PENDING" | "OCR_RUNNING" | "CLASSIFYING" | "CLASSIFIED" | "NEEDS_REVIEW" | "MANUALLY_SET" | "ERROR";
   classificationError: string | null;
   isManualOverride: boolean;
+
+  // Thông tin AI bóc ra từ chính giấy tờ, lấy kèm trong lệnh phân loại (xem backend/classify.py).
+  aiDocOwner: string | null;
+  aiHolderName: string | null;
+  aiHolderDob: string | null;
+  aiIdNumber: string | null;
+  aiIdType: string | null;
+  aiIssuedAt: string | null;
+  aiExpiresAt: string | null;
+  // Ngày nhân viên sửa tay khi AI đọc sai — được ưu tiên hơn aiExpiresAt.
+  manualExpiresAt: string | null;
+  aiFieldsNote: string | null;
+}
+
+export interface DocExpiryDTO {
+  documentId: string;
+  filename: string;
+  itemName: string | null;
+  expiresAt: string;
+  source: "MANUAL" | "AI";
+  /** Âm nghĩa là đã quá hạn. */
+  daysLeft: number;
+  state: "EXPIRED" | "EXPIRING_SOON";
+}
+
+export interface DataConflictDTO {
+  owner: string;
+  ownerLabel: string;
+  fieldLabel: string;
+  values: { value: string; filename: string }[];
+}
+
+export interface DocChecksDTO {
+  expiries: DocExpiryDTO[];
+  conflicts: DataConflictDTO[];
+  expiredCount: number;
+  expiringSoonCount: number;
+  warnDays: number;
 }
 
 export interface ChecklistItemStatusDTO {
@@ -71,6 +109,7 @@ export interface CaseListItemDTO {
   numberOfChildren: number;
   skillLevel: string;
   notes: string | null;
+  tags: string[];
   createdAt: string;
   // null ở danh sách hồ sơ đang hoạt động — chỉ có giá trị ở /admin/cases (bao gồm cả hồ sơ
   // đã xoá mềm) hoặc /cases/deleted.
@@ -78,6 +117,8 @@ export interface CaseListItemDTO {
   percent: number;
   needsReviewCount: number;
   financialThreshold: FinancialThresholdDTO;
+  expiredDocCount: number;
+  expiringSoonDocCount: number;
 }
 
 export interface AdminStatsDTO {
@@ -105,6 +146,7 @@ export interface CaseDetailDTO {
     numberOfChildren: number;
     skillLevel: string;
     notes: string | null;
+    tags: string[];
     createdAt: string;
     documents: DocumentDTO[];
     aiAnalysisStatus: string;
@@ -121,4 +163,11 @@ export interface CaseDetailDTO {
   };
   financialThreshold: FinancialThresholdDTO;
   savings: SavingsAssessmentDTO;
+  docChecks: DocChecksDTO;
+}
+
+/** Tag hợp lệ + màu hiển thị, lấy từ GET /cases/tags. */
+export interface TagDefinition {
+  name: string;
+  color: string;
 }
