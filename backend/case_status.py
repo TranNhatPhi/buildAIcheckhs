@@ -23,6 +23,12 @@ CASE_STATUS_DEFINITIONS = (
 FINAL_CASE_STATUSES = frozenset({"APPROVED", "REJECTED"})
 STATUS_REMINDER_INTERVAL_DAYS = 14
 
+# Hai trạng thái này báo email NGAY khi chuyển sang, không đợi chu kỳ 14 ngày: "Đã nộp" là
+# mốc cần ghi nhận đúng ngà y để tính thời gian chờ kết quả, còn "Cần bổ sung giấy tờ" là
+# việc gấp — biết muộn ngày nào là khách chậm nộp bù ngày đó. Các trạng thái còn lại vẫn
+# chỉ đi theo đường nhắc định kỳ (xem next_status_reminder_at).
+INSTANT_EMAIL_STATUSES = frozenset({"SUBMITTED", "ADDITIONAL_DOCUMENTS_REQUIRED"})
+
 
 def next_status_reminder_at(case) -> datetime | None:
     """Tính mốc nhắc kế tiếp để chức năng email sau này chỉ cần truy vấn và gửi.

@@ -59,6 +59,17 @@ x-backend-common: &backend-common
     CONFIDENCE_THRESHOLD: "0.6"
     CORS_ORIGINS: https://${APP_DOMAIN}
     ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    # Backend cũng gửi EmailJS, KHÔNG chỉ mình status-reminder: đổi trạng thái sang "Đã nộp"
+    # hoặc "Cần bổ sung giấy tờ" thì báo ngay, không đợi chu kỳ 14 ngày (xem
+    # INSTANT_EMAIL_STATUSES trong backend/case_status.py). Thiếu mấy biến này thì thao tác
+    # đổi trạng thái VẪN chạy bình thường, chỉ là email không gửi được và chỉ có dòng log.
+    # Không sợ gửi trùng dù có 2 replica: mỗi lần đổi trạng thái chỉ một replica nhận request.
+    EMAILJS_SERVICE_ID: ${EMAILJS_SERVICE_ID:-}
+    EMAILJS_TEMPLATE_ID: ${EMAILJS_TEMPLATE_ID:-}
+    EMAILJS_PUBLIC_KEY: ${EMAILJS_PUBLIC_KEY:-}
+    EMAILJS_PRIVATE_KEY: ${EMAILJS_PRIVATE_KEY:-}
+    # Để email chèn được link mở thẳng hồ sơ.
+    APP_BASE_URL: https://${APP_DOMAIN}
   depends_on:
     mysql:
       condition: service_healthy

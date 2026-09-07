@@ -1,19 +1,22 @@
 import io
 import json
+import logging
 import re
 import urllib.parse
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import emailjs
 import pdf_export
 import storage
 from admin_auth import require_admin
 from case_status import (
     CASE_STATUS_DEFINITIONS,
     FINAL_CASE_STATUSES,
+    INSTANT_EMAIL_STATUSES,
     STATUS_REMINDER_INTERVAL_DAYS,
     case_status_fields,
 )
@@ -45,6 +48,8 @@ from schemas import (
     UpdateTagsRequest,
     parse_tags,
 )
+
+logger = logging.getLogger("cases")
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
@@ -513,8 +518,25 @@ def download_all_documents(case_id: str, db: Session = Depends(get_db)):
     )
 
 
+def _bao_doi_trang_thai(row: dict, sent_at) -> None:
+    """Gửi email báo đổi trạng thái. NUỐT mọi lỗi — chạy trong BackgroundTask nên ném ra
+    cũng không ai bắt, mà trạng thái thì đã lưu xong rồi: để EmailJS chết kéo theo cả thao
+    tác đổi trạng thái là đánh đổi tệ. Lỗi vào log, hồ sơ vẫn được nhắc lại sau 14 ngày.
+    """
+    try:
+        emailjs.send_cases([row], sent_at)
+        logger.info("Đã gửi email báo đổi trạng thái: %s.", row["client_name"])
+    except Exception:
+        logger.exception("Không gửi được email báo đổi trạng thái cho %s.", row["client_name"])
+
+
 @router.patch("/{case_id}", response_model=CaseListItemDTO)
-def update_case(case_id: str, body: UpdateCaseRequest, db: Session = Depends(get_db)):
+def update_case(
+    case_id: str,
+    body: UpdateCaseRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     case = db.get(Case, case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
@@ -528,15 +550,32 @@ def update_case(case_id: str, body: UpdateCaseRequest, db: Session = Depends(get
 
     # Chỉ khởi động lại chu kỳ 14 ngày khi trạng thái THỰC SỰ đổi. Bấm lưu lại cùng một
     # trạng thái không được trì hoãn email nhắc vô thời hạn.
-    if (
+    status_changed = (
         "applicationStatus" in updates
         and updates["applicationStatus"] != old_application_status
-    ):
+    )
+    if status_changed:
         case.applicationStatusUpdatedAt = now_utc()
         case.lastStatusReminderAt = None
 
     db.commit()
     db.refresh(case)
+
+    # Đọc giá trị ra NGAY tại đây rồi mới xếp lịch gửi: BackgroundTask chạy sau khi session
+    # DB đã đóng, chạm vào thuộc tính ORM lúc đó có thể nổ DetachedInstanceError.
+    if status_changed and case.applicationStatus in INSTANT_EMAIL_STATUSES:
+        # Gửi ở background chứ không gửi thẳng trong request: EmailJS mất khoảng 1 giây,
+        # không có lý do bắt nhân viên ngồi nhìn ô trạng thái quay trong lúc chờ mạng.
+        background_tasks.add_task(
+            _bao_doi_trang_thai,
+            emailjs.build_case_row(
+                case_id=case.id,
+                client_name=case.clientName,
+                application_status=case.applicationStatus,
+                updated_at=case.applicationStatusUpdatedAt,
+            ),
+            now_utc(),
+        )
 
     checklist_items = db.scalars(select(ChecklistItem)).all()
     summary = compute_checklist_summary(

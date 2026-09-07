@@ -134,6 +134,33 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod \
 `--force-recreate` an toàn với riêng `status-reminder` vì nó không gắn volume nào. **Đừng** dùng
 với `mysql` hay `minio` — hai service đó có ổ đĩa riêng.
 
+## Hai đường gửi email
+
+Cả hai dùng CHUNG một template EmailJS (`EMAILJS_TEMPLATE_ID`) — template nhận `cases` là một
+mảng, thông báo tức thì chỉ là mảng một phần tử. Cố ý vậy để khỏi bảo trì template thứ hai.
+
+| | Nhắc định kỳ | Báo tức thì |
+|---|---|---|
+| Chạy ở | service `status-reminder` | service `backend` (BackgroundTask) |
+| Kích hoạt bởi | đủ 14 ngày kể từ lần đổi trạng thái | vừa đổi sang **Đã nộp** hoặc **Cần bổ sung giấy tờ** |
+| Code | `backend/status_reminder.py` | `update_case` trong `backend/routers/cases.py` |
+| Trạng thái nào | mọi trạng thái chưa Đậu/Rớt | `INSTANT_EMAIL_STATUSES` trong `backend/case_status.py` |
+
+Muốn thêm/bớt trạng thái báo tức thì thì sửa `INSTANT_EMAIL_STATUSES`, không phải sửa router.
+
+Email tức thì gửi ở background nên **không** làm chậm thao tác đổi trạng thái, và **nuốt mọi
+lỗi**: EmailJS chết thì trạng thái vẫn lưu bình thường, chỉ có một dòng ERROR trong log backend.
+Đó là chủ ý — hồ sơ đằng nào cũng được nhắc lại theo chu kỳ 14 ngày. Xem log:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod \
+  logs backend backend2 | grep "đổi trạng thái"
+```
+
+Backend cần đủ 4 biến `EMAILJS_*` + `APP_BASE_URL` giống `status-reminder`
+(`docker-compose.prod.yml`, khối `x-backend-common`). Thiếu thì đổi trạng thái vẫn chạy, chỉ là
+không có email.
+
 ## Quy tắc gửi
 
 Email chỉ liệt kê hồ sơ đang ở một trong các trạng thái:
