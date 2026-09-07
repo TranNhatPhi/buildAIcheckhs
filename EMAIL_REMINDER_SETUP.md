@@ -78,6 +78,17 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod \
   logs status-reminder --tail 100
 ```
 
+## Lỗi đã gặp
+
+**`RuntimeError: EmailJS trả lỗi HTTP 403: error code: 1010`**
+
+Đây là lỗi của **Cloudflare** đứng trước `api.emailjs.com`, không phải của EmailJS: nó chặn
+User-Agent mặc định `Python-urllib/3.9`. Đừng mất công kiểm tra lại key hay template. Đã đo:
+cùng một payload, chỉ cần đặt User-Agent bất kỳ khác mặc định là request vào tới EmailJS và
+nhận đúng lỗi nghiệp vụ của họ. `status_reminder.py` đã gửi sẵn header
+`User-Agent: lnc-status-reminder/1.0` — nếu lỗi này quay lại thì kiểm tra xem header đó có
+còn được gửi không.
+
 ## Quy tắc gửi
 
 Email chỉ liệt kê hồ sơ đang ở một trong các trạng thái:

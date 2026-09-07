@@ -33,6 +33,12 @@ logger = logging.getLogger("status-reminder")
 DEFAULT_ADMIN_EMAIL = "documentlncglobal@gmail.com"
 DEFAULT_POLL_SECONDS = 24 * 60 * 60
 EMAILJS_SEND_URL = "https://api.emailjs.com/api/v1.0/email/send"
+# api.emailjs.com nằm sau Cloudflare, và Cloudflare CHẶN thẳng User-Agent mặc định của
+# urllib ("Python-urllib/3.9"): trả HTTP 403 với body "error code: 1010" — đó là lỗi của
+# Cloudflare, KHÔNG phải EmailJS, nên đừng đi lục lại key hay cấu hình template.
+# Đã đo: cùng payload, chỉ cần đặt User-Agent bất kỳ khác mặc định là request vào tới
+# EmailJS (nhận đúng lỗi nghiệp vụ của họ). Không cần giả làm trình duyệt.
+EMAILJS_USER_AGENT = "lnc-status-reminder/1.0"
 STATUS_LABELS = {item["value"]: item["label"] for item in CASE_STATUS_DEFINITIONS}
 STATUS_COLORS = {item["value"]: item["color"] for item in CASE_STATUS_DEFINITIONS}
 REMINDER_CASE_STATUSES = tuple(
@@ -89,7 +95,7 @@ def _send_template(template_params: dict[str, object]) -> None:
     request = Request(
         EMAILJS_SEND_URL,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "User-Agent": EMAILJS_USER_AGENT},
         method="POST",
     )
     try:
