@@ -34,6 +34,8 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
   const [skillLevel, setSkillLevel] = useState<"LOW_SKILL" | "HIGH_SKILL">(
     caseItem.skillLevel as "LOW_SKILL" | "HIGH_SKILL",
   );
+  const [partner, setPartner] = useState(caseItem.partner ?? "");
+  const [partnerSuggestions, setPartnerSuggestions] = useState<string[]>([]);
   const [notes, setNotes] = useState(caseItem.notes ?? "");
   const [applicationStatus, setApplicationStatus] = useState<ApplicationStatus>(
     caseItem.applicationStatus,
@@ -47,6 +49,11 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
     fetch(`${API_URL}/cases/tags`)
       .then((r) => (r.ok ? r.json() : []))
       .then((data: TagDefinition[]) => setTagDefs(data))
+      .catch(() => {});
+    // Gợi ý đối tác đã có, để sửa hồ sơ cũ cũng gõ ra đúng tên như lúc tạo.
+    fetch(`${API_URL}/cases/partners`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setPartnerSuggestions)
       .catch(() => {});
   }, []);
 
@@ -75,6 +82,7 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
           maritalStatus,
           numberOfChildren,
           skillLevel,
+          partner,
           notes,
           applicationStatus,
         }),
@@ -227,6 +235,27 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
             onChange={(e) => setNumberOfChildren(Number(e.target.value))}
             className="w-32 border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold mb-1.5">
+            Đối tác / nguồn <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
+          </label>
+          <input
+            list="danh-sach-doi-tac-sua"
+            maxLength={191}
+            value={partner}
+            onChange={(e) => setPartner(e.target.value)}
+            className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
+            placeholder="Ví dụ: Công ty ABC"
+          />
+          {/* id khác với datalist ở NewCaseForm: hai form có thể cùng nằm trên một trang,
+              trùng id thì trình duyệt chỉ dùng cái đầu tiên. */}
+          <datalist id="danh-sach-doi-tac-sua">
+            {partnerSuggestions.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
         </div>
 
         <div>

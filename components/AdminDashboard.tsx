@@ -337,6 +337,8 @@ export function AdminDashboard() {
                                   {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
                                   {" · "}
                                   {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
+                    {c.partner ? ` · 🏢 ${c.partner}` : ""}
+                                  {c.partner ? ` · 🏢 ${c.partner}` : ""}
                                 </p>
                                 {c.tags.length > 0 && (
                                   <div className="flex flex-wrap gap-1 mt-1.5">

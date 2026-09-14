@@ -373,7 +373,14 @@ export function CaseDetail({ caseId, initialData }: Props) {
       <div
         className={isComplete ? "border-2 border-green-300 bg-green-50 rounded-2xl p-5" : ""}
       >
-        <h1 className="text-3xl font-bold text-neutral-800">{c.clientName}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-3xl font-bold text-neutral-800">{c.clientName}</h1>
+          {c.partner && (
+            <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
+              🏢 {c.partner}
+            </span>
+          )}
+        </div>
         <p className="text-sm text-neutral-500 mt-1.5">
           {c.maritalStatus === "MARRIED" ? "Đã kết hôn" : "Độc thân"}
           {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}

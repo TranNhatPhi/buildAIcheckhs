@@ -45,6 +45,13 @@ class Case(Base):
     numberOfChildren = Column(Integer, nullable=False, default=0)
     skillLevel = Column(String(191), nullable=False, default="LOW_SKILL")  # "LOW_SKILL" | "HIGH_SKILL"
     notes = Column(Text, nullable=True)
+    # Đối tác / nguồn giới thiệu hồ sơ. Có hai lý do, cái thứ hai mới là cái đau:
+    #   1. Trùng tên khách — "Nguyễn Văn A" của đối tác này với của đối tác kia là hai người
+    #      khác nhau, nhìn danh sách không phân biệt nổi.
+    #   2. Gom hồ sơ theo nguồn để biết đang làm việc với ai (xem bộ lọc ở CaseList.tsx).
+    # Để TRỐNG được: hồ sơ khách tự tìm đến không có đối tác nào, và toàn bộ hồ sơ tạo
+    # TRƯỚC khi có cột này đều NULL — đừng đặt NOT NULL.
+    partner = Column(String(191), nullable=True)
     createdAt = Column(DateTime, default=now_utc)
     updatedAt = Column(DateTime, default=now_utc, onupdate=now_utc)
     # Xoá mềm — nút "Xoá" ở danh sách hồ sơ chỉ đánh dấu deletedAt (ẩn khỏi danh sách),

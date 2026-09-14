@@ -120,6 +120,8 @@ export interface CaseListItemDTO {
   maritalStatus: string;
   numberOfChildren: number;
   skillLevel: string;
+  /** Đối tác / nguồn giới thiệu. null = khách tự tìm đến, hoặc hồ sơ tạo trước khi có trường này. */
+  partner: string | null;
   notes: string | null;
   tags: string[];
   createdAt: string;
@@ -203,6 +205,7 @@ export interface CaseDetailDTO {
     maritalStatus: string;
     numberOfChildren: number;
     skillLevel: string;
+    partner: string | null;
     notes: string | null;
     tags: string[];
     createdAt: string;

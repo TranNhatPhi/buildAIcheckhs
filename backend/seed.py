@@ -408,6 +408,9 @@ ADDED_COLUMNS = [
     ("Case", "applicationStatus", "VARCHAR(191) NOT NULL DEFAULT 'PENDING'"),
     ("Case", "applicationStatusUpdatedAt", "DATETIME NULL"),
     ("Case", "lastStatusReminderAt", "DATETIME NULL"),
+    # Đối tác / nguồn giới thiệu hồ sơ. NULL cho mọi hồ sơ cũ — không đặt NOT NULL vì
+    # không có giá trị nào đúng để điền ngược cho hồ sơ đã tạo trước khi có cột này.
+    ("Case", "partner", "VARCHAR(191) NULL"),
 ]
 
 

@@ -75,6 +75,7 @@ def list_cases(db: Session = Depends(get_db)):
                 maritalStatus=c.maritalStatus,
                 numberOfChildren=c.numberOfChildren,
                 skillLevel=c.skillLevel,
+                partner=c.partner,
                 notes=c.notes,
                 tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
@@ -94,6 +95,25 @@ def list_tags():
     """Danh sách tag hợp lệ + màu hiển thị — frontend gọi 1 lần lúc load trang để render
     dropdown/chip đúng màu, không hardcode lại danh sách ở 2 nơi."""
     return [{"name": name, "color": color} for name, color in ALLOWED_TAGS.items()]
+
+
+@router.get("/partners")
+def list_partners(db: Session = Depends(get_db)):
+    """Các đối tác ĐANG được dùng, để form gợi ý sẵn khi gõ.
+
+    Không có bảng Partner riêng: đây là ô chữ tự do, danh sách gợi ý sinh ra từ chính dữ
+    liệu đã nhập. Đổi lại là không phải dựng thêm màn hình quản lý đối tác, nhưng gõ sai
+    chính tả sẽ đẻ ra một nhóm mới — gợi ý sẵn chính là thứ kéo mọi người gõ giống nhau.
+
+    Sắp theo tên để thứ tự ổn định giữa các lần gọi; hồ sơ đã xoá mềm không tính.
+    """
+    rows = db.scalars(
+        select(Case.partner)
+        .where(Case.deletedAt.is_(None), Case.partner.is_not(None), Case.partner != "")
+        .distinct()
+        .order_by(Case.partner)
+    ).all()
+    return [r for r in rows if r]
 
 
 @router.get("/statuses")
@@ -117,6 +137,9 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
         maritalStatus=body.maritalStatus,
         numberOfChildren=body.numberOfChildren,
         skillLevel=body.skillLevel,
+        # Cắt khoảng trắng thừa và quy chuỗi rỗng về NULL: "  " và "" phải là "không có đối
+        # tác" giống hệt nhau, nếu không danh sách gợi ý sẽ mọc ra một "nhóm" vô hình.
+        partner=(body.partner or "").strip() or None,
         notes=body.notes,
     )
     db.add(case)
@@ -130,6 +153,7 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
         maritalStatus=case.maritalStatus,
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
+        partner=case.partner,
         notes=case.notes,
         tags=[],
         createdAt=case.createdAt,
@@ -163,6 +187,7 @@ def list_deleted_cases(db: Session = Depends(get_db)):
                 maritalStatus=c.maritalStatus,
                 numberOfChildren=c.numberOfChildren,
                 skillLevel=c.skillLevel,
+                partner=c.partner,
                 notes=c.notes,
                 tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
@@ -202,6 +227,7 @@ def restore_case(case_id: str, db: Session = Depends(get_db)):
         maritalStatus=case.maritalStatus,
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
+        partner=case.partner,
         notes=case.notes,
         tags=parse_tags(case.tags),
         createdAt=case.createdAt,
@@ -234,6 +260,7 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
             "maritalStatus": case.maritalStatus,
             "numberOfChildren": case.numberOfChildren,
             "skillLevel": case.skillLevel,
+            "partner": case.partner,
             "notes": case.notes,
             "tags": parse_tags(case.tags),
             "createdAt": case.createdAt,
@@ -598,6 +625,7 @@ def update_case(
         maritalStatus=case.maritalStatus,
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
+        partner=case.partner,
         notes=case.notes,
         tags=parse_tags(case.tags),
         createdAt=case.createdAt,

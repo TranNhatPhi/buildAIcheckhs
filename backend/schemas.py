@@ -51,6 +51,7 @@ class CreateCaseRequest(BaseModel):
     maritalStatus: Literal["SINGLE", "MARRIED"]
     numberOfChildren: int = Field(ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] = "LOW_SKILL"
+    partner: str | None = Field(default=None, max_length=191)
     notes: str | None = None
 
 
@@ -61,6 +62,7 @@ class UpdateCaseRequest(BaseModel):
     maritalStatus: Literal["SINGLE", "MARRIED"] | None = None
     numberOfChildren: int | None = Field(default=None, ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] | None = None
+    partner: str | None = Field(default=None, max_length=191)
     notes: str | None = None
     applicationStatus: ApplicationStatus | None = None
 
@@ -222,6 +224,9 @@ class CaseDTO(BaseModel):
     maritalStatus: str
     numberOfChildren: int
     skillLevel: str = "LOW_SKILL"
+    # Đối tác / nguồn giới thiệu. None = hồ sơ khách tự tìm đến, hoặc hồ sơ tạo trước khi
+    # có trường này.
+    partner: str | None = None
     notes: str | None
     tags: list[str] = []
     createdAt: datetime

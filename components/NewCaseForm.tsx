@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { API_URL } from "@/lib/format";
 
 export function NewCaseForm() {
@@ -10,9 +10,21 @@ export function NewCaseForm() {
   const [maritalStatus, setMaritalStatus] = useState<"SINGLE" | "MARRIED">("SINGLE");
   const [numberOfChildren, setNumberOfChildren] = useState(0);
   const [skillLevel, setSkillLevel] = useState<"LOW_SKILL" | "HIGH_SKILL">("LOW_SKILL");
+  const [partner, setPartner] = useState("");
+  // Danh sách đối tác đã từng nhập, dùng làm gợi ý. Không có bảng Partner riêng nên đây
+  // là thứ duy nhất kéo mọi người gõ giống nhau thay vì đẻ ra "LNC HN" / "LNC Hà Nội".
+  const [partnerSuggestions, setPartnerSuggestions] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Gợi ý hỏng thì ô vẫn gõ tay được bình thường — không báo lỗi, không chặn tạo hồ sơ.
+    fetch(`${API_URL}/cases/partners`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setPartnerSuggestions)
+      .catch(() => {});
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,7 +35,14 @@ export function NewCaseForm() {
       const res = await fetch(`${API_URL}/cases`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientName, maritalStatus, numberOfChildren, skillLevel, notes }),
+        body: JSON.stringify({
+          clientName,
+          maritalStatus,
+          numberOfChildren,
+          skillLevel,
+          partner,
+          notes,
+        }),
       });
 
       if (!res.ok) {
@@ -55,6 +74,30 @@ export function NewCaseForm() {
           className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
           placeholder="Nguyễn Văn A"
         />
+      </div>
+
+      <div>
+        <label className="block text-sm font-semibold mb-1.5">
+          Đối tác / nguồn <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
+        </label>
+        <input
+          list="danh-sach-doi-tac"
+          maxLength={191}
+          value={partner}
+          onChange={(e) => setPartner(e.target.value)}
+          className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
+          placeholder="Ví dụ: Công ty ABC"
+        />
+        {/* datalist = gõ tự do NHƯNG có gợi ý các đối tác đã nhập trước đó. Chọn lại từ gợi
+            ý giúp tên viết giống nhau, nhờ vậy bộ lọc ở danh sách hồ sơ mới gom đúng nhóm. */}
+        <datalist id="danh-sach-doi-tac">
+          {partnerSuggestions.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+        <p className="mt-1.5 text-xs text-neutral-400">
+          Dùng để phân biệt khi hai đối tác có khách trùng tên, và để lọc hồ sơ theo nguồn.
+        </p>
       </div>
 
       <div>

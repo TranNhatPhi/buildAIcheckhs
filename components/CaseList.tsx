@@ -59,6 +59,10 @@ export function CaseList({ initialCases }: Props) {
   const [maritalFilter, setMaritalFilter] = useState<MaritalFilter>("ALL");
   const [sortOption, setSortOption] = useState<SortOption>("NEWEST");
   const [tagFilter, setTagFilter] = useState<string>("ALL");
+  // "ALL" = mọi hồ sơ; "__NONE__" = hồ sơ chưa gán đối tác (khách tự tìm đến, hoặc hồ sơ
+  // tạo trước khi có trường này). Dùng chuỗi riêng chứ không dùng "" vì "" là giá trị
+  // hợp lệ của ô select khi chưa chọn gì, sẽ lẫn với nhau.
+  const [partnerFilter, setPartnerFilter] = useState<string>("ALL");
   const [tagDefs, setTagDefs] = useState<TagDefinition[]>([]);
 
   // Fetch danh sách tag hợp lệ + màu hiển thị 1 lần khi mount — không hardcode lại ở frontend,
@@ -76,6 +80,16 @@ export function CaseList({ initialCases }: Props) {
     [tagDefs],
   );
 
+  // Gom từ chính `cases` chứ không gọi /cases/partners: danh sách này chỉ cần khớp đúng
+  // những hồ sơ đang có trên màn hình, và như vậy không phát sinh thêm một lượt gọi mạng.
+  const partnerOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const c of cases) if (c.partner) names.add(c.partner);
+    return Array.from(names).sort((a, b) => VIETNAMESE_COLLATOR.compare(a, b));
+  }, [cases]);
+
+  const hasPartnerlessCases = useMemo(() => cases.some((c) => !c.partner), [cases]);
+
   const hasActiveFilters =
     searchQuery.trim() !== "" ||
     checklistStatusFilter !== "ALL" ||
@@ -83,6 +97,7 @@ export function CaseList({ initialCases }: Props) {
     skillFilter !== "ALL" ||
     maritalFilter !== "ALL" ||
     tagFilter !== "ALL" ||
+    partnerFilter !== "ALL" ||
     sortOption !== "NEWEST";
 
   const visibleCases = useMemo(() => {
@@ -91,7 +106,7 @@ export function CaseList({ initialCases }: Props) {
     return cases
       .filter((caseItem) => {
         const searchableText = normalizeSearchText(
-          `${caseItem.clientName} ${caseItem.notes ?? ""}`,
+          `${caseItem.clientName} ${caseItem.partner ?? ""} ${caseItem.notes ?? ""}`,
         );
         const matchesSearch = normalizedQuery === "" || searchableText.includes(normalizedQuery);
         const matchesTag =
@@ -106,12 +121,16 @@ export function CaseList({ initialCases }: Props) {
         const matchesApplicationStatus =
           applicationStatusFilter === "ALL" ||
           caseItem.applicationStatus === applicationStatusFilter;
+        const matchesPartner =
+          partnerFilter === "ALL" ||
+          (partnerFilter === "__NONE__" ? !caseItem.partner : caseItem.partner === partnerFilter);
         const matchesSkill = skillFilter === "ALL" || caseItem.skillLevel === skillFilter;
         const matchesMarital = maritalFilter === "ALL" || caseItem.maritalStatus === maritalFilter;
 
         return (
           matchesSearch &&
           matchesTag &&
+          matchesPartner &&
           matchesChecklistStatus &&
           matchesApplicationStatus &&
           matchesSkill &&
@@ -139,6 +158,7 @@ export function CaseList({ initialCases }: Props) {
     cases,
     checklistStatusFilter,
     maritalFilter,
+    partnerFilter,
     searchQuery,
     skillFilter,
     sortOption,
@@ -298,6 +318,29 @@ export function CaseList({ initialCases }: Props) {
             </select>
           </label>
 
+          {/* Chỉ hiện ô lọc khi thật sự có đối tác để lọc — chưa ai nhập đối tác thì ô này
+              rỗng, chỉ tổ làm rối hàng bộ lọc vốn đã dài. */}
+          {(partnerOptions.length > 0 || hasPartnerlessCases) && (
+            <label>
+              <span className="mb-1.5 block text-sm font-medium text-neutral-700">
+                Đối tác / nguồn
+              </span>
+              <select
+                value={partnerFilter}
+                onChange={(event) => setPartnerFilter(event.target.value)}
+                className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2.5 text-sm text-neutral-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              >
+                <option value="ALL">Tất cả đối tác</option>
+                {partnerOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+                {hasPartnerlessCases && <option value="__NONE__">— Chưa gán đối tác —</option>}
+              </select>
+            </label>
+          )}
+
           {tagDefs.length > 0 && (
             <label>
               <span className="mb-1.5 block text-sm font-medium text-neutral-700">Nhãn (tag)</span>
@@ -370,7 +413,19 @@ export function CaseList({ initialCases }: Props) {
                     className="flex-1 min-w-0 flex items-center justify-between gap-3"
                   >
                     <div className="min-w-0">
-                      <p className="font-semibold text-neutral-800 truncate">{c.clientName}</p>
+                      {/* Đối tác nằm CÙNG DÒNG với tên khách, không đẩy xuống dòng phụ: đây
+                          chính là thứ phân biệt hai khách trùng tên, mà lúc lướt danh sách
+                          mắt chỉ dừng ở dòng tên. Để tuốt dưới thì coi như không có. */}
+                      <p className="flex flex-wrap items-center gap-2 min-w-0">
+                        <span className="font-semibold text-neutral-800 truncate">
+                          {c.clientName}
+                        </span>
+                        {c.partner && (
+                          <span className="shrink-0 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800">
+                            🏢 {c.partner}
+                          </span>
+                        )}
+                      </p>
                       <p className="text-sm text-neutral-500 mt-0.5">
                         {c.maritalStatus === "MARRIED" ? "Đã kết hôn" : "Độc thân"}
                         {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
