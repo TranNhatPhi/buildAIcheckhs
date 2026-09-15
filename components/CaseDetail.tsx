@@ -487,7 +487,7 @@ export function CaseDetail({ caseId, initialData }: Props) {
                 📝
               </span>
               {/* whitespace-pre-wrap: nhân viên hay xuống dòng để liệt kê nhiều thứ thiếu */}
-              <span className="whitespace-pre-wrap text-sm font-medium text-violet-900">{c.notes}</span>
+              <span className="whitespace-pre-wrap text-sm font-medium text-neutral-900">{c.notes}</span>
               <span className="ml-auto shrink-0 text-xs font-semibold text-violet-700 opacity-0 transition-opacity group-hover:opacity-100">
                 Sửa
               </span>
