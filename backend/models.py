@@ -52,6 +52,13 @@ class Case(Base):
     # Để TRỐNG được: hồ sơ khách tự tìm đến không có đối tác nào, và toàn bộ hồ sơ tạo
     # TRƯỚC khi có cột này đều NULL — đừng đặt NOT NULL.
     partner = Column(String(191), nullable=True)
+    # Nghề nghiệp của đương đơn (vd "Xây dựng", "Chế biến hải sản"). Ô chữ tự do có gợi ý,
+    # cùng khuôn với `partner` — xem GET /cases/occupations.
+    occupation = Column(String(191), nullable=True)
+    # Kinh nghiệm làm việc, LUÔN quy về THÁNG dù nhân viên nhập theo năm hay tháng. Lưu một
+    # số duy nhất thay vì cặp (số, đơn vị) để còn so sánh/sắp xếp được; giao diện tự đổi
+    # ngược lại khi hiển thị ("18" -> "1 năm 6 tháng"). NULL = chưa ghi nhận.
+    experienceMonths = Column(Integer, nullable=True)
     createdAt = Column(DateTime, default=now_utc)
     updatedAt = Column(DateTime, default=now_utc, onupdate=now_utc)
     # Xoá mềm — nút "Xoá" ở danh sách hồ sơ chỉ đánh dấu deletedAt (ẩn khỏi danh sách),

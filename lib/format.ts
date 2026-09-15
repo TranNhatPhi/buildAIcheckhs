@@ -91,3 +91,32 @@ export function formatRemaining(remainingSeconds: number): string {
   const seconds = remainingSeconds % 60;
   return seconds > 0 ? `còn khoảng ${minutes}p ${seconds}s` : `còn khoảng ${minutes} phút`;
 }
+
+/**
+ * Đổi số tháng kinh nghiệm thành chữ dễ đọc: 18 -> "1 năm 6 tháng".
+ *
+ * DB chỉ lưu MỘT con số (tháng) để còn so sánh/sắp xếp được, nên mọi chỗ hiển thị đều phải
+ * đi qua đây — nếu không sẽ có nơi hiện "18 tháng", nơi hiện "1.5 năm", đọc rất khó chịu.
+ * Phân biệt null (chưa ghi nhận) với 0 (đã hỏi, khách chưa có kinh nghiệm).
+ */
+export function formatExperience(months: number | null | undefined): string | null {
+  if (months === null || months === undefined) return null;
+  if (months === 0) return "Chưa có kinh nghiệm";
+  const nam = Math.floor(months / 12);
+  const thang = months % 12;
+  if (nam === 0) return `${thang} tháng`;
+  if (thang === 0) return `${nam} năm`;
+  return `${nam} năm ${thang} tháng`;
+}
+
+/** Ngược lại: tách số tháng thành (số, đơn vị) để đổ vào form sửa. */
+export function splitExperience(months: number | null | undefined): {
+  value: string;
+  unit: "YEAR" | "MONTH";
+} {
+  if (months === null || months === undefined) return { value: "", unit: "YEAR" };
+  // Chia hết cho 12 thì gần như chắc chắn lúc nhập người ta gõ theo NĂM — trả về đúng đơn vị
+  // đó để mở form sửa không thấy "24 tháng" trong khi mình vừa nhập "2 năm".
+  if (months > 0 && months % 12 === 0) return { value: String(months / 12), unit: "YEAR" };
+  return { value: String(months), unit: "MONTH" };
+}

@@ -3,6 +3,22 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { API_URL } from "@/lib/format";
+import {
+  EXPERIENCE_UNITS,
+  FORM_HINT,
+  FORM_INPUT,
+  FORM_LABEL,
+  FORM_PILL_BASE,
+  FORM_PILL_OFF,
+  FORM_PILL_ON,
+  FORM_SECTION,
+  FORM_SECTION_ROSE,
+  FORM_SECTION_SKY,
+  FORM_SECTION_TITLE,
+  FORM_SECTION_VIOLET,
+  FORM_SUBMIT,
+  toExperienceMonths,
+} from "@/lib/formStyles";
 
 export function NewCaseForm() {
   const router = useRouter();
@@ -11,19 +27,26 @@ export function NewCaseForm() {
   const [numberOfChildren, setNumberOfChildren] = useState(0);
   const [skillLevel, setSkillLevel] = useState<"LOW_SKILL" | "HIGH_SKILL">("LOW_SKILL");
   const [partner, setPartner] = useState("");
-  // Danh sách đối tác đã từng nhập, dùng làm gợi ý. Không có bảng Partner riêng nên đây
-  // là thứ duy nhất kéo mọi người gõ giống nhau thay vì đẻ ra "LNC HN" / "LNC Hà Nội".
-  const [partnerSuggestions, setPartnerSuggestions] = useState<string[]>([]);
+  const [occupation, setOccupation] = useState("");
+  const [experienceValue, setExperienceValue] = useState("");
+  const [experienceUnit, setExperienceUnit] = useState<"YEAR" | "MONTH">("YEAR");
   const [notes, setNotes] = useState("");
+  // Gợi ý sinh từ dữ liệu đã nhập. Không có bảng riêng cho đối tác/nghề nghiệp, nên đây là
+  // thứ duy nhất kéo mọi người gõ giống nhau thay vì đẻ ra "Xây dựng" / "xay dung" / "XD".
+  const [partnerSuggestions, setPartnerSuggestions] = useState<string[]>([]);
+  const [occupationSuggestions, setOccupationSuggestions] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Gợi ý hỏng thì ô vẫn gõ tay được bình thường — không báo lỗi, không chặn tạo hồ sơ.
-    fetch(`${API_URL}/cases/partners`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then(setPartnerSuggestions)
-      .catch(() => {});
+    const nap = (duong: string, set: (v: string[]) => void) =>
+      fetch(`${API_URL}/cases/${duong}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then(set)
+        .catch(() => {});
+    nap("partners", setPartnerSuggestions);
+    nap("occupations", setOccupationSuggestions);
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -41,6 +64,8 @@ export function NewCaseForm() {
           numberOfChildren,
           skillLevel,
           partner,
+          occupation,
+          experienceMonths: toExperienceMonths(experienceValue, experienceUnit),
           notes,
         }),
       });
@@ -62,147 +87,230 @@ export function NewCaseForm() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex flex-col gap-6 bg-white border-2 border-neutral-200 rounded-2xl p-7 shadow-sm"
+      className="overflow-hidden rounded-3xl border border-violet-100 bg-white shadow-sm"
     >
-      <div>
-        <label className="block text-sm font-semibold mb-1.5">Tên khách hàng</label>
-        <input
-          required
-          maxLength={191}
-          value={clientName}
-          onChange={(e) => setClientName(e.target.value)}
-          className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
-          placeholder="Nguyễn Văn A"
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-semibold mb-1.5">
-          Đối tác / nguồn <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
-        </label>
-        <input
-          list="danh-sach-doi-tac"
-          maxLength={191}
-          value={partner}
-          onChange={(e) => setPartner(e.target.value)}
-          className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
-          placeholder="Ví dụ: Công ty ABC"
-        />
-        {/* datalist = gõ tự do NHƯNG có gợi ý các đối tác đã nhập trước đó. Chọn lại từ gợi
-            ý giúp tên viết giống nhau, nhờ vậy bộ lọc ở danh sách hồ sơ mới gom đúng nhóm. */}
-        <datalist id="danh-sach-doi-tac">
-          {partnerSuggestions.map((name) => (
-            <option key={name} value={name} />
-          ))}
-        </datalist>
-        <p className="mt-1.5 text-xs text-neutral-400">
-          Dùng để phân biệt khi hai đối tác có khách trùng tên, và để lọc hồ sơ theo nguồn.
+      {/* Dải pastel đầu form — thay cho tiêu đề chữ trơn, để form có điểm bắt đầu rõ ràng. */}
+      <div className="bg-gradient-to-r from-violet-100 via-sky-100 to-rose-100 px-7 py-5">
+        <p className="text-lg font-bold text-neutral-800">Tạo hồ sơ mới</p>
+        <p className="mt-0.5 text-sm text-neutral-600">
+          Điền thông tin khách hàng để hệ thống dựng đúng checklist tương ứng.
         </p>
       </div>
 
-      <div>
-        <label className="block text-sm font-semibold mb-1.5">Tình trạng hôn nhân</label>
-        <div className="flex gap-3">
-          <label
-            className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
-              maritalStatus === "SINGLE"
-                ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                : "border-neutral-200 text-neutral-500"
-            }`}
-          >
-            <input
-              type="radio"
-              className="hidden"
-              checked={maritalStatus === "SINGLE"}
-              onChange={() => setMaritalStatus("SINGLE")}
-            />
-            Độc thân
-          </label>
-          <label
-            className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
-              maritalStatus === "MARRIED"
-                ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                : "border-neutral-200 text-neutral-500"
-            }`}
-          >
-            <input
-              type="radio"
-              className="hidden"
-              checked={maritalStatus === "MARRIED"}
-              onChange={() => setMaritalStatus("MARRIED")}
-            />
-            Đã kết hôn
-          </label>
-        </div>
+      <div className="flex flex-col gap-5 p-7">
+        {/* ── Nhóm 1: khách hàng ─────────────────────────────────────────────────── */}
+        <section className={`${FORM_SECTION} ${FORM_SECTION_VIOLET}`}>
+          <p className={FORM_SECTION_TITLE}>
+            <span aria-hidden="true">👤</span> Thông tin khách hàng
+          </p>
+
+          <div className="flex flex-col gap-5">
+            <div>
+              <label className={FORM_LABEL} htmlFor="ten-khach-hang">
+                Tên khách hàng
+              </label>
+              <input
+                id="ten-khach-hang"
+                required
+                maxLength={191}
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                className={FORM_INPUT}
+                placeholder="Nguyễn Văn A"
+              />
+            </div>
+
+            <div>
+              <span className={FORM_LABEL}>Tình trạng hôn nhân</span>
+              <div className="flex flex-wrap gap-3">
+                {(
+                  [
+                    ["SINGLE", "Độc thân"],
+                    ["MARRIED", "Đã kết hôn"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <label
+                    key={value}
+                    className={`${FORM_PILL_BASE} ${
+                      maritalStatus === value ? FORM_PILL_ON : FORM_PILL_OFF
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="tinh-trang-hon-nhan"
+                      className="sr-only"
+                      checked={maritalStatus === value}
+                      onChange={() => setMaritalStatus(value)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className={FORM_LABEL} htmlFor="so-con">
+                Số con
+              </label>
+              <input
+                id="so-con"
+                type="number"
+                min={0}
+                max={20}
+                value={numberOfChildren}
+                onChange={(e) => setNumberOfChildren(Number(e.target.value))}
+                className={`${FORM_INPUT} w-32`}
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* ── Nhóm 2: nghề nghiệp & kinh nghiệm ──────────────────────────────────── */}
+        <section className={`${FORM_SECTION} ${FORM_SECTION_SKY}`}>
+          <p className={FORM_SECTION_TITLE}>
+            <span aria-hidden="true">💼</span> Nghề nghiệp &amp; kinh nghiệm
+          </p>
+
+          <div className="flex flex-col gap-5">
+            <div>
+              <span className={FORM_LABEL}>Trình độ kỹ năng (skill)</span>
+              <div className="flex flex-wrap gap-3">
+                {(
+                  [
+                    ["LOW_SKILL", "Low Skilled"],
+                    ["HIGH_SKILL", "High Skilled"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <label
+                    key={value}
+                    className={`${FORM_PILL_BASE} ${
+                      skillLevel === value ? FORM_PILL_ON : FORM_PILL_OFF
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="trinh-do-ky-nang"
+                      className="sr-only"
+                      checked={skillLevel === value}
+                      onChange={() => setSkillLevel(value)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              <p className={FORM_HINT}>Quyết định checklist giấy tờ nào được áp dụng.</p>
+            </div>
+
+            <div>
+              <label className={FORM_LABEL} htmlFor="nghe-nghiep">
+                Nghề nghiệp <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
+              </label>
+              <input
+                id="nghe-nghiep"
+                list="goi-y-nghe-nghiep"
+                maxLength={191}
+                value={occupation}
+                onChange={(e) => setOccupation(e.target.value)}
+                className={FORM_INPUT}
+                placeholder="Ví dụ: Xây dựng, Chế biến hải sản"
+              />
+              <datalist id="goi-y-nghe-nghiep">
+                {occupationSuggestions.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+            </div>
+
+            <div>
+              <label className={FORM_LABEL} htmlFor="kinh-nghiem">
+                Kinh nghiệm làm việc{" "}
+                <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
+              </label>
+              {/* Nhập theo năm HOẶC tháng tuỳ nhân viên; backend luôn lưu quy về tháng. */}
+              <div className="flex gap-2">
+                <input
+                  id="kinh-nghiem"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={experienceValue}
+                  onChange={(e) => setExperienceValue(e.target.value)}
+                  className={`${FORM_INPUT} w-32`}
+                  placeholder="0"
+                />
+                <select
+                  aria-label="Đơn vị kinh nghiệm"
+                  value={experienceUnit}
+                  onChange={(e) => setExperienceUnit(e.target.value as "YEAR" | "MONTH")}
+                  className={`${FORM_INPUT} w-28`}
+                >
+                  {EXPERIENCE_UNITS.map((u) => (
+                    <option key={u.value} value={u.value}>
+                      {u.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className={FORM_HINT}>Ghi số năm hoặc số tháng, chọn đơn vị tương ứng.</p>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Nhóm 3: nguồn & ghi chú ────────────────────────────────────────────── */}
+        <section className={`${FORM_SECTION} ${FORM_SECTION_ROSE}`}>
+          <p className={FORM_SECTION_TITLE}>
+            <span aria-hidden="true">🏢</span> Nguồn &amp; ghi chú
+          </p>
+
+          <div className="flex flex-col gap-5">
+            <div>
+              <label className={FORM_LABEL} htmlFor="doi-tac">
+                Đối tác / nguồn <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
+              </label>
+              <input
+                id="doi-tac"
+                list="goi-y-doi-tac"
+                maxLength={191}
+                value={partner}
+                onChange={(e) => setPartner(e.target.value)}
+                className={FORM_INPUT}
+                placeholder="Ví dụ: Ms. Thanh"
+              />
+              <datalist id="goi-y-doi-tac">
+                {partnerSuggestions.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+              <p className={FORM_HINT}>
+                Dùng để phân biệt khi hai đối tác có khách trùng tên, và để lọc hồ sơ theo nguồn.
+              </p>
+            </div>
+
+            <div>
+              <label className={FORM_LABEL} htmlFor="ghi-chu">
+                Ghi chú <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
+              </label>
+              <textarea
+                id="ghi-chu"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                className={FORM_INPUT}
+              />
+            </div>
+          </div>
+        </section>
+
+        {error && (
+          <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+            {error}
+          </p>
+        )}
+
+        <button type="submit" disabled={submitting} className={`${FORM_SUBMIT} self-start`}>
+          {submitting ? "Đang tạo..." : "Tạo hồ sơ"}
+        </button>
       </div>
-
-      <div>
-        <label className="block text-sm font-semibold mb-1.5">Trình độ kỹ năng (skill)</label>
-        <div className="flex gap-3">
-          <label
-            className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
-              skillLevel === "LOW_SKILL"
-                ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                : "border-neutral-200 text-neutral-500"
-            }`}
-          >
-            <input
-              type="radio"
-              className="hidden"
-              checked={skillLevel === "LOW_SKILL"}
-              onChange={() => setSkillLevel("LOW_SKILL")}
-            />
-            Low Skilled
-          </label>
-          <label
-            className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
-              skillLevel === "HIGH_SKILL"
-                ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                : "border-neutral-200 text-neutral-500"
-            }`}
-          >
-            <input
-              type="radio"
-              className="hidden"
-              checked={skillLevel === "HIGH_SKILL"}
-              onChange={() => setSkillLevel("HIGH_SKILL")}
-            />
-            High Skilled
-          </label>
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-sm font-semibold mb-1.5">Số con</label>
-        <input
-          type="number"
-          min={0}
-          max={20}
-          value={numberOfChildren}
-          onChange={(e) => setNumberOfChildren(Number(e.target.value))}
-          className="w-32 border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-semibold mb-1.5">Ghi chú (tuỳ chọn)</label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={3}
-          className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
-        />
-      </div>
-
-      {error && <p className="text-sm text-red-600">{error}</p>}
-
-      <button
-        type="submit"
-        disabled={submitting}
-        className="bg-indigo-600 text-white px-6 py-3 rounded-full text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 self-start shadow-sm transition-colors"
-      >
-        {submitting ? "Đang tạo..." : "Tạo hồ sơ"}
-      </button>
     </form>
   );
 }

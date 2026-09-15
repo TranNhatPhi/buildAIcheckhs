@@ -52,6 +52,10 @@ class CreateCaseRequest(BaseModel):
     numberOfChildren: int = Field(ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] = "LOW_SKILL"
     partner: str | None = Field(default=None, max_length=191)
+    occupation: str | None = Field(default=None, max_length=191)
+    # Trần 100 năm: chặn lỗi gõ nhầm (vd nhập 2024 vì tưởng là năm) chứ không phải giới
+    # hạn nghiệp vụ thật.
+    experienceMonths: int | None = Field(default=None, ge=0, le=1200)
     notes: str | None = None
 
 
@@ -63,6 +67,8 @@ class UpdateCaseRequest(BaseModel):
     numberOfChildren: int | None = Field(default=None, ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] | None = None
     partner: str | None = Field(default=None, max_length=191)
+    occupation: str | None = Field(default=None, max_length=191)
+    experienceMonths: int | None = Field(default=None, ge=0, le=1200)
     notes: str | None = None
     applicationStatus: ApplicationStatus | None = None
 
@@ -227,6 +233,9 @@ class CaseDTO(BaseModel):
     # Đối tác / nguồn giới thiệu. None = hồ sơ khách tự tìm đến, hoặc hồ sơ tạo trước khi
     # có trường này.
     partner: str | None = None
+    occupation: str | None = None
+    # Luôn là SỐ THÁNG; giao diện tự đổi sang "x năm y tháng" khi hiển thị.
+    experienceMonths: int | None = None
     notes: str | None
     tags: list[str] = []
     createdAt: datetime

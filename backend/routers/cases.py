@@ -76,6 +76,8 @@ def list_cases(db: Session = Depends(get_db)):
                 numberOfChildren=c.numberOfChildren,
                 skillLevel=c.skillLevel,
                 partner=c.partner,
+                occupation=c.occupation,
+                experienceMonths=c.experienceMonths,
                 notes=c.notes,
                 tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
@@ -116,6 +118,19 @@ def list_partners(db: Session = Depends(get_db)):
     return [r for r in rows if r]
 
 
+@router.get("/occupations")
+def list_occupations(db: Session = Depends(get_db)):
+    """Các nghề nghiệp đã nhập, để form gợi ý. Cùng lý do và cùng đánh đổi như /partners:
+    ô chữ tự do, danh sách gợi ý sinh từ chính dữ liệu, không có bảng riêng."""
+    rows = db.scalars(
+        select(Case.occupation)
+        .where(Case.deletedAt.is_(None), Case.occupation.is_not(None), Case.occupation != "")
+        .distinct()
+        .order_by(Case.occupation)
+    ).all()
+    return [r for r in rows if r]
+
+
 @router.get("/statuses")
 def list_application_statuses():
     """Danh sách có thứ tự để UI và chức năng email dùng cùng một quy ước trạng thái."""
@@ -140,6 +155,8 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
         # Cắt khoảng trắng thừa và quy chuỗi rỗng về NULL: "  " và "" phải là "không có đối
         # tác" giống hệt nhau, nếu không danh sách gợi ý sẽ mọc ra một "nhóm" vô hình.
         partner=(body.partner or "").strip() or None,
+        occupation=(body.occupation or "").strip() or None,
+        experienceMonths=body.experienceMonths,
         notes=body.notes,
     )
     db.add(case)
@@ -154,6 +171,8 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
         partner=case.partner,
+        occupation=case.occupation,
+        experienceMonths=case.experienceMonths,
         notes=case.notes,
         tags=[],
         createdAt=case.createdAt,
@@ -188,6 +207,8 @@ def list_deleted_cases(db: Session = Depends(get_db)):
                 numberOfChildren=c.numberOfChildren,
                 skillLevel=c.skillLevel,
                 partner=c.partner,
+                occupation=c.occupation,
+                experienceMonths=c.experienceMonths,
                 notes=c.notes,
                 tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
@@ -228,6 +249,8 @@ def restore_case(case_id: str, db: Session = Depends(get_db)):
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
         partner=case.partner,
+        occupation=case.occupation,
+        experienceMonths=case.experienceMonths,
         notes=case.notes,
         tags=parse_tags(case.tags),
         createdAt=case.createdAt,
@@ -261,6 +284,8 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
             "numberOfChildren": case.numberOfChildren,
             "skillLevel": case.skillLevel,
             "partner": case.partner,
+            "occupation": case.occupation,
+            "experienceMonths": case.experienceMonths,
             "notes": case.notes,
             "tags": parse_tags(case.tags),
             "createdAt": case.createdAt,
@@ -626,6 +651,8 @@ def update_case(
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
         partner=case.partner,
+        occupation=case.occupation,
+        experienceMonths=case.experienceMonths,
         notes=case.notes,
         tags=parse_tags(case.tags),
         createdAt=case.createdAt,

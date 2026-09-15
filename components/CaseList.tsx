@@ -11,7 +11,7 @@ import {
   APPLICATION_STATUS_HEX_COLOR,
   getApplicationStatus,
 } from "@/lib/application-status";
-import { API_URL } from "@/lib/format";
+import { API_URL, formatExperience } from "@/lib/format";
 import type { ApplicationStatus, CaseListItemDTO, TagDefinition } from "@/lib/client-types";
 
 /** Ánh xạ tên màu từ API ("red", "yellow"...) sang Tailwind class cụ thể. Đặt ở đây thay vì
@@ -431,6 +431,10 @@ export function CaseList({ initialCases }: Props) {
                         {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
                         {" · "}
                         {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
+                        {c.occupation ? ` · ${c.occupation}` : ""}
+                        {formatExperience(c.experienceMonths)
+                          ? ` · ${formatExperience(c.experienceMonths)}`
+                          : ""}
                       </p>
                       <p className="mt-1.5 flex flex-wrap gap-1.5">
                         <span

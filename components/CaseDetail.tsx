@@ -16,7 +16,13 @@ import {
   FINAL_APPLICATION_STATUSES,
   getApplicationStatus,
 } from "@/lib/application-status";
-import { API_URL, estimateProcessingSeconds, formatRemaining, parseUtcDate } from "@/lib/format";
+import {
+  API_URL,
+  estimateProcessingSeconds,
+  formatExperience,
+  formatRemaining,
+  parseUtcDate,
+} from "@/lib/format";
 import { useHydrated } from "@/lib/useHydrated";
 import type {
   ApplicationStatus,
@@ -386,6 +392,8 @@ export function CaseDetail({ caseId, initialData }: Props) {
           {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
           {" · "}
           {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
+          {c.occupation ? ` · ${c.occupation}` : ""}
+          {formatExperience(c.experienceMonths) ? ` · ${formatExperience(c.experienceMonths)}` : ""}
           {" · Hoàn thành "}
           <span className={`font-bold ${isComplete ? "text-green-700" : "text-indigo-600"}`}>
             {checklist.percent}%

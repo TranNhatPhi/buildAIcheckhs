@@ -1,7 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { API_URL } from "@/lib/format";
+import { API_URL, splitExperience } from "@/lib/format";
+import {
+  EXPERIENCE_UNITS,
+  FORM_HINT,
+  FORM_INPUT,
+  FORM_LABEL,
+  FORM_PILL_BASE,
+  FORM_PILL_OFF,
+  FORM_PILL_ON,
+  FORM_SECTION,
+  FORM_SECTION_ROSE,
+  FORM_SECTION_SKY,
+  FORM_SECTION_TITLE,
+  FORM_SECTION_VIOLET,
+  FORM_SUBMIT,
+  toExperienceMonths,
+} from "@/lib/formStyles";
 import {
   APPLICATION_STATUSES,
   APPLICATION_STATUS_BADGE_CLASS,
@@ -36,6 +52,15 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
   );
   const [partner, setPartner] = useState(caseItem.partner ?? "");
   const [partnerSuggestions, setPartnerSuggestions] = useState<string[]>([]);
+  const [occupation, setOccupation] = useState(caseItem.occupation ?? "");
+  const [occupationSuggestions, setOccupationSuggestions] = useState<string[]>([]);
+  // Tách số tháng đã lưu ngược lại thành (số, đơn vị) để form mở ra đúng như lúc nhập.
+  const [experienceValue, setExperienceValue] = useState(
+    () => splitExperience(caseItem.experienceMonths).value,
+  );
+  const [experienceUnit, setExperienceUnit] = useState<"YEAR" | "MONTH">(
+    () => splitExperience(caseItem.experienceMonths).unit,
+  );
   const [notes, setNotes] = useState(caseItem.notes ?? "");
   const [applicationStatus, setApplicationStatus] = useState<ApplicationStatus>(
     caseItem.applicationStatus,
@@ -50,11 +75,14 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
       .then((r) => (r.ok ? r.json() : []))
       .then((data: TagDefinition[]) => setTagDefs(data))
       .catch(() => {});
-    // Gợi ý đối tác đã có, để sửa hồ sơ cũ cũng gõ ra đúng tên như lúc tạo.
-    fetch(`${API_URL}/cases/partners`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then(setPartnerSuggestions)
-      .catch(() => {});
+    // Gợi ý đối tác/nghề nghiệp đã có, để sửa hồ sơ cũ cũng gõ ra đúng tên như lúc tạo.
+    const nap = (duong: string, set: (v: string[]) => void) =>
+      fetch(`${API_URL}/cases/${duong}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then(set)
+        .catch(() => {});
+    nap("partners", setPartnerSuggestions);
+    nap("occupations", setOccupationSuggestions);
   }, []);
 
   const tagColorByName = useMemo(
@@ -83,6 +111,8 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
           numberOfChildren,
           skillLevel,
           partner,
+          occupation,
+          experienceMonths: toExperienceMonths(experienceValue, experienceUnit),
           notes,
           applicationStatus,
         }),
@@ -120,194 +150,279 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col gap-5 overflow-y-auto rounded-2xl border-2 border-neutral-200 bg-white p-7 shadow-lg"
+        className="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-violet-100 bg-white shadow-xl"
       >
-        <h2 className="text-lg font-bold text-neutral-800">Sửa hồ sơ</h2>
-
-        <div>
-          <label className="block text-sm font-semibold mb-1.5">Trạng thái hồ sơ</label>
-          <select
-            value={applicationStatus}
-            onChange={(e) => setApplicationStatus(e.target.value as ApplicationStatus)}
-            className={`w-full rounded-xl border-2 px-4 py-2.5 text-sm outline-none transition-colors focus:border-indigo-400 ${APPLICATION_STATUS_BADGE_CLASS[applicationStatus]}`}
-          >
-            {APPLICATION_STATUSES.map((status) => (
-              <option key={status.value} value={status.value}>
-                {status.label}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1.5 text-xs text-neutral-500">
-            Hồ sơ chưa đậu hoặc rớt sẽ được tính mốc nhắc admin sau mỗi 14 ngày.
-          </p>
+        {/* Dải pastel dính đỉnh khi cuộn — modal khá dài, cuộn giữa chừng mà không còn tiêu
+            đề thì dễ quên mình đang sửa hồ sơ nào. */}
+        <div className="sticky top-0 z-10 bg-gradient-to-r from-violet-100 via-sky-100 to-rose-100 px-7 py-5">
+          <p className="text-lg font-bold text-neutral-800">Sửa hồ sơ</p>
+          <p className="mt-0.5 truncate text-sm text-neutral-600">{caseItem.clientName}</p>
         </div>
 
-        <div>
-          <label className="block text-sm font-semibold mb-1.5">Tên khách hàng</label>
-          <input
-            required
-            maxLength={191}
-            value={clientName}
-            onChange={(e) => setClientName(e.target.value)}
-            className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold mb-1.5">Tình trạng hôn nhân</label>
-          <div className="flex gap-3">
-            <label
-              className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
-                maritalStatus === "SINGLE"
-                  ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                  : "border-neutral-200 text-neutral-500"
-              }`}
-            >
-              <input
-                type="radio"
-                className="hidden"
-                checked={maritalStatus === "SINGLE"}
-                onChange={() => setMaritalStatus("SINGLE")}
-              />
-              Độc thân
-            </label>
-            <label
-              className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
-                maritalStatus === "MARRIED"
-                  ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                  : "border-neutral-200 text-neutral-500"
-              }`}
-            >
-              <input
-                type="radio"
-                className="hidden"
-                checked={maritalStatus === "MARRIED"}
-                onChange={() => setMaritalStatus("MARRIED")}
-              />
-              Đã kết hôn
-            </label>
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold mb-1.5">Trình độ kỹ năng (skill)</label>
-          <div className="flex gap-3">
-            <label
-              className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
-                skillLevel === "LOW_SKILL"
-                  ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                  : "border-neutral-200 text-neutral-500"
-              }`}
-            >
-              <input
-                type="radio"
-                className="hidden"
-                checked={skillLevel === "LOW_SKILL"}
-                onChange={() => setSkillLevel("LOW_SKILL")}
-              />
-              Low Skilled
-            </label>
-            <label
-              className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border-2 cursor-pointer transition-colors ${
-                skillLevel === "HIGH_SKILL"
-                  ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                  : "border-neutral-200 text-neutral-500"
-              }`}
-            >
-              <input
-                type="radio"
-                className="hidden"
-                checked={skillLevel === "HIGH_SKILL"}
-                onChange={() => setSkillLevel("HIGH_SKILL")}
-              />
-              High Skilled
-            </label>
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold mb-1.5">Số con</label>
-          <input
-            type="number"
-            min={0}
-            max={20}
-            value={numberOfChildren}
-            onChange={(e) => setNumberOfChildren(Number(e.target.value))}
-            className="w-32 border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold mb-1.5">
-            Đối tác / nguồn <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
-          </label>
-          <input
-            list="danh-sach-doi-tac-sua"
-            maxLength={191}
-            value={partner}
-            onChange={(e) => setPartner(e.target.value)}
-            className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
-            placeholder="Ví dụ: Công ty ABC"
-          />
-          {/* id khác với datalist ở NewCaseForm: hai form có thể cùng nằm trên một trang,
-              trùng id thì trình duyệt chỉ dùng cái đầu tiên. */}
-          <datalist id="danh-sach-doi-tac-sua">
-            {partnerSuggestions.map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold mb-1.5">Ghi chú (tuỳ chọn)</label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={3}
-            className="w-full border-2 border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none transition-colors"
-          />
-        </div>
-
-        {tagDefs.length > 0 && (
+        <div className="flex flex-col gap-5 overflow-y-auto p-7">
           <div>
-            <label className="block text-sm font-semibold mb-1.5">Nhãn (tag)</label>
-            <div className="flex flex-wrap gap-2">
-              {tagDefs.map((t) => {
-                const active = selectedTags.includes(t.name);
-                return (
-                  <button
-                    key={t.name}
-                    type="button"
-                    onClick={() => toggleTag(t.name)}
-                    className={`rounded-full border px-3 py-1 text-xs font-semibold transition-all ${
-                      active
-                        ? TAG_COLOR_MAP[tagColorByName.get(t.name) ?? ""] ?? TAG_COLOR_MAP.gray
-                        : "border-neutral-200 text-neutral-400 hover:border-neutral-300"
-                    }`}
-                  >
-                    {t.name}
-                  </button>
-                );
-              })}
-            </div>
+            <label className={FORM_LABEL} htmlFor="trang-thai-ho-so">
+              Trạng thái hồ sơ
+            </label>
+            <select
+              id="trang-thai-ho-so"
+              value={applicationStatus}
+              onChange={(e) => setApplicationStatus(e.target.value as ApplicationStatus)}
+              className={`w-full rounded-xl border px-4 py-2.5 text-sm font-semibold outline-none transition focus:ring-4 focus:ring-violet-100 ${APPLICATION_STATUS_BADGE_CLASS[applicationStatus]}`}
+            >
+              {APPLICATION_STATUSES.map((status) => (
+                <option key={status.value} value={status.value}>
+                  {status.label}
+                </option>
+              ))}
+            </select>
+            <p className={FORM_HINT}>
+              Hồ sơ chưa đậu hoặc rớt sẽ được tính mốc nhắc admin sau mỗi 14 ngày.
+            </p>
           </div>
-        )}
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+          {/* ── Nhóm 1: khách hàng ───────────────────────────────────────────────── */}
+          <section className={`${FORM_SECTION} ${FORM_SECTION_VIOLET}`}>
+            <p className={FORM_SECTION_TITLE}>
+              <span aria-hidden="true">👤</span> Thông tin khách hàng
+            </p>
 
-        <div className="flex gap-3 justify-end">
+            <div className="flex flex-col gap-5">
+              <div>
+                <label className={FORM_LABEL} htmlFor="sua-ten-khach-hang">
+                  Tên khách hàng
+                </label>
+                <input
+                  id="sua-ten-khach-hang"
+                  required
+                  maxLength={191}
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  className={FORM_INPUT}
+                />
+              </div>
+
+              <div>
+                <span className={FORM_LABEL}>Tình trạng hôn nhân</span>
+                <div className="flex flex-wrap gap-3">
+                  {(
+                    [
+                      ["SINGLE", "Độc thân"],
+                      ["MARRIED", "Đã kết hôn"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label
+                      key={value}
+                      className={`${FORM_PILL_BASE} ${
+                        maritalStatus === value ? FORM_PILL_ON : FORM_PILL_OFF
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="sua-tinh-trang-hon-nhan"
+                        className="sr-only"
+                        checked={maritalStatus === value}
+                        onChange={() => setMaritalStatus(value)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className={FORM_LABEL} htmlFor="sua-so-con">
+                  Số con
+                </label>
+                <input
+                  id="sua-so-con"
+                  type="number"
+                  min={0}
+                  max={20}
+                  value={numberOfChildren}
+                  onChange={(e) => setNumberOfChildren(Number(e.target.value))}
+                  className={`${FORM_INPUT} w-32`}
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* ── Nhóm 2: nghề nghiệp & kinh nghiệm ────────────────────────────────── */}
+          <section className={`${FORM_SECTION} ${FORM_SECTION_SKY}`}>
+            <p className={FORM_SECTION_TITLE}>
+              <span aria-hidden="true">💼</span> Nghề nghiệp &amp; kinh nghiệm
+            </p>
+
+            <div className="flex flex-col gap-5">
+              <div>
+                <span className={FORM_LABEL}>Trình độ kỹ năng (skill)</span>
+                <div className="flex flex-wrap gap-3">
+                  {(
+                    [
+                      ["LOW_SKILL", "Low Skilled"],
+                      ["HIGH_SKILL", "High Skilled"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label
+                      key={value}
+                      className={`${FORM_PILL_BASE} ${
+                        skillLevel === value ? FORM_PILL_ON : FORM_PILL_OFF
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="sua-trinh-do-ky-nang"
+                        className="sr-only"
+                        checked={skillLevel === value}
+                        onChange={() => setSkillLevel(value)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className={FORM_LABEL} htmlFor="sua-nghe-nghiep">
+                  Nghề nghiệp <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
+                </label>
+                <input
+                  id="sua-nghe-nghiep"
+                  list="goi-y-nghe-nghiep-sua"
+                  maxLength={191}
+                  value={occupation}
+                  onChange={(e) => setOccupation(e.target.value)}
+                  className={FORM_INPUT}
+                  placeholder="Ví dụ: Xây dựng, Chế biến hải sản"
+                />
+                <datalist id="goi-y-nghe-nghiep-sua">
+                  {occupationSuggestions.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div>
+                <label className={FORM_LABEL} htmlFor="sua-kinh-nghiem">
+                  Kinh nghiệm làm việc{" "}
+                  <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="sua-kinh-nghiem"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={experienceValue}
+                    onChange={(e) => setExperienceValue(e.target.value)}
+                    className={`${FORM_INPUT} w-32`}
+                    placeholder="0"
+                  />
+                  <select
+                    aria-label="Đơn vị kinh nghiệm"
+                    value={experienceUnit}
+                    onChange={(e) => setExperienceUnit(e.target.value as "YEAR" | "MONTH")}
+                    className={`${FORM_INPUT} w-28`}
+                  >
+                    {EXPERIENCE_UNITS.map((u) => (
+                      <option key={u.value} value={u.value}>
+                        {u.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className={FORM_HINT}>Ghi số năm hoặc số tháng, chọn đơn vị tương ứng.</p>
+              </div>
+            </div>
+          </section>
+
+          {/* ── Nhóm 3: nguồn & ghi chú ──────────────────────────────────────────── */}
+          <section className={`${FORM_SECTION} ${FORM_SECTION_ROSE}`}>
+            <p className={FORM_SECTION_TITLE}>
+              <span aria-hidden="true">🏢</span> Nguồn &amp; ghi chú
+            </p>
+
+            <div className="flex flex-col gap-5">
+              <div>
+                <label className={FORM_LABEL} htmlFor="sua-doi-tac">
+                  Đối tác / nguồn{" "}
+                  <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
+                </label>
+                <input
+                  id="sua-doi-tac"
+                  list="goi-y-doi-tac-sua"
+                  maxLength={191}
+                  value={partner}
+                  onChange={(e) => setPartner(e.target.value)}
+                  className={FORM_INPUT}
+                  placeholder="Ví dụ: Ms. Thanh"
+                />
+                {/* id khác datalist ở NewCaseForm: hai form có thể cùng nằm trên một trang,
+                    trùng id thì trình duyệt chỉ dùng cái đầu tiên. */}
+                <datalist id="goi-y-doi-tac-sua">
+                  {partnerSuggestions.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div>
+                <label className={FORM_LABEL} htmlFor="sua-ghi-chu">
+                  Ghi chú <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
+                </label>
+                <textarea
+                  id="sua-ghi-chu"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={3}
+                  className={FORM_INPUT}
+                />
+              </div>
+            </div>
+          </section>
+
+          {tagDefs.length > 0 && (
+            <div>
+              <span className={FORM_LABEL}>Nhãn (tag)</span>
+              <div className="flex flex-wrap gap-2">
+                {tagDefs.map((t) => {
+                  const active = selectedTags.includes(t.name);
+                  return (
+                    <button
+                      key={t.name}
+                      type="button"
+                      onClick={() => toggleTag(t.name)}
+                      className={`rounded-full border px-3 py-1 text-xs font-semibold transition-all ${
+                        active
+                          ? TAG_COLOR_MAP[tagColorByName.get(t.name) ?? ""] ?? TAG_COLOR_MAP.gray
+                          : "border-neutral-200 text-neutral-400 hover:border-neutral-300"
+                      }`}
+                    >
+                      {t.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+              {error}
+            </p>
+          )}
+        </div>
+
+        {/* Thanh nút dính đáy: modal dài, cuộn xuống giữa chừng vẫn bấm Lưu được ngay. */}
+        <div className="flex justify-end gap-3 border-t border-violet-100 bg-white/80 px-7 py-4 backdrop-blur">
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2.5 rounded-full text-sm font-semibold text-neutral-600 hover:bg-neutral-100 transition-colors"
+            className="rounded-full px-5 py-2.5 text-sm font-semibold text-neutral-600 transition-colors hover:bg-neutral-100"
           >
             Huỷ
           </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="bg-indigo-600 text-white px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 shadow-sm transition-colors"
-          >
+          <button type="submit" disabled={submitting} className={FORM_SUBMIT}>
             {submitting ? "Đang lưu..." : "Lưu thay đổi"}
           </button>
         </div>

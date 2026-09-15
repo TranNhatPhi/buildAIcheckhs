@@ -423,6 +423,10 @@ ADDED_COLUMNS = [
     # Đối tác / nguồn giới thiệu hồ sơ. NULL cho mọi hồ sơ cũ — không đặt NOT NULL vì
     # không có giá trị nào đúng để điền ngược cho hồ sơ đã tạo trước khi có cột này.
     ("Case", "partner", "VARCHAR(191) NULL"),
+    # Nghề nghiệp + số tháng kinh nghiệm. NULL cho mọi hồ sơ cũ — không có giá trị nào đúng
+    # để điền ngược, và "0 tháng kinh nghiệm" là một khẳng định sai chứ không phải "chưa biết".
+    ("Case", "occupation", "VARCHAR(191) NULL"),
+    ("Case", "experienceMonths", "INT NULL"),
 ]
 
 

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { adminFetch, AdminUnauthorizedError } from "@/lib/adminApi";
 import { getAdminPassword, setAdminPassword, clearAdminPassword } from "@/lib/adminAuth";
-import { API_URL, parseUtcDate } from "@/lib/format";
+import { API_URL, formatExperience, parseUtcDate } from "@/lib/format";
 import { downloadFile } from "@/lib/download";
 import {
   APPLICATION_STATUSES,
@@ -337,7 +337,15 @@ export function AdminDashboard() {
                                   {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
                                   {" · "}
                                   {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
-                    {c.partner ? ` · 🏢 ${c.partner}` : ""}
+                    {c.occupation ? ` · ${c.occupation}` : ""}
+                                  {formatExperience(c.experienceMonths)
+                                    ? ` · ${formatExperience(c.experienceMonths)}`
+                                    : ""}
+                                  {c.partner ? ` · 🏢 ${c.partner}` : ""}
+                                  {c.occupation ? ` · ${c.occupation}` : ""}
+                                  {formatExperience(c.experienceMonths)
+                                    ? ` · ${formatExperience(c.experienceMonths)}`
+                                    : ""}
                                   {c.partner ? ` · 🏢 ${c.partner}` : ""}
                                 </p>
                                 {c.tags.length > 0 && (

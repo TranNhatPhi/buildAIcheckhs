@@ -122,6 +122,10 @@ export interface CaseListItemDTO {
   skillLevel: string;
   /** Đối tác / nguồn giới thiệu. null = khách tự tìm đến, hoặc hồ sơ tạo trước khi có trường này. */
   partner: string | null;
+  /** Nghề nghiệp của đương đơn, vd "Xây dựng", "Chế biến hải sản". */
+  occupation: string | null;
+  /** Kinh nghiệm quy về SỐ THÁNG. Dùng formatExperience() để hiển thị. */
+  experienceMonths: number | null;
   notes: string | null;
   tags: string[];
   createdAt: string;
@@ -206,6 +210,8 @@ export interface CaseDetailDTO {
     numberOfChildren: number;
     skillLevel: string;
     partner: string | null;
+    occupation: string | null;
+    experienceMonths: number | null;
     notes: string | null;
     tags: string[];
     createdAt: string;
