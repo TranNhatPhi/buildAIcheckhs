@@ -60,9 +60,9 @@ LOW_SKILL_ITEMS = [
          nameVi="Giấy khai sinh",
          verificationNote="Thường kiểm tra ngày tháng năm sinh của cha mẹ có khớp không."),
     dict(id="dang-ky-ket-hon", order=6, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
-         nameVi="Giấy đăng ký kết hôn (Nếu có)", isOptional=True, appliesTo="SPOUSE"),
+         nameVi="Giấy đăng ký kết hôn (nếu có)", isOptional=True, appliesTo="SPOUSE"),
     dict(id="quyet-dinh-ly-hon", order=7, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
-         nameVi="Giấy quyết định ly hôn (Nếu có)", isOptional=True),
+         nameVi="Giấy quyết định ly hôn (nếu có)", isOptional=True),
     dict(id="hinh-the-trang", order=8, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
          nameVi="Ảnh thẻ phông trắng",
          note="Kích thước: 3.5cm x 4.5cm. Chỉ cần gửi file hình, không cần rửa ra ảnh."),
@@ -84,15 +84,15 @@ LOW_SKILL_ITEMS = [
          verificationNote="Phải khớp với thực tế: khách có thể học trễ hơn 1 năm, nhưng không "
                            "được tốt nghiệp sớm so với tuổi thật."),
     dict(id="hoc-ba-c2-c3", order=14, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Học bạ THCS/ THPT", note="Nếu mất học bạ thì cung cấp bảng điểm học tập"),
+         nameVi="Học bạ THCS / THPT", note="Nếu mất học bạ thì cung cấp bảng điểm học tập"),
     dict(id="bang-trung-cap-cd-dh", order=15, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Bằng Trung Cấp / Cao Đẳng/ Đại học (Nếu có)", isOptional=True,
+         nameVi="Bằng Trung cấp / Cao đẳng / Đại học (nếu có)", isOptional=True,
          verificationNote="Phải khớp với thực tế: khách có thể học trễ hơn 1 năm, nhưng không "
                            "được tốt nghiệp sớm so với tuổi thật."),
     dict(id="bang-diem-trung-cap-cd-dh", order=16, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Bảng điểm Trung Cấp / Cao Đẳng/ Đại học (Nếu có)", isOptional=True),
+         nameVi="Bảng điểm Trung cấp / Cao đẳng / Đại học (nếu có)", isOptional=True),
     dict(id="chung-chi-nghe-khac", order=17, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Các bằng cấp/chứng chỉ nghề khác (Nếu có)", isOptional=True,
+         nameVi="Các bằng cấp / chứng chỉ nghề khác (nếu có)", isOptional=True,
          note="Ví dụ: chứng chỉ nghề nail"),
     dict(id="chung-chi-tieng-anh", order=18, section=SECTION_APPLICANT, group=GROUP_DEGREE,
          nameVi="Chứng chỉ thi tiếng Anh",
@@ -102,8 +102,11 @@ LOW_SKILL_ITEMS = [
                            "có bằng ĐH thì C1 vẫn ổn. Giấy xác nhận học tại trung tâm: thời gian "
                            "học và trình độ phải hợp lý, phải có dấu xác nhận, song ngữ hoặc "
                            "tiếng Anh — không dùng giấy xác nhận chỉ bằng tiếng Việt."),
+    # Đi cặp với "Chứng chỉ thi tiếng Anh" ở trên (mục 18.1/18.2 của bản checklist LOW
+    # SKILL mới) — bản mới bỏ hẳn chữ "(nếu có)", nên mục này KHÔNG còn isOptional: thiếu
+    # giấy xác nhận của trung tâm thì chứng chỉ thi không đứng một mình được.
     dict(id="giay-xac-nhan-hoc-tieng-anh", order=19, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Giấy xác nhận học tiếng Anh (Nếu có)", isOptional=True,
+         nameVi="Xác nhận học tiếng Anh tại trung tâm",
          verificationNote="Thời gian học và trình độ phải hợp lý so với chứng chỉ thi. Phải có "
                            "dấu xác nhận của trung tâm, và phải song ngữ hoặc tiếng Anh — "
                            "giấy chỉ bằng tiếng Việt KHÔNG dùng được. Nếu khách thi online "
@@ -111,7 +114,7 @@ LOW_SKILL_ITEMS = [
 
     # --- III. Giấy tờ chứng minh kinh nghiệm làm việc ---
     dict(id="resume-cv", order=20, section=SECTION_APPLICANT, group=GROUP_WORK,
-         nameVi="Resume/ CV"),
+         nameVi="Resume / CV"),
     dict(id="thu-xac-nhan-kinh-nghiem", order=21, section=SECTION_APPLICANT, group=GROUP_WORK,
          nameVi="Thư xác nhận kinh nghiệm làm việc"),
     dict(id="thu-tai-tuyen-dung", order=22, section=SECTION_APPLICANT, group=GROUP_WORK,
@@ -144,15 +147,15 @@ LOW_SKILL_ITEMS = [
     dict(id="giay-khai-sinh-vo-chong", order=30, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
          nameVi="Giấy khai sinh vợ/chồng", appliesTo="SPOUSE"),
     dict(id="giay-khai-sinh-con1", order=31, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
-         nameVi="Giấy khai sinh - con 1 (nếu có)", isOptional=True, appliesTo="CHILD_1"),
+         nameVi="Giấy khai sinh – con 1 (nếu có)", isOptional=True, appliesTo="CHILD_1"),
     dict(id="giay-khai-sinh-con2", order=32, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
-         nameVi="Giấy khai sinh - con 2 (nếu có)", isOptional=True, appliesTo="CHILD_2"),
+         nameVi="Giấy khai sinh – con 2 (nếu có)", isOptional=True, appliesTo="CHILD_2"),
     # Checklist LOW_SKILL-SINGLE gốc chỉ liệt kê tới con 2 (không có mục con 3), nhưng đây rõ
     # ràng là thiếu sót của bản gốc (không có lý do nghiệp vụ nào để hồ sơ độc thân có 3 con
     # lại không cần thu khai sinh con thứ 3) — dùng chung mục CHILD_3 này cho cả SINGLE lẫn
     # MARRIED thay vì chỉ giới hạn theo MARRIED như bản LOW_SKILL-MARRIED gốc.
     dict(id="giay-khai-sinh-con3", order=33, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
-         nameVi="Giấy khai sinh - con 3 (nếu có)", isOptional=True, appliesTo="CHILD_3"),
+         nameVi="Giấy khai sinh – con 3 (nếu có)", isOptional=True, appliesTo="CHILD_3"),
 
     # --- VI. Giấy tờ khác — bố mẹ ruột đương đơn, không phụ thuộc tình trạng hôn nhân ---
     dict(id="cccd-cha-vo-chong", order=34, section=SECTION_DEPENDENTS, group=GROUP_OTHER,
