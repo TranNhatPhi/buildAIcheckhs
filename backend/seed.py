@@ -59,8 +59,12 @@ LOW_SKILL_ITEMS = [
     dict(id="giay-khai-sinh", order=5, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
          nameVi="Giấy khai sinh",
          verificationNote="Thường kiểm tra ngày tháng năm sinh của cha mẹ có khớp không."),
+    # appliesTo=ALWAYS chứ KHÔNG phải SPOUSE, giống hệt bộ HIGH_SKILL. Trước đây mục này bị
+    # ẩn với hồ sơ độc thân, kéo theo MỌI mục phía sau tụt 1 số so với bản checklist giấy —
+    # nhân viên đọc số trên giấy rồi dò trong app là lệch hàng. Mục vốn đã là "(nếu có)" nên
+    # hiện với hồ sơ độc thân cũng không bắt ai phải nộp thêm giấy gì.
     dict(id="dang-ky-ket-hon", order=6, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
-         nameVi="Giấy đăng ký kết hôn (nếu có)", isOptional=True, appliesTo="SPOUSE"),
+         nameVi="Giấy đăng ký kết hôn (nếu có)", isOptional=True),
     dict(id="quyet-dinh-ly-hon", order=7, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
          nameVi="Giấy quyết định ly hôn (nếu có)", isOptional=True),
     dict(id="hinh-the-trang", order=8, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
