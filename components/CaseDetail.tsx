@@ -108,6 +108,44 @@ export function CaseDetail({ caseId, initialData }: Props) {
     updateTags(caseTags.filter((t) => t !== tag));
   }
 
+  // --- Ghi chú nhanh ngay trên trang hồ sơ ---
+  // Ghi chú vốn chỉ sửa được trong modal "Sửa hồ sơ". Nhưng nhân viên ghi chú liên tục ngay
+  // trong lúc đối chiếu giấy tờ ("khách mất học bạ", "chưa có giấy học tiếng Anh", "sổ đỏ
+  // đứng tên ông bà") — bắt mở modal cho từng dòng là quá nhiều thao tác, nên cho sửa tại chỗ.
+  const [noteEditing, setNoteEditing] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
+
+  function startEditNote(current: string | null) {
+    setNoteDraft(current ?? "");
+    setNoteError(null);
+    setNoteEditing(true);
+  }
+
+  async function saveNote() {
+    const value = noteDraft.trim();
+    setNoteSaving(true);
+    setNoteError(null);
+    try {
+      const res = await fetch(`${API_URL}/cases/${caseId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: value }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      // Vá tại chỗ thay vì refetch: PATCH trả về CaseListItemDTO (không kèm documents/
+      // checklist) nên không thay thẳng `data` được, mà ghi chú cũng không đụng tới checklist.
+      setData((prev) =>
+        prev ? { ...prev, case: { ...prev.case, notes: value || null } } : prev,
+      );
+      setNoteEditing(false);
+    } catch {
+      setNoteError("Không lưu được ghi chú. Kiểm tra mạng rồi thử lại.");
+    }
+    setNoteSaving(false);
+  }
+
   const refetch = useCallback(async () => {
     const res = await fetch(`${API_URL}/cases/${caseId}`, { cache: "no-store" });
     if (res.status === 404) {
@@ -401,7 +439,65 @@ export function CaseDetail({ caseId, initialData }: Props) {
           {" ("}
           {checklist.completedRequiredItems}/{checklist.totalRequiredItems} mục bắt buộc)
         </p>
-        {c.notes && <p className="text-sm text-neutral-500 mt-1">Ghi chú: {c.notes}</p>}
+        {/* Ghi chú: bấm vào là sửa ngay, không phải mở modal "Sửa hồ sơ" */}
+        <div className="mt-2">
+          {noteEditing ? (
+            <div className="flex flex-col gap-2">
+              <textarea
+                autoFocus
+                rows={3}
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setNoteEditing(false);
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveNote();
+                }}
+                placeholder="Vd: khách mất học bạ, chưa có giấy học tiếng Anh, sổ đỏ đứng tên ông bà..."
+                className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm text-neutral-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={saveNote}
+                  disabled={noteSaving}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {noteSaving ? "Đang lưu..." : "Lưu ghi chú"}
+                </button>
+                <button
+                  onClick={() => setNoteEditing(false)}
+                  disabled={noteSaving}
+                  className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-600 transition-colors hover:bg-neutral-50 disabled:opacity-50"
+                >
+                  Huỷ
+                </button>
+                <span className="text-xs text-neutral-400">Ctrl/⌘ + Enter để lưu · Esc để huỷ</span>
+              </div>
+              {noteError && <p className="text-xs font-semibold text-red-600">{noteError}</p>}
+            </div>
+          ) : c.notes ? (
+            <button
+              onClick={() => startEditNote(c.notes)}
+              title="Bấm để sửa ghi chú"
+              className="group flex w-full items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left transition-colors hover:border-amber-300"
+            >
+              <span aria-hidden="true" className="text-sm leading-5">
+                📝
+              </span>
+              {/* whitespace-pre-wrap: nhân viên hay xuống dòng để liệt kê nhiều thứ thiếu */}
+              <span className="whitespace-pre-wrap text-sm text-amber-900">{c.notes}</span>
+              <span className="ml-auto shrink-0 text-xs font-semibold text-amber-700 opacity-0 transition-opacity group-hover:opacity-100">
+                Sửa
+              </span>
+            </button>
+          ) : (
+            <button
+              onClick={() => startEditNote(null)}
+              className="rounded-lg border border-dashed border-neutral-300 px-2.5 py-1 text-xs font-semibold text-neutral-500 transition-colors hover:border-indigo-400 hover:text-indigo-600"
+            >
+              + Thêm ghi chú
+            </button>
+          )}
+        </div>
 
         {/* Tag badges + picker */}
         <div className="mt-2 flex flex-wrap items-center gap-1.5">

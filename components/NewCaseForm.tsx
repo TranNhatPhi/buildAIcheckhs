@@ -223,7 +223,7 @@ export function NewCaseForm() {
 
             <div>
               <label className={FORM_LABEL} htmlFor="kinh-nghiem">
-                Kinh nghiệm làm việc{" "}
+                Thời gian làm việc{" "}
                 <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
               </label>
               {/* Nhập theo năm HOẶC tháng tuỳ nhân viên; backend luôn lưu quy về tháng. */}
@@ -239,7 +239,7 @@ export function NewCaseForm() {
                   placeholder="0"
                 />
                 <select
-                  aria-label="Đơn vị kinh nghiệm"
+                  aria-label="Đơn vị thời gian làm việc"
                   value={experienceUnit}
                   onChange={(e) => setExperienceUnit(e.target.value as "YEAR" | "MONTH")}
                   className={`${FORM_INPUT} w-28`}

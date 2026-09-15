@@ -304,7 +304,7 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
 
               <div>
                 <label className={FORM_LABEL} htmlFor="sua-kinh-nghiem">
-                  Kinh nghiệm làm việc{" "}
+                  Thời gian làm việc{" "}
                   <span className="font-normal text-neutral-400">(tuỳ chọn)</span>
                 </label>
                 <div className="flex gap-2">
@@ -319,7 +319,7 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
                     placeholder="0"
                   />
                   <select
-                    aria-label="Đơn vị kinh nghiệm"
+                    aria-label="Đơn vị thời gian làm việc"
                     value={experienceUnit}
                     onChange={(e) => setExperienceUnit(e.target.value as "YEAR" | "MONTH")}
                     className={`${FORM_INPUT} w-28`}
