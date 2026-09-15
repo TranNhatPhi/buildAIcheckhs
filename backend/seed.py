@@ -98,9 +98,8 @@ LOW_SKILL_ITEMS = [
     dict(id="chung-chi-nghe-khac", order=17, section=SECTION_APPLICANT, group=GROUP_DEGREE,
          nameVi="Các bằng cấp / chứng chỉ nghề khác (nếu có)", isOptional=True,
          note="Ví dụ: chứng chỉ nghề nail"),
-    # Hai mục dưới là mục 18.1 và 18.2 trên bản checklist giấy — xem ChecklistItem.numberGroup.
     dict(id="chung-chi-tieng-anh", order=18, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Chứng chỉ thi tiếng Anh", numberGroup="tieng-anh",
+         nameVi="Chứng chỉ thi tiếng Anh",
          verificationNote="Nếu thi online: ngày thi phải sau ngày cấp giấy xác nhận học tiếng "
                            "Anh tại trung tâm. Phải đúng với năng lực của khách — vd khách chỉ "
                            "học hết C2 thì không thể thi C1-C2; khách lớn tuổi khoảng B2; khách "
@@ -111,7 +110,7 @@ LOW_SKILL_ITEMS = [
     # SKILL mới) — bản mới bỏ hẳn chữ "(nếu có)", nên mục này KHÔNG còn isOptional: thiếu
     # giấy xác nhận của trung tâm thì chứng chỉ thi không đứng một mình được.
     dict(id="giay-xac-nhan-hoc-tieng-anh", order=19, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Xác nhận học tiếng Anh tại trung tâm", numberGroup="tieng-anh",
+         nameVi="Xác nhận học tiếng Anh tại trung tâm",
          verificationNote="Thời gian học và trình độ phải hợp lý so với chứng chỉ thi. Phải có "
                            "dấu xác nhận của trung tâm, và phải song ngữ hoặc tiếng Anh — "
                            "giấy chỉ bằng tiếng Việt KHÔNG dùng được. Nếu khách thi online "
@@ -244,7 +243,7 @@ HIGH_SKILL_APPLICANT_ITEMS = [
          nameVi="Các bằng cấp/chứng chỉ nghề khác (Nếu có)", isOptional=True,
          note="Ví dụ: chứng chỉ nghề nail"),
     dict(id="hs-chung-chi-tieng-anh", order=20, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Chứng chỉ thi tiếng Anh", numberGroup="hs-tieng-anh",
+         nameVi="Chứng chỉ thi tiếng Anh",
          verificationNote="Nếu thi online: ngày thi phải sau ngày cấp giấy xác nhận học tiếng "
                            "Anh tại trung tâm. Phải đúng với năng lực của khách — vd khách chỉ "
                            "học hết C2 thì không thể thi C1-C2; khách lớn tuổi khoảng B2; khách "
@@ -253,7 +252,6 @@ HIGH_SKILL_APPLICANT_ITEMS = [
                            "tiếng Anh — không dùng giấy xác nhận chỉ bằng tiếng Việt."),
     dict(id="hs-giay-xac-nhan-hoc-tieng-anh", order=21, section=SECTION_APPLICANT,
          group=GROUP_DEGREE, nameVi="Giấy xác nhận học tiếng Anh (Nếu có)", isOptional=True,
-         numberGroup="hs-tieng-anh",
          verificationNote="Thời gian học và trình độ phải hợp lý so với chứng chỉ thi. Phải có "
                            "dấu xác nhận của trung tâm, và phải song ngữ hoặc tiếng Anh — "
                            "giấy chỉ bằng tiếng Việt KHÔNG dùng được. Nếu khách thi online "
