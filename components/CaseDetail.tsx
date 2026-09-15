@@ -453,7 +453,7 @@ export function CaseDetail({ caseId, initialData }: Props) {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveNote();
                 }}
                 placeholder="Vd: khách mất học bạ, chưa có giấy học tiếng Anh, sổ đỏ đứng tên ông bà..."
-                className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm text-neutral-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                className="w-full rounded-xl border-2 border-neutral-400 bg-white px-3 py-2.5 text-sm font-medium text-neutral-900 placeholder:font-normal placeholder:text-neutral-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
               />
               <div className="flex flex-wrap items-center gap-2">
                 <button
