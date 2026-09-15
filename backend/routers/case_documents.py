@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -9,7 +9,7 @@ import storage
 from classify import ap_thong_tin_boc_duoc, classify_ocr_text
 from completeness import is_item_applicable, is_savings_item
 from db import get_db
-from models import Case, ChecklistItem, Document
+from models import Case, ChecklistItem, Document, now_utc
 from savings import refresh_case_savings_quietly
 from schemas import DocumentDTO
 
@@ -50,8 +50,83 @@ def _find_duplicate(db: Session, case_id: str, content: bytes) -> Document | Non
     return None
 
 
+def _find_same_name(db: Session, case_id: str, filename: str) -> Document | None:
+    """Tìm bản CŨ của cùng một giấy tờ: cùng hồ sơ, cùng tên file.
+
+    Chỉ gọi SAU _find_duplicate, nên tới đây nội dung chắc chắn đã KHÁC — tức nhân viên đã
+    sửa file rồi upload lại (scan lại cho rõ, bổ sung trang, sửa nội dung bên trong). Trước
+    đây trường hợp này tạo thêm một bản ghi THỨ HAI cùng tên: bản cũ đã lỗi thời vẫn nằm
+    nguyên trong hồ sơ, cùng khớp vào một mục checklist, nhìn vào không biết bản nào mới.
+    Giờ xử như thao tác lưu đè file trong thư mục — lấy bản mới, bỏ bản cũ.
+
+    Chỉ nhận khi có ĐÚNG MỘT file cùng tên. Nhiều file trùng tên nghĩa là chính cách đặt tên
+    đã mơ hồ (vd cả hồ sơ toàn "scan.pdf") — đè bừa lúc đó là xoá mất một giấy tờ KHÁC, nên
+    thà thêm bản ghi mới và để nhân viên tự dọn."""
+    same_name = db.scalars(
+        select(Document).where(
+            Document.caseId == case_id, Document.originalFilename == filename
+        )
+    ).all()
+    return same_name[0] if len(same_name) == 1 else None
+
+
+def _reset_for_new_version(document: Document, key: str, mime_type: str, size: int) -> None:
+    """Đưa bản ghi cũ về đúng trạng thái như vừa upload lần đầu, giữ nguyên id.
+
+    Giữ id (thay vì xoá bản ghi rồi tạo mới) vì ảnh từng trang PDF lưu theo key cố định
+    "{caseId}/{id}-pages/page-{n}.png" — cùng id thì ảnh trang mới ghi đè thẳng lên ảnh cũ,
+    không để lại rác trong MinIO.
+
+    Xoá SẠCH mọi thứ suy ra từ nội dung cũ, KỂ CẢ phần nhân viên sửa tay (manualCorrectedText,
+    manualExpiresAt, isManualOverride). Giữ lại nghe có vẻ tiếc công, nhưng những trường đó
+    được ưu tiên hơn bản AI ở mọi chỗ hiển thị và phân tích (xem models.py) — để nguyên là
+    bản sửa tay của nội dung CŨ tiếp tục đè lên nội dung MỚI, sai theo kiểu không nhìn ra."""
+    document.storedPath = key
+    document.mimeType = mime_type
+    document.fileSizeBytes = size
+    document.uploadedAt = now_utc()
+    document.pageCount = None
+    document.ocrText = None
+    document.correctedText = None
+    document.manualCorrectedText = None
+    document.matchedChecklistItemId = None
+    document.aiRawLabel = None
+    document.aiConfidence = None
+    document.aiReasoning = None
+    document.aiDocOwner = None
+    document.aiHolderName = None
+    document.aiHolderDob = None
+    document.aiIdNumber = None
+    document.aiIdType = None
+    document.aiIssuedAt = None
+    document.aiExpiresAt = None
+    document.manualExpiresAt = None
+    document.aiFieldsNote = None
+    document.classificationError = None
+    document.isManualOverride = False
+    document.status = "OCR_RUNNING"
+
+
+def _xoa_anh_trang_cu(case_id: str, document_id: str, page_count: int | None) -> None:
+    """Dọn ảnh từng trang của bản CŨ. Bản mới có thể ít trang hơn bản cũ — không dọn thì
+    những trang thừa của bản cũ nằm lại nguyên key và vẫn mở ra được qua
+    GET /documents/{id}/pages/{n}, trộn nội dung hai bản với nhau."""
+    for i in range(1, (page_count or 0) + 1):
+        try:
+            storage.delete_document(f"{case_id}/{document_id}-pages/page-{i}.png")
+        except Exception:  # noqa: BLE001
+            # Không xoá được ảnh cũ chỉ để lại rác trong MinIO — không đáng làm hỏng cả
+            # lượt upload bản mới vốn đã thành công.
+            pass
+
+
 @router.post("", response_model=DocumentDTO, status_code=201)
-def upload_document(case_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
+def upload_document(
+    case_id: str,
+    response: Response,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
     # `def` thường (không phải `async def`) — QUAN TRỌNG: hàm này gọi OCR (subprocess
     # Tesseract, block) và DeepSeek (HTTP client đồng bộ, block) bên trong, có thể mất
     # 30-150s. Nếu khai `async def` mà không await đúng cách, các lệnh block này chạy
@@ -87,17 +162,47 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
     mime_type = ocr.detect_real_mime_type(content, file.content_type or "application/octet-stream")
     key = storage.upload_document(case_id, filename, content, mime_type)
 
-    document = Document(
-        caseId=case_id,
-        originalFilename=filename,
-        storedPath=key,
-        mimeType=mime_type,
-        fileSizeBytes=len(content),
-        status="OCR_RUNNING",
-    )
-    db.add(document)
+    # Cùng tên nhưng nội dung đã khác = bản mới của chính giấy tờ đó -> lưu đè lên bản ghi
+    # cũ, đúng như thao tác "replace" khi chép file vào thư mục đã có file trùng tên. Nếu
+    # thêm bản ghi thứ hai thì hồ sơ đọng lại cả bản cũ lẫn bản mới cùng tên, cùng khớp một
+    # mục checklist, và nhân viên không có cách nào nhìn ra bản nào là bản đang dùng.
+    previous = _find_same_name(db, case_id, filename)
+    replaced_key = None
+    replaced_page_count = None
+    # Bản CŨ có phải giấy tờ tài chính không — phải đọc TRƯỚC khi xoá matchedChecklistItemId.
+    # Nếu bản cũ là sổ tiết kiệm mà bản mới không phải, số dư của cả hồ sơ vẫn đang cộng tiền
+    # của bản cũ; không tính lại thì con số đó sai mà không có dấu hiệu gì.
+    replaced_was_savings = False
+    if previous is not None:
+        replaced_key = previous.storedPath
+        replaced_page_count = previous.pageCount
+        replaced_was_savings = is_savings_item(previous.matchedChecklistItemId)
+        document = previous
+        _reset_for_new_version(document, key, mime_type, len(content))
+        # 200 thay cho 201: không tạo thêm tài liệu nào, chỉ thay nội dung tài liệu đã có.
+        # Frontend dựa vào đúng con số này để báo "đã cập nhật bản mới" thay vì "đã thêm".
+        response.status_code = 200
+    else:
+        document = Document(
+            caseId=case_id,
+            originalFilename=filename,
+            storedPath=key,
+            mimeType=mime_type,
+            fileSizeBytes=len(content),
+            status="OCR_RUNNING",
+        )
+        db.add(document)
     db.commit()
     db.refresh(document)
+
+    # Dọn bản cũ SAU khi commit: commit hỏng thì bản ghi vẫn đang trỏ vào file cũ, xoá trước
+    # là mất trắng tài liệu. Xoá sau thì tệ nhất cũng chỉ còn lại một file mồ côi trong MinIO.
+    if replaced_key:
+        _xoa_anh_trang_cu(case_id, document.id, replaced_page_count)
+        try:
+            storage.delete_document(replaced_key)
+        except Exception:  # noqa: BLE001
+            pass
 
     all_items = db.scalars(select(ChecklistItem)).all()
     applicable_items = [
@@ -150,7 +255,7 @@ def upload_document(case_id: str, file: UploadFile = File(...), db: Session = De
     # các sổ với nhau để không cộng trùng (xem SAVINGS_SYSTEM_PROMPT ở classify.py).
     #
     # Bản "quietly" — lỗi ở bước phụ này không được phép làm hỏng lượt upload đã thành công.
-    if is_savings_item(document.matchedChecklistItemId):
+    if is_savings_item(document.matchedChecklistItemId) or replaced_was_savings:
         refresh_case_savings_quietly(db, case)
 
     db.refresh(document)

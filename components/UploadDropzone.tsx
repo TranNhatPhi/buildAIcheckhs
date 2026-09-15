@@ -25,7 +25,11 @@ interface FileProgress {
   // "duplicate" tách riêng khỏi "error": file trùng KHÔNG phải lỗi (không có gì hỏng, không
   // cần người dùng sửa gì) — hiện màu đỏ như lỗi thật sẽ làm nhân viên tưởng hồ sơ có vấn đề
   // và đi tìm cách khắc phục một việc vốn đã đúng như mong đợi.
-  status: "uploading" | "done" | "error" | "cancelled" | "duplicate";
+  //
+  // "replaced" = trùng TÊN nhưng nội dung đã khác: backend đã lưu đè lên bản cũ (HTTP 200
+  // thay vì 201). Cũng không phải lỗi, nhưng phải phân biệt với "done" vì đây là lần DUY
+  // NHẤT một lượt upload XOÁ mất dữ liệu cũ — nhân viên cần nhìn thấy điều đó đã xảy ra.
+  status: "uploading" | "done" | "error" | "cancelled" | "duplicate" | "replaced";
   error?: string;
 }
 
@@ -101,8 +105,12 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               }
               throw new Error(message);
             }
+            // 200 = backend đè lên tài liệu cùng tên đã có; 201 = tạo tài liệu mới.
+            const replaced = res.status === 200;
             setQueue((prev) =>
-              prev.map((q) => (q.id === entry.id ? { ...q, status: "done" } : q))
+              prev.map((q) =>
+                q.id === entry.id ? { ...q, status: replaced ? "replaced" : "done" } : q
+              )
             );
           } catch (e) {
             setQueue((prev) =>
@@ -141,6 +149,19 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
   const errorCount = useMemo(() => queue.filter((q) => q.status === "error").length, [queue]);
   const cancelledCount = useMemo(() => queue.filter((q) => q.status === "cancelled").length, [queue]);
   const duplicateCount = useMemo(() => queue.filter((q) => q.status === "duplicate").length, [queue]);
+  const replacedCount = useMemo(() => queue.filter((q) => q.status === "replaced").length, [queue]);
+  // Gộp các trường hợp "không phải lỗi nhưng cũng không phải thêm mới" thành một câu, để
+  // tổng các con số trong thông báo luôn cộng đúng bằng số file nhân viên đã thả vào.
+  const skipNotes = useMemo(
+    () =>
+      [
+        duplicateCount > 0 ? `${duplicateCount} file đã có sẵn nên bỏ qua` : null,
+        replacedCount > 0 ? `${replacedCount} file trùng tên đã thay bằng bản mới` : null,
+      ]
+        .filter(Boolean)
+        .join(", "),
+    [duplicateCount, replacedCount]
+  );
   const isProcessing = pendingCount > 0;
 
   // F5/đóng tab giữa chừng sẽ HUỶ NGANG các file CHƯA kịp gửi lên — trình duyệt không giữ
@@ -296,8 +317,8 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               ? `Đã dừng — ${successCount}/${queue.length} file đã tải lên xong, ${cancelledCount} file chưa tải (${errorCount} lỗi).`
               : errorCount > 0
               ? `Đã xử lý xong ${successCount}/${queue.length} file — ${errorCount} file bị lỗi, kiểm tra lại bên dưới.`
-              : duplicateCount > 0
-              ? `Đã tải lên và phân tích xong ${successCount} file — ${duplicateCount} file đã có sẵn trong hồ sơ nên được bỏ qua.`
+              : skipNotes
+              ? `Đã tải lên và phân tích xong ${successCount} file — ${skipNotes}.`
               : `Đã tải lên và phân tích xong ${successCount} file thành công.`}
           </p>
           <button
@@ -321,6 +342,7 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               {q.status === "error" && <span className="text-red-600">✗</span>}
               {q.status === "cancelled" && <span className="text-neutral-400">⏸</span>}
               {q.status === "duplicate" && <span className="text-neutral-400">⊘</span>}
+              {q.status === "replaced" && <span className="text-amber-600">↻</span>}
               <span className="truncate">{q.name}</span>
               {q.status === "uploading" && (
                 <span className="text-xs text-neutral-400">
@@ -339,6 +361,9 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               )}
               {q.status === "duplicate" && (
                 <span className="text-neutral-500 text-xs">đã có sẵn trong hồ sơ — bỏ qua</span>
+              )}
+              {q.status === "replaced" && (
+                <span className="text-amber-700 text-xs">trùng tên — đã thay bằng bản mới này</span>
               )}
             </li>
           ))}
