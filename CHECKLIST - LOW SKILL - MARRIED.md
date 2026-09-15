@@ -11,7 +11,7 @@
 - [ ] 5. **Giấy khai sinh**
 - [ ] 6. Giấy đăng ký kết hôn (nếu có)
 - [ ] 7. Giấy quyết định ly hôn (nếu có)
-- [ ] 8. **Ảnh thẻ phông trắng**
+- [ ] 8. **Photo**
 - [ ] 9. Lý lịch tư pháp số 2
 - [ ] 10. Lý lịch tư pháp tại nước ngoài (nếu có)
 - [ ] 11. Giấy khám sức khoẻ tại nơi chỉ định (nếu có)
