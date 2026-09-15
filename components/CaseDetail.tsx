@@ -478,14 +478,17 @@ export function CaseDetail({ caseId, initialData }: Props) {
             <button
               onClick={() => startEditNote(c.notes)}
               title="Bấm để sửa ghi chú"
-              className="group flex w-full items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left transition-colors hover:border-amber-300"
+              // Tím chứ KHÔNG vàng: vàng/amber trên trang này đã mang nghĩa "cần chú ý"
+              // (banner "còn thiếu N mục bắt buộc" ngay bên dưới và banner đang xử lý file).
+              // Ghi chú nằm sát ngay trên chúng, cùng màu là nhìn như một khối cảnh báo dài.
+              className="group flex w-full items-start gap-2 rounded-xl border-2 border-violet-200 bg-violet-50 px-3 py-2.5 text-left transition-colors hover:border-violet-300"
             >
               <span aria-hidden="true" className="text-sm leading-5">
                 📝
               </span>
               {/* whitespace-pre-wrap: nhân viên hay xuống dòng để liệt kê nhiều thứ thiếu */}
-              <span className="whitespace-pre-wrap text-sm text-amber-900">{c.notes}</span>
-              <span className="ml-auto shrink-0 text-xs font-semibold text-amber-700 opacity-0 transition-opacity group-hover:opacity-100">
+              <span className="whitespace-pre-wrap text-sm font-medium text-violet-900">{c.notes}</span>
+              <span className="ml-auto shrink-0 text-xs font-semibold text-violet-700 opacity-0 transition-opacity group-hover:opacity-100">
                 Sửa
               </span>
             </button>
