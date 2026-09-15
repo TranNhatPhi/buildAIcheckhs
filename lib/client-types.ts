@@ -24,6 +24,8 @@ export interface ChecklistItemDTO {
   appliesTo: string;
   quantityRule: string;
   skillLevel: string;
+  /** Các mục cùng giá trị này, nằm liền nhau, dùng chung số lớn: "18.1", "18.2". */
+  numberGroup: string | null;
 }
 
 export interface DocumentDTO {

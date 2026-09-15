@@ -1,3 +1,4 @@
+import { buildChecklistNumbers } from "@/lib/format";
 import type { ChecklistItemStatusDTO } from "@/lib/client-types";
 
 interface Props {
@@ -16,10 +17,10 @@ function groupBy(items: ChecklistItemStatusDTO[]) {
 
 export function ChecklistSection({ items }: Props) {
   const grouped = groupBy(items);
-  // Số thứ tự theo đúng checklist gốc (file .md khách hàng gửi) — đánh số LIÊN TỤC xuyên
-  // suốt cả checklist (không reset lại từ 1 ở mỗi nhóm), dựa theo vị trí trong mảng `items`
-  // đã được backend sắp xếp đúng theo `order` (compute_checklist_summary, completeness.py).
-  const numberById = new Map(items.map((s, i) => [s.item.id, i + 1]));
+  // Số thứ tự theo đúng checklist gốc khách gửi, gồm cả các mục dùng số con kiểu 18.1/18.2
+  // — xem buildChecklistNumbers. Dùng chung một hàm với CaseDetail/CaseSummary/AdminCaseDetail
+  // để bốn chỗ không bao giờ hiện hai số khác nhau cho cùng một mục.
+  const numberById = buildChecklistNumbers(items);
 
   return (
     <div className="flex flex-col gap-7">
@@ -52,7 +53,7 @@ export function ChecklistSection({ items }: Props) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold text-neutral-800">
-                        <span className="text-neutral-400">{numberById.get(s.item.id)}.</span>{" "}
+                        <span className="text-neutral-400">{numberById.get(s.item.id)}</span>{" "}
                         {s.item.nameVi}
                       </span>
                       {s.item.isOptional && (

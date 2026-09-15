@@ -111,6 +111,7 @@ class ChecklistItemDTO(BaseModel):
     appliesTo: str
     quantityRule: str
     skillLevel: str
+    numberGroup: str | None = None
 
     class Config:
         from_attributes = True

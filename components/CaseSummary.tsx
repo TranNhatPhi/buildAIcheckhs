@@ -5,6 +5,7 @@ import { FormattedDocumentText } from "@/components/FormattedDocumentText";
 import {
   API_URL,
   analysisRangeSeconds,
+  buildChecklistNumbers,
   estimateAnalysisSeconds,
   formatElapsed,
   formatMinuteRange,
@@ -172,7 +173,7 @@ export function CaseSummary({
   // Số thứ tự theo đúng checklist gốc — tính trên TOÀN BỘ `items` (không phải itemsWithDocs)
   // để số hiển thị luôn khớp đúng vị trí thật của mục trong checklist, kể cả khi trang này
   // chỉ hiện 1 tập con (các mục đã có file khớp).
-  const numberById = new Map(items.map((s, i) => [s.item.id, i + 1]));
+  const numberById = buildChecklistNumbers(items);
 
   return (
     <div className="flex flex-col gap-7">
@@ -266,7 +267,7 @@ export function CaseSummary({
               {statuses.map((s) => (
                 <div key={s.item.id}>
                   <h4 className="text-sm font-semibold text-neutral-800 mb-2">
-                    <span className="text-neutral-400">{numberById.get(s.item.id)}.</span>{" "}
+                    <span className="text-neutral-400">{numberById.get(s.item.id)}</span>{" "}
                     {s.item.nameVi}
                   </h4>
                   <div className="flex flex-col gap-2">

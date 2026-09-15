@@ -120,3 +120,48 @@ export function splitExperience(months: number | null | undefined): {
   if (months > 0 && months % 12 === 0) return { value: String(months / 12), unit: "YEAR" };
   return { value: String(months), unit: "MONTH" };
 }
+
+
+/**
+ * Số thứ tự hiển thị của từng mục checklist, đánh LIÊN TỤC xuyên suốt cả danh sách (không
+ * reset về 1 ở mỗi nhóm) theo đúng bản checklist giấy khách gửi.
+ *
+ * Các mục liền nhau có cùng `numberGroup` dùng chung MỘT số lớn và được đánh số con phía
+ * sau — "18.1", "18.2" — rồi mục kế tiếp nhận số lớn tiếp theo (19). Nếu đánh số phẳng
+ * 18/19 thì mọi mục từ đó tới cuối danh sách đều lệch 1 số so với tờ giấy nhân viên đang
+ * cầm, dò tay là nhầm hàng.
+ *
+ * Cụm chỉ còn ĐÚNG MỘT mục hiển thị (mục kia bị lọc mất vì không áp dụng cho hồ sơ này)
+ * thì trả về số lớn trơn, không có ".1" — một mình mà đánh "18.1" thì người đọc sẽ đi tìm
+ * "18.2" vốn không tồn tại.
+ *
+ * Trả về NHÃN đã kèm sẵn dấu chấm — "19." cho mục thường, "18.1" cho mục con (số con
+ * không có dấu chấm đuôi, đúng như bản checklist giấy). Nơi hiển thị in thẳng, không nối
+ * thêm "." nữa, nếu không mục con sẽ thành "18.1." rất rối mắt.
+ *
+ * `items` phải theo đúng thứ tự backend đã sắp (compute_checklist_summary).
+ */
+export function buildChecklistNumbers(
+  items: { item: { id: string; numberGroup: string | null } }[],
+): Map<string, string> {
+  const numbers = new Map<string, string>();
+  let major = 0;
+  let i = 0;
+  while (i < items.length) {
+    major++;
+    const group = items[i].item.numberGroup;
+    if (!group) {
+      numbers.set(items[i].item.id, `${major}.`);
+      i++;
+      continue;
+    }
+    let end = i;
+    while (end < items.length && items[end].item.numberGroup === group) end++;
+    const size = end - i;
+    for (let k = i; k < end; k++) {
+      numbers.set(items[k].item.id, size === 1 ? `${major}.` : `${major}.${k - i + 1}`);
+    }
+    i = end;
+  }
+  return numbers;
+}

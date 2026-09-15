@@ -128,6 +128,13 @@ class ChecklistItem(Base):
     # is_item_applicable (completeness.py) để biết ý nghĩa từng giá trị.
     appliesTo = Column(String(191), nullable=False)
     quantityRule = Column(String(191), nullable=False, default="FIXED_1")
+    # Các mục CÙNG numberGroup và nằm LIỀN NHAU dùng chung một số lớn trên giao diện, đánh
+    # số con phía sau: "18.1", "18.2". Bản checklist giấy của khách gộp chứng chỉ thi tiếng
+    # Anh và giấy xác nhận học tại trung tâm thành một mục 18 có hai ý nhỏ; nhân viên đọc số
+    # trên giấy rồi dò trong app, nên app đánh số phẳng 18/19 là lệch hàng từ đó tới cuối
+    # danh sách. NULL = mục đứng riêng, lấy số lớn của chính nó (trường hợp của gần như mọi
+    # mục). Đây là dữ liệu HIỂN THỊ thuần tuý, không tham gia vào việc tính đủ/thiếu hồ sơ.
+    numberGroup = Column(String(191), nullable=True)
     # "LOW_SKILL" | "HIGH_SKILL" — checklist hoàn toàn khác nhau theo skill level (xem
     # backend/seed.py), lọc theo Case.skillLevel giống cách appliesTo lọc theo marital/con.
     skillLevel = Column(String(191), nullable=False, default="LOW_SKILL")

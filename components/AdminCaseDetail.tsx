@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { getAdminPassword } from "@/lib/adminAuth";
-import { API_URL } from "@/lib/format";
+import { API_URL, buildChecklistNumbers } from "@/lib/format";
 import { useHydrated } from "@/lib/useHydrated";
 import { downloadFile } from "@/lib/download";
 import {
@@ -40,7 +40,7 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
   const { case: c, checklist } = data;
   const applicationStatus = getApplicationStatus(c.applicationStatus);
   const missingRequired = checklist.items.filter((s) => !s.item.isOptional && !s.complete);
-  const checklistNumberById = new Map(checklist.items.map((s, i) => [s.item.id, i + 1]));
+  const checklistNumberById = buildChecklistNumbers(checklist.items);
 
   return (
     <div className="min-h-screen flex" style={{ backgroundColor: "#f0f2f5" }}>
@@ -104,7 +104,7 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
             <ul className="text-sm text-neutral-600 flex flex-col gap-1">
               {missingRequired.map((s) => (
                 <li key={s.item.id}>
-                  {checklistNumberById.get(s.item.id)}. {s.item.nameVi}
+                  {checklistNumberById.get(s.item.id)} {s.item.nameVi}
                   {s.requiredCount > 1 && ` (${s.fulfilledCount}/${s.requiredCount} đã có)`}
                 </li>
               ))}
