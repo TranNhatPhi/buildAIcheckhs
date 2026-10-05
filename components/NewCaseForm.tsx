@@ -1,5 +1,8 @@
 "use client";
 
+import { CasePeopleFields, type CasePeople } from "@/components/CasePeopleFields";
+import { DON_VI_TRONG, ExperienceUnitsField, donViDeGui } from "@/components/ExperienceUnitsField";
+import type { ExperienceUnit } from "@/lib/client-types";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { API_URL } from "@/lib/format";
@@ -27,8 +30,10 @@ export function NewCaseForm() {
   const [numberOfChildren, setNumberOfChildren] = useState(0);
   const [skillLevel, setSkillLevel] = useState<"LOW_SKILL" | "HIGH_SKILL">("LOW_SKILL");
   const [partner, setPartner] = useState("");
+  const [nguoi, setNguoi] = useState<CasePeople>({ receiverName: "", managerName: "", saleName: "" });
   const [occupation, setOccupation] = useState("");
   const [experienceValue, setExperienceValue] = useState("");
+  const [donViKN, setDonViKN] = useState<ExperienceUnit[]>([DON_VI_TRONG]);
   const [experienceUnit, setExperienceUnit] = useState<"YEAR" | "MONTH">("YEAR");
   const [notes, setNotes] = useState("");
   // Gợi ý sinh từ dữ liệu đã nhập. Không có bảng riêng cho đối tác/nghề nghiệp, nên đây là
@@ -64,8 +69,10 @@ export function NewCaseForm() {
           numberOfChildren,
           skillLevel,
           partner,
+          ...nguoi,
           occupation,
           experienceMonths: toExperienceMonths(experienceValue, experienceUnit),
+          experienceUnits: donViDeGui(donViKN),
           notes,
         }),
       });
@@ -253,6 +260,10 @@ export function NewCaseForm() {
               </div>
               <p className={FORM_HINT}>Ghi số năm hoặc số tháng, chọn đơn vị tương ứng.</p>
             </div>
+
+            <div>
+              <ExperienceUnitsField value={donViKN} onChange={setDonViKN} idPrefix="tao" />
+            </div>
           </div>
         </section>
 
@@ -285,6 +296,8 @@ export function NewCaseForm() {
                 Dùng để phân biệt khi hai đối tác có khách trùng tên, và để lọc hồ sơ theo nguồn.
               </p>
             </div>
+
+            <CasePeopleFields value={nguoi} onChange={setNguoi} idPrefix="tao" />
 
             <div>
               <label className={FORM_LABEL} htmlFor="ghi-chu">

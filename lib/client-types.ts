@@ -5,12 +5,11 @@ export type ApplicationStatus =
   | "COLLECTING_DOCUMENTS"
   | "REVIEWING_DOCUMENTS"
   | "READY_TO_SUBMIT"
+  | "COMPLETED"
   | "SUBMITTED"
-  | "UNDER_REVIEW"
-  | "ADDITIONAL_DOCUMENTS_REQUIRED"
-  | "AWAITING_DECISION"
   | "APPROVED"
-  | "REJECTED";
+  | "REJECTED"
+  | "LIQUIDATED";
 
 export interface ChecklistItemDTO {
   id: string;
@@ -124,10 +123,15 @@ export interface CaseListItemDTO {
   skillLevel: string;
   /** Đối tác / nguồn giới thiệu. null = khách tự tìm đến, hoặc hồ sơ tạo trước khi có trường này. */
   partner: string | null;
+  /** Người phụ trách hồ sơ — ô chữ tự do, null = chưa nhập. */
+  receiverName: string | null;
+  managerName: string | null;
+  saleName: string | null;
   /** Nghề nghiệp của đương đơn, vd "Xây dựng", "Chế biến hải sản". */
   occupation: string | null;
   /** Kinh nghiệm quy về SỐ THÁNG. Dùng formatExperience() để hiển thị. */
   experienceMonths: number | null;
+  experienceUnits: ExperienceUnit[];
   notes: string | null;
   tags: string[];
   createdAt: string;
@@ -137,9 +141,22 @@ export interface CaseListItemDTO {
   nextStatusReminderAt: string | null;
   statusReminderDue: boolean;
   statusReminderIntervalDays: number;
+  // 1 = lần đầu; > 1 = admin đã cho nộp lại (hiện "Nộp lại lần N" cạnh tên).
+  submissionRound: number;
+  // Lần có file mới gần nhất (null = chưa có file) — cột "Ngày cập nhật" ở trang thống kê.
+  lastDocumentAt: string | null;
+  // Số ngày chưa cập nhật nếu thuộc diện nhắc "7 ngày chưa cập nhật" (backend thong_bao.py), null nếu không.
+  // Chỉ có ở danh sách (GET /cases, GET /admin/cases).
+  idleDays?: number | null;
   // null ở danh sách hồ sơ đang hoạt động — chỉ có giá trị ở /admin/cases (bao gồm cả hồ sơ
   // đã xoá mềm) hoặc /cases/deleted.
   deletedAt: string | null;
+  /** Mốc admin bấm "Đánh dấu hoàn tất"; null = chưa đánh dấu. Chỉ endpoint admin trả về. */
+  completedAt: string | null;
+  /** Mốc hồ sơ sẽ tự xoá mềm (= completedAt + 15 ngày). */
+  autoDeleteAt: string | null;
+  /** Lúc file giấy tờ bị xoá sạch sau khi hoàn tất; null = file vẫn còn. Khách hàng vẫn giữ. */
+  filesPurgedAt: string | null;
   percent: number;
   needsReviewCount: number;
   financialThreshold: FinancialThresholdDTO;
@@ -212,8 +229,12 @@ export interface CaseDetailDTO {
     numberOfChildren: number;
     skillLevel: string;
     partner: string | null;
+    receiverName: string | null;
+    managerName: string | null;
+    saleName: string | null;
     occupation: string | null;
     experienceMonths: number | null;
+    experienceUnits: ExperienceUnit[];
     notes: string | null;
     tags: string[];
     createdAt: string;
@@ -223,11 +244,16 @@ export interface CaseDetailDTO {
     nextStatusReminderAt: string | null;
     statusReminderDue: boolean;
     statusReminderIntervalDays: number;
+    submissionRound: number;
+    lastDocumentAt: string | null;
     documents: DocumentDTO[];
     aiAnalysisStatus: string;
     aiAnalysisSummary: string | null;
     aiAnalysisError: string | null;
     aiAnalysisUpdatedAt: string | null;
+    completedAt: string | null;
+    autoDeleteAt: string | null;
+    filesPurgedAt: string | null;
   };
   checklist: {
     items: ChecklistItemStatusDTO[];
@@ -245,4 +271,47 @@ export interface CaseDetailDTO {
 export interface TagDefinition {
   name: string;
   color: string;
+}
+
+/** Một file trong kết quả POST /translation-check (xem backend/routers/translation_check.py). */
+export interface TranslationFileDTO {
+  /** Tên file đã sửa lỗi mã hoá (vd "Ho╠é╠Ç" -> "Hồ") nếu có. */
+  filename: string;
+  /** Chủ giấy tờ đọc từ tên file theo quy ước "<số>. <Họ tên> - <loại>"; null nếu không theo quy ước. */
+  ownerName: string | null;
+  ownerForm: string | null;
+  chars: number;
+  error: string | null;
+  /** Tên đọc được trong bản dịch, kèm vai trò nếu xác định được: "HO XUAN TINH (chủ hộ)". */
+  names: string[];
+  idNumbers: string[];
+  /** Chữ app đọc được từ bản dịch (cắt bớt nếu quá dài) — dùng cho khung xem nhanh. */
+  text: string;
+  /** Đường dẫn mở file gốc đã lưu trên MinIO (ghép sau API_URL); null nếu lưu hỏng. */
+  url: string | null;
+}
+
+export interface TranslationFindingDTO {
+  severity: "ERROR" | "WARNING";
+  rule: string;
+  title: string;
+  message: string;
+  files: string[];
+}
+
+export interface TranslationCheckResponse {
+  applicantName: string;
+  /** Họ tên dạng chuẩn trong bản dịch: viết HOA, bỏ dấu. */
+  expectedName: string;
+  /** Mã lượt kiểm tra = tên thư mục giữ bộ bản dịch này trên MinIO. */
+  checkId: string;
+  files: TranslationFileDTO[];
+  findings: TranslationFindingDTO[];
+  summary: { files: number; readable: number; errors: number; warnings: number };
+}
+
+/** Đơn vị (công ty) xác nhận kinh nghiệm + ngày trên giấy xác nhận ("YYYY-MM-DD"). */
+export interface ExperienceUnit {
+  name: string;
+  confirmedDate: string | null;
 }

@@ -44,6 +44,9 @@ next-env.d.ts
 
 # app-specific
 backend/.venv/
+# venv riêng cho Windows — .venv/ ở trên là venv macOS (Python 3.9, layout bin/), không chạy
+# được trên Windows nên không dùng chung một thư mục được.
+backend/.venv-win/
 backend/**/__pycache__/
 backend/uvicorn.log
 backend/test_vi*.png

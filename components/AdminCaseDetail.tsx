@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { ResubmitBadge } from "@/components/ResubmitBadge";
+import { tomTatDonVi } from "@/components/ExperienceUnitsField";
 import { getAdminPassword } from "@/lib/adminAuth";
 import { API_URL, buildChecklistNumbers } from "@/lib/format";
 import { useHydrated } from "@/lib/useHydrated";
@@ -11,6 +13,7 @@ import {
   getApplicationStatus,
 } from "@/lib/application-status";
 import { EL, STATUS_LABEL, STATUS_COLOR, Tag, AdminSidebar } from "@/components/adminUi";
+import { ChuongThongBao } from "@/components/ChuongThongBao";
 import type { CaseDetailDTO } from "@/lib/client-types";
 
 export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
@@ -55,11 +58,14 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
             <span className="mx-1.5 text-neutral-300">/</span>
             <span className="text-neutral-700 font-medium">{c.clientName}</span>
           </p>
+          <ChuongThongBao />
         </header>
 
         <div className="p-6 flex flex-col gap-5">
           <div>
-            <h1 className="text-xl font-semibold text-neutral-900">{c.clientName}</h1>
+            <h1 className="text-xl font-semibold text-neutral-900">
+              {c.clientName} <ResubmitBadge round={c.submissionRound} />
+            </h1>
             <p className="text-sm text-neutral-500 mt-0.5">
               {c.maritalStatus === "MARRIED" ? "Đã kết hôn" : "Độc thân"}
               {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
@@ -68,6 +74,11 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
               {" · Tạo ngày "}
               {new Date(c.createdAt).toLocaleDateString("vi-VN")}
             </p>
+            {c.experienceUnits?.length > 0 && (
+              <p className="text-sm text-neutral-600 mt-1">
+                <span className="text-neutral-500">Đơn vị xác nhận kinh nghiệm:</span> {tomTatDonVi(c.experienceUnits)}
+              </p>
+            )}
           </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <InfoPanel

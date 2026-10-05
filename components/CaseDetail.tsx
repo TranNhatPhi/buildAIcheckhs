@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { ResubmitBadge } from "@/components/ResubmitBadge";
+import { tomTatDonVi } from "@/components/ExperienceUnitsField";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChecklistSection } from "@/components/ChecklistSection";
 import { DocumentScene3D } from "@/components/DocumentScene3D";
@@ -15,10 +17,14 @@ import {
   APPLICATION_STATUS_HEX_COLOR,
   FINAL_APPLICATION_STATUSES,
   getApplicationStatus,
+  staffCanEditStatus,
+  statusChangeBlockedReason,
+  statusOptionsFor,
 } from "@/lib/application-status";
 import {
   API_URL,
   buildChecklistNumbers,
+  documentPageCount,
   estimateProcessingSeconds,
   formatExperience,
   formatRemaining,
@@ -54,6 +60,10 @@ interface Props {
   // lần đầu / F5, không phải qua màn "Đang tải..." rồi mới fetch lại phía client.
   initialData: CaseDetailDTO;
 }
+
+// Bao nhiêu ngày không có giấy tờ mới thì chuyển sang nhắc nhở nền đậm. 7 ngày = một tuần
+// làm việc trôi qua mà hồ sơ không nhúc nhích.
+const NGAY_IM_LANG_CANH_BAO = 7;
 
 export function CaseDetail({ caseId, initialData }: Props) {
   const [data, setData] = useState<CaseDetailDTO | null>(initialData);
@@ -177,7 +187,8 @@ export function CaseDetail({ caseId, initialData }: Props) {
         body: JSON.stringify({ applicationStatus }),
       });
       if (!res.ok) {
-        setStatusError("Không cập nhật được trạng thái hồ sơ.");
+        const chiTiet = (await res.json().catch(() => null))?.detail;
+        setStatusError(chiTiet ?? "Không cập nhật được trạng thái hồ sơ.");
         return;
       }
       // Backend quyết định trạng thái nào gửi email (INSTANT_EMAIL_STATUSES) và trả về cờ
@@ -210,6 +221,32 @@ export function CaseDetail({ caseId, initialData }: Props) {
   // hiện sau khi useHydrated() trả true. Nhờ vậy lần hydrate đầu vẫn khớp HTML từ server mà
   // đồng hồ có ngay mốc hợp lệ, không cần setState đồng bộ thêm một lượt trong effect.
   const mounted = useHydrated();
+  const [quaHan, setQuaHan] = useState<
+    { caseId: string; daysOverdue: number; receivedDate: string; units: string[]; reminderDays: number }[]
+  >([]);
+  // Tải lại mỗi khi trạng thái / đơn vị đổi: hồ sơ vừa tới "Hoàn thành" thì banner phải tắt ngay.
+  // Khoá dạng chuỗi: mảng đơn vị là object MỚI sau mỗi lần tải lại trang, dùng thẳng làm dependency
+  // là gọi lại API sau mọi thao tác dù chẳng có gì đổi.
+  const khoaThongBao = data ? `${data.case.applicationStatus}|${JSON.stringify(data.case.experienceUnits ?? [])}` : "";
+  useEffect(() => {
+    let huy = false;
+    fetch(`${API_URL}/notifications`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!huy && d?.items) {
+          // Chỉ loại "đơn vị xác nhận KN" — loại "7 ngày chưa cập nhật" đã có khung nhắc vàng riêng.
+          setQuaHan(
+            d.items
+              .filter((x: { kind?: string }) => (x.kind ?? "DON_VI_KN") === "DON_VI_KN")
+              .map((x: { caseId: string }) => ({ ...x, reminderDays: d.reminderDays ?? 7 })),
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      huy = true;
+    };
+  }, [khoaThongBao]);
   const [nowTick, setNowTick] = useState(Date.now);
   useEffect(() => {
     if (!hasProcessingDocs) return;
@@ -245,6 +282,11 @@ export function CaseDetail({ caseId, initialData }: Props) {
   if (!data) return <p className="text-neutral-400 px-6 py-10">Đang tải...</p>;
 
   const { case: c, checklist } = data;
+  // Tổng số trang của cả hồ sơ: nhân viên cần con số này để biết bộ giấy tờ dày bao nhiêu khi
+  // in/nộp. File OCR hỏng thì pageCount để trống — đếm riêng và nói rõ, để tổng không âm thầm
+  // thiếu trang mà nhìn vào lại tưởng là đủ.
+  const totalPages = c.documents.reduce((sum, d) => sum + (documentPageCount(d) ?? 0), 0);
+  const unknownPageDocs = c.documents.filter((d) => documentPageCount(d) == null).length;
   const isComplete = checklist.percent === 100;
   const applicationStatus = getApplicationStatus(c.applicationStatus);
   // Mục bắt buộc còn thiếu — liệt kê ngay đầu trang để nhân viên biết cần làm gì tiếp mà
@@ -254,6 +296,22 @@ export function CaseDetail({ caseId, initialData }: Props) {
   // ChecklistSection) — để nhân viên đối chiếu nhanh từ banner này xuống đúng mục trong
   // checklist dài bên dưới, không phải dò tên bằng mắt.
   const checklistNumberById = buildChecklistNumbers(checklist.items);
+
+  // "Cập nhật mới" = có giấy tờ được nộp thêm. Đo theo lần UPLOAD gần nhất chứ không theo
+  // updatedAt của hồ sơ: đổi trạng thái hay sửa ghi chú cũng chạm updatedAt, mà việc đang
+  // chờ ở đây là KHÁCH NỘP GIẤY — sửa ghi chú không làm hồ sơ tiến thêm bước nào.
+  // Chưa nộp file nào thì đếm từ lúc tạo hồ sơ.
+  const moc = c.documents.length
+    ? Math.max(...c.documents.map((d) => parseUtcDate(d.uploadedAt).getTime()))
+    : parseUtcDate(c.createdAt).getTime();
+  // useHydrated (biến `mounted`): mốc "hôm nay" ở server và ở trình duyệt khác nhau vài giây/múi giờ, render
+  // thẳng Date.now() sẽ lệch giữa HTML server dựng và lần render đầu ở client (hydration
+  // mismatch). Chờ hydrate xong mới tính.
+  const soNgayImLang = mounted ? Math.floor((Date.now() - moc) / 86400000) : 0;
+  // Hồ sơ này có đang nằm trong chuông thông báo không (backend/thong_bao.py) — hỏi đúng danh sách
+  // của chuông chứ không tự tính lại quy tắc 7 ngày ở đây, để banner và chuông không bao giờ lệch.
+  const quaHanDonVi = quaHan.find((x) => x.caseId === caseId) ?? null;
+  const canNhacNho = soNgayImLang >= NGAY_IM_LANG_CANH_BAO && missingRequiredItems.length > 0;
 
   return (
     <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-10 flex flex-col gap-7">
@@ -325,17 +383,25 @@ export function CaseDetail({ caseId, initialData }: Props) {
             </span>
             <select
               value={c.applicationStatus}
-              disabled={statusSaving}
+              disabled={statusSaving || !staffCanEditStatus(c.applicationStatus)}
+              title={
+                staffCanEditStatus(c.applicationStatus)
+                  ? undefined
+                  : "Từ Sẵn sàng nộp trở đi do admin cập nhật ở trang quản trị"
+              }
               onChange={(event) =>
                 void updateApplicationStatus(event.target.value as ApplicationStatus)
               }
               className={`w-full rounded-xl border-2 px-3 py-2 text-sm font-semibold outline-none transition focus:border-indigo-400 disabled:opacity-50 ${APPLICATION_STATUS_BADGE_CLASS[c.applicationStatus]}`}
             >
-              {APPLICATION_STATUSES.map((status) => (
-                <option key={status.value} value={status.value}>
-                  {status.label}
-                </option>
-              ))}
+              {statusOptionsFor("staff", c.applicationStatus).map((status) => {
+                const lyDo = statusChangeBlockedReason(status.value, c.applicationStatus, checklist.percent);
+                return (
+                  <option key={status.value} value={status.value} disabled={!!lyDo}>
+                    {status.label}{lyDo ? ` (${lyDo})` : ""}
+                  </option>
+                );
+              })}
             </select>
           </label>
         </div>
@@ -420,6 +486,7 @@ export function CaseDetail({ caseId, initialData }: Props) {
       >
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold text-neutral-800">{c.clientName}</h1>
+          <ResubmitBadge round={c.submissionRound} />
           {c.partner && (
             <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
               🏢 {c.partner}
@@ -440,6 +507,11 @@ export function CaseDetail({ caseId, initialData }: Props) {
           {" ("}
           {checklist.completedRequiredItems}/{checklist.totalRequiredItems} mục bắt buộc)
         </p>
+        {c.experienceUnits?.length > 0 && (
+          <p className="text-sm text-neutral-600 mt-1">
+            <span className="text-neutral-500">Đơn vị xác nhận kinh nghiệm:</span> {tomTatDonVi(c.experienceUnits)}
+          </p>
+        )}
         {/* Ghi chú: bấm vào là sửa ngay, không phải mở modal "Sửa hồ sơ" */}
         <div className="mt-2">
           {noteEditing ? (
@@ -561,14 +633,62 @@ export function CaseDetail({ caseId, initialData }: Props) {
         )}
       </div>
 
-      {missingRequiredItems.length > 0 && (
-        <div className="border-2 border-amber-200 bg-amber-50 rounded-2xl p-4">
-          <p className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-2">
-            Còn thiếu {missingRequiredItems.length} mục bắt buộc
+      {/* Cùng một danh sách mục còn thiếu, nhưng hồ sơ đã im lặng quá lâu thì đổi sang nền
+          ĐẬM: bảng vàng nhạt nằm lẫn với các thẻ khác trên trang, nhân viên lướt qua nhiều
+          lần thành quen mắt rồi không thấy nữa. */}
+      {/* Hồ sơ đã bấm "Hoàn tất": tới hạn là case_cleanup.py XOÁ HẲN (cả khách lẫn file), nên
+          phải cảnh báo ngay trên trang để ai cần file còn kịp tải về. */}
+      {quaHanDonVi && (
+        <div className="rounded-2xl p-4 border-2 border-red-300 bg-red-50">
+          <p className="text-sm font-bold text-red-900">
+            ⏰ {quaHanDonVi.daysOverdue > 0 ? `Quá hạn ${quaHanDonVi.daysOverdue} ngày` : "Đến hạn hôm nay"}: đã nhận đơn
+            vị xác nhận kinh nghiệm từ {ngayVNChuoi(quaHanDonVi.receivedDate)} ({quaHanDonVi.units.join(", ")}) nhưng hồ sơ
+            chưa làm xong để gửi nguồn.
           </p>
+          <p className="mt-1 text-xs text-red-800">
+            Nhắc sau {quaHanDonVi.reminderDays} ngày kể từ lúc nhận đơn vị. Hết nhắc khi hồ sơ tới “Hoàn thành”.
+          </p>
+        </div>
+      )}
+
+      {c.autoDeleteAt && (
+        <div className="rounded-2xl p-4 border-2 border-red-300 bg-red-50">
+          <p className="text-sm font-bold text-red-900">
+            Hồ sơ đã đánh dấu hoàn tất — sẽ bị XOÁ VĨNH VIỄN ngày{" "}
+            {parseUtcDate(c.autoDeleteAt).toLocaleDateString("vi-VN")}, cả thông tin khách hàng lẫn
+            toàn bộ file. Không khôi phục được — tải file về trước nếu còn cần.
+          </p>
+        </div>
+      )}
+
+      {missingRequiredItems.length > 0 && (
+        <div
+          className={
+            canNhacNho
+              // Nền TRẮNG viền vàng đậm: màu vàng tươi đã chuyển ra thẻ hồ sơ ở trang danh sách
+              // (CaseList) để lướt là thấy; trong trang hồ sơ giữ nền trắng cho dễ đọc danh sách
+              // dài, viền vàng + bóng để vẫn khác khung "còn thiếu" thường (vàng nhạt amber-50).
+              ? "rounded-2xl p-5 bg-white text-black border-2 border-yellow-400 shadow-lg"
+              : "border-2 border-amber-200 bg-amber-50 rounded-2xl p-4"
+          }
+        >
+          {canNhacNho ? (
+            <>
+              <p className="text-xs font-bold uppercase tracking-wide text-black mb-1">
+                Nhắc nhở · {soNgayImLang} ngày chưa nộp thêm giấy tờ nào
+              </p>
+              <p className="text-base font-bold mb-3">
+                Hồ sơ chưa nộp — cần bắt buộc nộp {missingRequiredItems.length} mục sau
+              </p>
+            </>
+          ) : (
+            <p className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-2">
+              Còn thiếu {missingRequiredItems.length} mục bắt buộc
+            </p>
+          )}
           <ul className="list-disc pl-5 flex flex-col gap-1">
             {missingRequiredItems.map((s) => (
-              <li key={s.item.id} className="text-sm text-amber-900">
+              <li key={s.item.id} className={canNhacNho ? "text-sm text-black" : "text-sm text-amber-900"}>
                 <span className="font-semibold">{checklistNumberById.get(s.item.id)}</span>{" "}
                 {s.item.nameVi}
                 {s.requiredCount > 1 && ` (${s.fulfilledCount}/${s.requiredCount} đã có)`}
@@ -598,7 +718,16 @@ export function CaseDetail({ caseId, initialData }: Props) {
 
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-bold text-neutral-800">File đã upload</h2>
+          <h2 className="text-lg font-bold text-neutral-800">
+            File đã upload
+            {c.documents.length > 0 && (
+              <span className="ml-2 text-sm font-medium text-neutral-500">
+                {c.documents.length} file
+                {totalPages > 0 && ` · ${totalPages} trang`}
+                {unknownPageDocs > 0 && ` (${unknownPageDocs} file chưa đọc được số trang)`}
+              </span>
+            )}
+          </h2>
           {c.documents.length > 0 && (
             <button
               onClick={async () => {
@@ -625,4 +754,10 @@ export function CaseDetail({ caseId, initialData }: Props) {
       </div>
     </main>
   );
+}
+
+/** "YYYY-MM-DD" -> "dd/mm/yyyy", đọc thẳng từ chuỗi (Date đọc ngày trần theo UTC, dễ lệch 1 ngày). */
+function ngayVNChuoi(iso: string) {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
 }

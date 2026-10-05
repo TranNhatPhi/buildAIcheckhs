@@ -9,7 +9,7 @@ FULFILLED_STATUSES = {"CLASSIFIED", "MANUALLY_SET"}
 
 
 # Số con tối thiểu cần để mục "CHILD_N" / "SPOUSE_CHILD_N" áp dụng — checklist nguồn (4 file
-# .md của khách hàng) chỉ định nghĩa giấy tờ riêng cho tối đa 3 con (con 1/2/3), không có mục
+# .md trong docs/) chỉ định nghĩa giấy tờ riêng cho tối đa 3 con (con 1/2/3), không có mục
 # tổng quát "mọi con thứ N+" nữa như model cũ (PER_CHILD/PER_DEPENDENT).
 _CHILD_MIN_COUNT = {"CHILD_1": 1, "CHILD_2": 2, "CHILD_3": 3,
                     "SPOUSE_CHILD_1": 1, "SPOUSE_CHILD_2": 2, "SPOUSE_CHILD_3": 3}
@@ -31,13 +31,60 @@ def is_item_applicable(
     if applies_to == "SINGLE":
         return marital_status == "SINGLE"
     if applies_to in _CHILD_MIN_COUNT:
-        # "SPOUSE_CHILD_N" (checklist HIGH_SKILL): mục riêng cho từng con nhưng CHỈ áp dụng
-        # khi đã kết hôn — checklist gốc không có mục cho con khi đương đơn còn độc thân.
-        # "CHILD_N" (checklist LOW_SKILL): áp dụng chỉ theo số con, không cần đã kết hôn.
+        # "SPOUSE_CHILD_N" (bộ HIGH_SKILL): mục cho từng con CHỈ khi đã kết hôn — bản giấy độc
+        # thân không có phần hồ sơ con. "CHILD_N": chỉ theo số con, hiện không mục nào dùng
+        # (khai sinh con bộ LOW_SKILL luôn hiện, xem seed.py), giữ lại để không phải đổi code
+        # nếu checklist quay về kiểu lọc theo số con.
         if applies_to.startswith("SPOUSE_") and marital_status != "MARRIED":
             return False
         return number_of_children >= _CHILD_MIN_COUNT[applies_to]
     return False
+
+
+# Mục LOW_SKILL có HAI BẢN theo tình trạng hôn nhân: (id bản kết hôn, id bản độc thân).
+#
+# Vì sao phải tách: bản checklist LOW SKILLED mới (docs/, "Edit lần 1") xếp các giấy tờ này
+# KHÁC NHAU giữa 2 bản — độc thân đưa CCCD bố/mẹ (BẮT BUỘC) + thư hỗ trợ lên trước rồi mới tới
+# khai sinh con, nằm trong "Hồ sơ đương đơn"; kết hôn thì khai sinh con trước, CCCD bố/mẹ (tuỳ
+# chọn) sau, nằm trong "Hồ sơ người phụ thuộc". Số thứ tự trên app là VỊ TRÍ trong danh sách
+# (lib/format.ts buildChecklistNumbers) và nhân viên dò số trên bản giấy — một mục chỉ có một
+# `order`, không thể đứng hai chỗ, nên mỗi bản một mục riêng.
+#
+# Cái giá của việc tách: giấy tờ đã khớp vào bản này sẽ "mất" khỏi checklist khi hồ sơ đổi
+# sang tình trạng kia (mục cũ không còn áp dụng) — relink_marital_variants() lo chuyện đó.
+LOW_SKILL_MARITAL_VARIANTS = (
+    ("cccd-cha-vo-chong", "cccd-bo-doc-than"),
+    ("cccd-me-vo-chong", "cccd-me-doc-than"),
+    ("thu-ho-tro-bo-me", "thu-ho-tro-bo-me-doc-than"),
+    ("giay-khai-sinh-con1", "giay-khai-sinh-con1-doc-than"),
+    ("giay-khai-sinh-con2", "giay-khai-sinh-con2-doc-than"),
+)
+
+
+def relink_marital_variants(case) -> int:
+    """Chuyển giấy tờ đang khớp vào bản SAI tình trạng hôn nhân sang bản đúng của cùng mục.
+    Trả về số giấy tờ đã chuyển. Chỉ sửa trên đối tượng ORM — nơi gọi tự commit.
+
+    Gọi ở 2 chỗ: seed.py (mỗi lần deploy — nâng dữ liệu cũ lên đúng bộ mục mới) và PATCH hồ sơ
+    khi đổi tình trạng hôn nhân. Thiếu bước này, hồ sơ đã nộp đủ CCCD bố/mẹ vẫn hiện "thiếu"
+    chỉ vì giấy tờ đó đang khớp vào bản mục của tình trạng hôn nhân kia.
+
+    Khai sinh con 3 và đăng ký kết hôn KHÔNG có bản độc thân (bản giấy độc thân không có 2 mục
+    này) nên không chuyển được — giấy tờ vẫn nằm trong danh sách tài liệu, chỉ không được tính
+    vào checklist, nhân viên tự xem."""
+    if case.skillLevel != "LOW_SKILL":
+        return 0
+    if case.maritalStatus == "SINGLE":
+        mapping = dict(LOW_SKILL_MARITAL_VARIANTS)
+    else:
+        mapping = {single: married for married, single in LOW_SKILL_MARITAL_VARIANTS}
+    moved = 0
+    for doc in case.documents:
+        new_id = mapping.get(doc.matchedChecklistItemId)
+        if new_id:
+            doc.matchedChecklistItemId = new_id
+            moved += 1
+    return moved
 
 
 @dataclass
@@ -64,6 +111,7 @@ def compute_checklist_summary(
     marital_status: str,
     number_of_children: int,
     skill_level: str,
+    force_complete: bool = False,
 ) -> ChecklistSummary:
     applicable_items = sorted(
         (
@@ -112,6 +160,12 @@ def compute_checklist_summary(
         if total_required_items == 0
         else round(100 * completed_required_items / total_required_items)
     )
+    # Nhân viên đã xác nhận hồ sơ xong (Case.completedAt) thì tiến độ là 100%, kể cả khi
+    # checklist còn mục trống — khách có thể nộp bản giấy hoặc mục đó không cần nữa. CHỈ đổi
+    # con số phần trăm: danh sách mục và cờ complete của TỪNG mục giữ nguyên sự thật, để mở
+    # hồ sơ ra vẫn thấy đúng mục nào còn thiếu.
+    if force_complete:
+        percent = 100
 
     needs_review_count = sum(1 for d in documents if d.status in ("NEEDS_REVIEW", "ERROR"))
 

@@ -1,0 +1,113 @@
+# Load balancer CHO STACK DEV CỤC BỘ (docker-compose.yml) — chia tải cho 3 replica backend.
+#
+# Khác hẳn ./Caddyfile của production: ở đó Caddy đứng trước CẢ 4 tên miền và tự lo HTTPS,
+# còn ở đây chỉ có đúng một việc là cân tải cổng 8001 trong mạng LAN, không tên miền,
+# không TLS (trình duyệt gọi thẳng http://192.168.1.200:8001).
+#
+# VÌ SAO CADDY CHỨ KHÔNG PHẢI NGINX: request upload của app chạy 30–150 giây (OCR + AI chạy
+# đồng bộ trong request, xem AGENTS.md) và file lên tới 20MB. Nginx mặc định cắt ở
+# proxy_read_timeout 60s và client_max_body_size 1MB — tức phải nhớ chỉnh 2 chỗ, quên là
+# upload hỏng theo kiểu khó đoán (file nhỏ thì được, file thật thì "502"). Caddy không đặt
+# trần cho hai thứ đó nên không có bẫy im lặng nào. Production cũng đã là Caddy.
+
+:8001 {
+	reverse_proxy backend:8001 backend2:8001 backend3:8001 {
+		lb_policy round_robin
+
+		# Health check CHỦ ĐỘNG: replica đang khởi động (nạp opencv/pymupdf + kiểm tra
+		# Tesseract, mất tới 60s) hoặc đang treo sẽ bị loại khỏi vòng chia tải, thay vì
+		# vẫn nhận đủ 1/3 số request rồi trả lỗi cho người dùng.
+		health_uri /health
+		health_interval 10s
+		health_timeout 5s
+	}
+
+	# Ghi lại replica nào phục vụ request nào — không có dòng này thì lúc một replica đọc
+	# sai/chậm, log chỉ có "backend" chung chung, không lần ra được container nào.
+	log {
+		output stdout
+		format console
+	}
+}
+
+# Cổng 80 — để gõ "candoc.info" (hoặc "192.168.1.200" trống trơn) là ra thẳng giao diện,
+# không phải nhớ thêm ":3000".
+#
+# Viết ":80" chứ KHÔNG viết "candoc.info" làm tên site, vì hai lý do:
+#   - ":80" khớp MỌI tên host, nên cả tên miền lẫn IP trần đều vào được cùng một chỗ. Khai
+#     đích danh tên miền thì gõ IP trần sẽ rơi vào khoảng trống và Caddy trả 404.
+#   - Khai tên miền là Caddy TỰ ĐỘNG đi xin chứng chỉ HTTPS của Let's Encrypt. Ở đây máy nằm
+#     sau NAT với IP nội bộ, Let's Encrypt không với tới để xác minh -> nó thử đi thử lại,
+#     log đầy lỗi mà vẫn không bao giờ có chứng chỉ.
+#
+# Vì vậy đây là HTTP thuần, trình duyệt vẫn báo "Không bảo mật". Muốn có ổ khoá xanh thì phải
+# cho máy này truy cập được từ Internet (vd Cloudflare Tunnel) — xem ghi chú trong AGENTS.md.
+:80 {
+	reverse_proxy frontend:3000
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# HTTPS cho candoc.info — chứng chỉ THẬT của Let's Encrypt, xin bằng DNS-01 qua API Cloudflare.
+#
+# Máy nằm sau NAT với IP nội bộ nên Let's Encrypt không với tới để xác minh kiểu thường (HTTP-01).
+# DNS-01 chỉ cần một bản ghi TXT — Caddy tự tạo/xoá qua CLOUDFLARE_API_TOKEN (.env.local) — nên
+# máy KHÔNG phải lộ ra Internet mà vẫn có ổ khoá xanh. Traffic vẫn đi thẳng trong LAN: các bản
+# ghi DNS trên Cloudflare để "DNS only" (đám mây xám), Cloudflare không đứng giữa.
+#
+# VÌ SAO KHÔNG dùng Cloudflare Tunnel: request upload chạy 30–150 giây (OCR nằm trong request,
+# xem AGENTS.md), mà Cloudflare cắt mọi request qua proxy ở 100 giây (lỗi 524).
+#
+# Cần module caddy-dns/cloudflare — image chuẩn không có, xem caddy/Dockerfile.
+candoc.info, www.candoc.info {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		# Kiểm tra bản ghi xác minh qua DNS công cộng, KHÔNG qua DNS của Docker/router. Đã gặp
+		# thật: router nhà mạng còn nhớ nameserver CŨ của tên miền (zonedns.vn) cả ngày sau khi
+		# chuyển sang Cloudflare, Caddy hỏi nhầm chỗ, hết giờ chờ -> không xin được chứng chỉ.
+		resolvers 1.1.1.1 8.8.8.8
+	}
+
+	# API nằm CHUNG tên miền ở /api — giao diện gọi https://candoc.info/api/...
+	#
+	# VÌ SAO không dùng api.candoc.info (khối bên dưới vẫn giữ): tên miền con MỚI phải chờ router
+	# từng máy trong văn phòng hết nhớ nameserver cũ mới phân giải được — đã gặp thật, router
+	# còn nhớ zonedns.vn (nơi không có bản ghi "api") nên api.candoc.info không ra IP, chuyển
+	# giao diện sang đó là cả văn phòng mất API. Chung tên miền thì candoc.info chạy là API
+	# chạy, lại CÙNG NGUỒN GỐC nên trình duyệt không cần kiểm tra CORS.
+	#
+	# handle_path bỏ tiền tố /api trước khi chuyển tiếp: backend vẫn nhận /cases/... như cũ.
+	handle_path /api/* {
+		reverse_proxy backend:8001 backend2:8001 backend3:8001 {
+			lb_policy round_robin
+			health_uri /health
+			health_interval 10s
+			health_timeout 5s
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
+
+# API riêng một tên miền: trang https:// gọi API http:// là trình duyệt CHẶN THẲNG (mixed
+# content), nên lên HTTPS thì API bắt buộc cũng phải HTTPS.
+api.candoc.info {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		# Kiểm tra bản ghi xác minh qua DNS công cộng, KHÔNG qua DNS của Docker/router. Đã gặp
+		# thật: router nhà mạng còn nhớ nameserver CŨ của tên miền (zonedns.vn) cả ngày sau khi
+		# chuyển sang Cloudflare, Caddy hỏi nhầm chỗ, hết giờ chờ -> không xin được chứng chỉ.
+		resolvers 1.1.1.1 8.8.8.8
+	}
+	reverse_proxy backend:8001 backend2:8001 backend3:8001 {
+		lb_policy round_robin
+		health_uri /health
+		health_interval 10s
+		health_timeout 5s
+	}
+}

@@ -24,8 +24,10 @@ nhưng đều "ảo giác" (bịa nội dung) nặng trên giấy tờ thật c�
 (CCCD); Tesseract cho kết quả bám sát nội dung thật nhất dù đôi khi sai vài ký tự — xem
 docstring trong file để biết chi tiết thực nghiệm.
 
-DeepSeek (`backend/classify.py`) dùng 2 bước sau OCR: (1) sửa chính tả + sắp xếp lại câu
-— có kèm toạ độ từng dòng để LLM hiểu bố cục — rồi (2) phân loại vào đúng mục checklist.
+Sau OCR (`backend/classify.py`): (1) LLM sửa chính tả + sắp xếp lại câu, (2) xếp file vào
+mục checklist THEO TÊN FILE — số thứ tự mục ở đầu tên, vd `1. Nguyen Van A - Passport.pdf`
+(`backend/filename_rules.py`, không dùng AI; tên file không đủ thì nhân viên chọn tay),
+(3) LLM đọc ngày hết hạn/số giấy tờ cho cảnh báo hạn.
 **Lưu ý:** model cấu hình (`DEEPSEEK_MODEL`) là model có suy luận (reasoning) — với input
 càng lộn xộn, model càng mất nhiều thời gian "suy nghĩ" trước khi trả lời (đã quan sát
 thực tế >100s cho vài trường hợp). `max_tokens` phải để đủ cao (không cắt ngang lúc đang
@@ -33,9 +35,10 @@ suy luận) và dựa vào `timeout` của client làm giới hạn thời gian 
 
 ## Chạy lần đầu
 
-1. Khởi động MySQL + MinIO:
+1. Khởi động MySQL + MinIO (CHỈ hạ tầng — phải ghi rõ tên service, vì `docker compose up -d`
+   trống giờ bật cả backend/frontend, sẽ tranh cổng 3000/8001 với `./dev.sh` ở dưới):
    ```bash
-   docker compose up -d
+   docker compose up -d mysql minio phpmyadmin
    ```
 2. Cài dependency Node cho frontend:
    ```bash
@@ -77,7 +80,22 @@ npm run dev
 ```
 
 MySQL/MinIO chạy nền qua Docker, không cần khởi động lại trừ khi máy restart
-(`docker compose up -d` để bật lại).
+(`docker compose up -d mysql minio phpmyadmin` để bật lại).
+
+## Chạy toàn bộ bằng Docker (không cần cài Node/Python/Tesseract trên máy)
+
+```bash
+docker compose up -d --build
+```
+
+Dựng đủ 5 service: hạ tầng + `seed` (chạy một lần rồi thoát) → `backend` → `frontend`, cùng
+cổng như khi chạy trên máy (3000 / 8001). Key đọc thẳng từ `.env` + `.env.local`, không phải
+khai lại ở đâu. Chỗ nào phải đè lại cho đúng bên trong container (tên host MySQL/MinIO,
+đường dẫn Tesseract, URL API) đã ghi lý do ngay trong `docker-compose.yml`.
+
+Đánh đổi: KHÔNG có hot-reload — sửa code xong phải `up -d --build` lại. Khi đang sửa code
+liên tục thì chạy `./dev.sh` trên máy vẫn nhanh hơn; nhớ `docker compose stop backend
+frontend` trước để nhả cổng.
 
 Mở `http://localhost:3000` (hoặc port khác nếu 3000 đang bận, xem log terminal).
 
@@ -95,7 +113,12 @@ Mở `http://localhost:3000` (hoặc port khác nếu 3000 đang bận, xem log 
 - `backend/seed.py` — tạo bảng + 29 mục checklist gốc (chạy lại an toàn, idempotent).
 - `backend/completeness.py` — tính đủ/thiếu từng mục, ngưỡng tài chính theo tình trạng
   hôn nhân/số con (đã tính sẵn ở backend nhưng hiện không hiển thị ở giao diện).
-- `backend/classify.py` — gọi DeepSeek sửa lỗi OCR + phân loại vào đúng mục checklist.
+- `backend/classify.py` — gọi LLM sửa lỗi OCR + đọc thông tin giấy tờ; gọi quy tắc tên file
+  để xếp mục.
+- `backend/filename_rules.py` — xếp file vào mục checklist theo số thứ tự + loại giấy tờ
+  ghi trong tên file.
+- `backend/translation_check.py` + `components/TranslationCheck.tsx` — trang "Kiểm tra dịch
+  thuật" (`/translation-check`): nhập họ tên, gửi bộ bản dịch, kiểm tra theo quy tắc.
 - `backend/storage.py` — upload/xoá/đọc file trên MinIO (boto3).
 - `backend/ocr.py` — tiền xử lý ảnh + OCR bằng Tesseract.
 - `backend/routers/` — endpoint FastAPI (cases, case_documents, documents, ocr_test).

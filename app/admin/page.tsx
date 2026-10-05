@@ -5,7 +5,7 @@ import { AdminDashboard } from "@/components/AdminDashboard";
 // Sơ Canada" từ app/layout.tsx (root), khiến link gửi qua Zalo/WhatsApp/Messenger hiện y hệt
 // link trang chính, không phân biệt được cái nào là admin. Ghi đè riêng ở đây.
 export const metadata: Metadata = {
-  title: "Quản lý hồ sơ — Checklist Canada",
+  title: "Quản lý Hồ Sơ Canada",
   description: "Trang quản trị nội bộ: thống kê, khôi phục hồ sơ đã xoá, quản lý tài liệu.",
 };
 

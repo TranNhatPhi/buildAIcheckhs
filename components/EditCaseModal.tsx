@@ -1,5 +1,7 @@
 "use client";
 
+import { CasePeopleFields, type CasePeople } from "@/components/CasePeopleFields";
+import { DON_VI_TRONG, ExperienceUnitsField, donViDeGui } from "@/components/ExperienceUnitsField";
 import { useEffect, useMemo, useState } from "react";
 import { API_URL, splitExperience } from "@/lib/format";
 import {
@@ -21,8 +23,11 @@ import {
 import {
   APPLICATION_STATUSES,
   APPLICATION_STATUS_BADGE_CLASS,
+  staffCanEditStatus,
+  statusChangeBlockedReason,
+  statusOptionsFor,
 } from "@/lib/application-status";
-import type { ApplicationStatus, CaseListItemDTO, TagDefinition } from "@/lib/client-types";
+import type { ApplicationStatus, CaseListItemDTO, ExperienceUnit, TagDefinition } from "@/lib/client-types";
 
 /** Ánh xạ tên màu từ API sang Tailwind class. */
 const TAG_COLOR_MAP: Record<string, string> = {
@@ -51,6 +56,11 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
     caseItem.skillLevel as "LOW_SKILL" | "HIGH_SKILL",
   );
   const [partner, setPartner] = useState(caseItem.partner ?? "");
+  const [nguoi, setNguoi] = useState<CasePeople>({
+    receiverName: caseItem.receiverName ?? "",
+    managerName: caseItem.managerName ?? "",
+    saleName: caseItem.saleName ?? "",
+  });
   const [partnerSuggestions, setPartnerSuggestions] = useState<string[]>([]);
   const [occupation, setOccupation] = useState(caseItem.occupation ?? "");
   const [occupationSuggestions, setOccupationSuggestions] = useState<string[]>([]);
@@ -60,6 +70,9 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
   );
   const [experienceUnit, setExperienceUnit] = useState<"YEAR" | "MONTH">(
     () => splitExperience(caseItem.experienceMonths).unit,
+  );
+  const [donViKN, setDonViKN] = useState<ExperienceUnit[]>(() =>
+    caseItem.experienceUnits?.length ? caseItem.experienceUnits : [DON_VI_TRONG],
   );
   const [notes, setNotes] = useState(caseItem.notes ?? "");
   const [applicationStatus, setApplicationStatus] = useState<ApplicationStatus>(
@@ -111,15 +124,18 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
           numberOfChildren,
           skillLevel,
           partner,
+          ...nguoi,
           occupation,
           experienceMonths: toExperienceMonths(experienceValue, experienceUnit),
+          experienceUnits: donViDeGui(donViKN),
           notes,
           applicationStatus,
         }),
       });
 
       if (!res.ok) {
-        setError("Không lưu được thay đổi.");
+        const chiTiet = (await res.json().catch(() => null))?.detail;
+        setError(typeof chiTiet === "string" ? chiTiet : "Không lưu được thay đổi.");
         return;
       }
 
@@ -167,14 +183,25 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
             <select
               id="trang-thai-ho-so"
               value={applicationStatus}
+              disabled={!staffCanEditStatus(caseItem.applicationStatus)}
+              title={
+                staffCanEditStatus(caseItem.applicationStatus)
+                  ? undefined
+                  : "Từ Sẵn sàng nộp trở đi do admin cập nhật ở trang quản trị"
+              }
               onChange={(e) => setApplicationStatus(e.target.value as ApplicationStatus)}
               className={`w-full rounded-xl border px-4 py-2.5 text-sm font-semibold outline-none transition focus:ring-4 focus:ring-violet-100 ${APPLICATION_STATUS_BADGE_CLASS[applicationStatus]}`}
             >
-              {APPLICATION_STATUSES.map((status) => (
-                <option key={status.value} value={status.value}>
-                  {status.label}
-                </option>
-              ))}
+              {statusOptionsFor("staff", caseItem.applicationStatus).map((status) => {
+                // So với trạng thái ĐÃ LƯU (caseItem), không phải giá trị đang chọn trong form:
+                // quy tắc là "đang ở Hoàn thành mới chuyển cho admin được".
+                const lyDo = statusChangeBlockedReason(status.value, caseItem.applicationStatus, caseItem.percent);
+                return (
+                  <option key={status.value} value={status.value} disabled={!!lyDo}>
+                    {status.label}{lyDo ? ` (${lyDo})` : ""}
+                  </option>
+                );
+              })}
             </select>
             <p className={FORM_HINT}>
               Hồ sơ chưa đậu hoặc rớt sẽ được tính mốc nhắc admin sau mỗi 14 ngày.
@@ -333,6 +360,10 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
                 </div>
                 <p className={FORM_HINT}>Ghi số năm hoặc số tháng, chọn đơn vị tương ứng.</p>
               </div>
+
+              <div>
+                <ExperienceUnitsField value={donViKN} onChange={setDonViKN} idPrefix="sua" />
+              </div>
             </div>
           </section>
 
@@ -365,6 +396,8 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
                   ))}
                 </datalist>
               </div>
+
+              <CasePeopleFields value={nguoi} onChange={setNguoi} idPrefix="sua" />
 
               <div>
                 <label className={FORM_LABEL} htmlFor="sua-ghi-chu">

@@ -1,7 +1,8 @@
 # Compose PRODUCTION — chạy trên VM GCP, gộp cả app (frontend/backend) lẫn hạ tầng
-# (mysql/minio) thành 1 stack duy nhất. Tách riêng khỏi docker-compose.yml (chỉ có
-# mysql/minio/phpmyadmin, dùng cho dev cục bộ — frontend/backend dev chạy trực tiếp trên
-# máy qua `npm run dev`/`uvicorn`, không qua Docker) để không xáo trộn workflow dev hiện tại.
+# (mysql/minio) thành 1 stack duy nhất. Tách riêng khỏi docker-compose.yml (bản dev cục bộ:
+# cũng dựng được frontend/backend từ chính 2 Dockerfile này, nhưng không có Caddy/HTTPS,
+# không replica, không gửi email, cổng mở thẳng ra máy và key đọc từ .env/.env.local) —
+# hai môi trường khác nhau đủ nhiều để gộp chung một file chỉ sinh thêm nhánh điều kiện.
 #
 # Chạy: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 # Xem hướng dẫn đầy đủ (tạo VM, DNS, HTTPS...) trong tài liệu deploy đi kèm.
@@ -28,7 +29,7 @@ x-backend-common: &backend-common
     LLM_API_KEY_3: ${LLM_API_KEY_3:-}
     LLM_API_KEY_4: ${LLM_API_KEY_4:-}
     DEEPSEEK_MODEL: deepseek-v4-flash
-    # ── Gemini: nguồn CHÍNH cho OCR + sửa lỗi + phân loại + phân tích sâu ──────────────
+    # ── Gemini: nguồn CHÍNH cho OCR + sửa lỗi + đọc thông tin giấy tờ + phân tích sâu ──
     # DeepSeek ở trên giờ chỉ còn là dự phòng khi hết hạn mức free của Gemini (xem
     # backend/llm.py). Thiếu hết các key này thì app VẪN CHẠY — chỉ là mọi thứ rơi về
     # DeepSeek (tốn tiền) và OCR rơi về Tesseract (đọc kém hơn hẳn với giấy nền hoa văn).
@@ -56,7 +57,6 @@ x-backend-common: &backend-common
     GEMINI_OCR_ENABLED: ${GEMINI_OCR_ENABLED:-}
     GEMINI_MODELS: ${GEMINI_MODELS:-}
     GEMINI_LITE_MODELS: ${GEMINI_LITE_MODELS:-}
-    CONFIDENCE_THRESHOLD: "0.6"
     CORS_ORIGINS: https://${APP_DOMAIN}
     ADMIN_PASSWORD: ${ADMIN_PASSWORD}
     # Backend cũng gửi EmailJS, KHÔNG chỉ mình status-reminder: đổi trạng thái sang "Đã nộp"
@@ -119,6 +119,31 @@ services:
     # web (cổng 9001, bật qua --console-address ở command trên) cũng không expose ra host —
     # Caddy reverse_proxy thẳng vào "minio:9001" qua mạng nội bộ Docker (xem Caddyfile).
 
+  # Đặt HẠN NGẠCH cho bucket tài liệu. Không có service này thì MinIO chạy KHÔNG giới hạn:
+  # trần thật là dung lượng ổ đĩa, và lúc ổ đầy thì hỏng theo kiểu khó đoán (upload lỗi giữa
+  # chừng, MySQL cũng hết chỗ ghi vì chung ổ). Có hạn ngạch thì MinIO từ chối upload rõ ràng
+  # khi chạm mốc, còn ổ đĩa vẫn dư chỗ cho DB và log.
+  #
+  # `mc quota set` là API QUẢN TRỊ riêng của MinIO, boto3/S3 không gọi được — nên phải chạy
+  # bằng chính image MinIO (có sẵn mc), không nhét vào storage.py được.
+  #
+  # Chạy một lần rồi thoát, và đặt lại mỗi lần `docker compose up`: hạn ngạch nằm trong dữ
+  # liệu MinIO, dựng lại volume là mất.
+  minio-init:
+    image: minio/minio:latest
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set l http://minio:9000 "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing l/${MINIO_BUCKET} &&
+        mc quota set l/${MINIO_BUCKET} --size 100gi &&
+        mc quota info l/${MINIO_BUCKET}
+
   phpmyadmin:
     image: phpmyadmin:latest
     restart: unless-stopped
@@ -167,6 +192,18 @@ services:
       mysql:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  # Tự xoá hồ sơ đã đánh dấu hoàn tất quá hạn giữ (xem backend/case_cleanup.py). Xoá MỀM nên
+  # vẫn khôi phục được ở trang admin. Một bản duy nhất, cùng lý do với status-reminder.
+  case-cleanup:
+    <<: *backend-common
+    restart: unless-stopped
+    command: ["python", "case_cleanup.py"]
+    depends_on:
+      mysql:
         condition: service_healthy
       seed:
         condition: service_completed_successfully

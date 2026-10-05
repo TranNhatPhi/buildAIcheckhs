@@ -52,6 +52,12 @@ class Case(Base):
     # Để TRỐNG được: hồ sơ khách tự tìm đến không có đối tác nào, và toàn bộ hồ sơ tạo
     # TRƯỚC khi có cột này đều NULL — đừng đặt NOT NULL.
     partner = Column(String(191), nullable=True)
+    # Ba người phụ trách hồ sơ — ô chữ TỰ DO như partner (có gợi ý từ giá trị đã nhập, xem
+    # /cases/receivers|managers|sales), không có bảng nhân viên riêng. Dùng cho trang thống kê
+    # hồ sơ của admin: lọc và đếm hồ sơ theo từng người.
+    receiverName = Column(String(191), nullable=True)  # người nhận hồ sơ từ khách
+    managerName = Column(String(191), nullable=True)   # nhân viên quản lý hồ sơ
+    saleName = Column(String(191), nullable=True)      # sale phụ trách
     # Nghề nghiệp của đương đơn (vd "Xây dựng", "Chế biến hải sản"). Ô chữ tự do có gợi ý,
     # cùng khuôn với `partner` — xem GET /cases/occupations.
     occupation = Column(String(191), nullable=True)
@@ -59,17 +65,36 @@ class Case(Base):
     # số duy nhất thay vì cặp (số, đơn vị) để còn so sánh/sắp xếp được; giao diện tự đổi
     # ngược lại khi hiển thị ("18" -> "1 năm 6 tháng"). NULL = chưa ghi nhận.
     experienceMonths = Column(Integer, nullable=True)
+    # Đơn vị (công ty) xác nhận kinh nghiệm + ngày trên giấy xác nhận — JSON
+    # [{"name": ..., "confirmedDate": "YYYY-MM-DD" | null}], đơn vị 1 bắt buộc khi có, 2+ nếu có.
+    # Xem schemas.parse_experience_units / dump_experience_units.
+    experienceUnits = Column(Text, nullable=True)
     createdAt = Column(DateTime, default=now_utc)
     updatedAt = Column(DateTime, default=now_utc, onupdate=now_utc)
     # Xoá mềm — nút "Xoá" ở danh sách hồ sơ chỉ đánh dấu deletedAt (ẩn khỏi danh sách),
     # KHÔNG xoá thật document/file trên MinIO — chừa chỗ cho giao diện admin sau này khôi
     # phục lại được. NULL nghĩa là hồ sơ đang hoạt động bình thường.
     deletedAt = Column(DateTime, nullable=True)
+    # Nhân viên bấm "Đánh dấu hoàn tất" ở trang admin: hồ sơ coi như xong 100% dù checklist
+    # còn thiếu mục (khách nộp bản giấy, hoặc lãnh sự không đòi mục đó). Lưu MỐC THỜI GIAN chứ
+    # không phải cờ true/false để biết ai bấm lúc nào mà đối chiếu khi cần.
+    completedAt = Column(DateTime, nullable=True)
+    # Mốc hồ sơ tự xoá mềm (= completedAt + CASE_AUTO_DELETE_DAYS). Lưu thành cột RIÊNG chứ
+    # không tính lại từ completedAt: đổi số ngày sau này thì các hồ sơ đã đánh dấu vẫn giữ
+    # đúng hạn đã hứa lúc bấm, không bị xê dịch.
+    autoDeleteAt = Column(DateTime, nullable=True)
+    # Lúc toàn bộ file giấy tờ của hồ sơ bị xoá vĩnh viễn (xem case_cleanup.run_once). Hồ sơ và
+    # thông tin khách vẫn giữ nguyên — cột này để trang hồ sơ nói rõ "file đã xoá ngày ..." thay
+    # vì hiện một hồ sơ 0 file mà không ai hiểu vì sao.
+    filesPurgedAt = Column(DateTime, nullable=True)
 
     # Trạng thái NGHIỆP VỤ của cả hồ sơ, tách biệt với Document.status (OCR/phân loại) và
     # aiAnalysisStatus. Hai mốc thời gian bên dưới chừa sẵn nền cho email nhắc admin: trạng
     # thái chưa phải APPROVED/REJECTED sẽ đến hạn nhắc sau mỗi 14 ngày (xem case_status.py).
     applicationStatus = Column(String(191), nullable=False, default="PENDING")
+    # Lần nộp: 1 = lần đầu. Admin chọn "Nộp lại lần N" (POST /cases/{id}/resubmit) thì tăng lên,
+    # xoá hết file và đưa hồ sơ về "Chờ tiếp nhận" để nhân viên làm lại từ đầu.
+    submissionRound = Column(Integer, nullable=False, default=1, server_default="1")
     applicationStatusUpdatedAt = Column(DateTime, nullable=True, default=now_utc)
     lastStatusReminderAt = Column(DateTime, nullable=True)
 
@@ -158,6 +183,10 @@ class Document(Base):
     mimeType = Column(String(191), nullable=False)
     fileSizeBytes = Column(Integer, nullable=False)
     uploadedAt = Column(DateTime, default=now_utc)
+    # Lúc BẮT ĐẦU lượt xử lý gần nhất (upload hoặc "Phân tích lại"). Không dùng được
+    # uploadedAt cho việc này: bấm "Phân tích lại" một file nộp từ tuần trước thì uploadedAt đã
+    # cũ cả tuần dù file đang chạy thật — xem case_cleanup.don_tai_lieu_ket.
+    processingStartedAt = Column(DateTime, nullable=True)
     # Số trang (chỉ có ý nghĩa với PDF) — dùng để biết có bao nhiêu ảnh từng trang đã lưu
     # trong MinIO ở prefix "{caseId}/{id}-pages/page-{n}.png" (xem storage.upload_object).
     pageCount = Column(Integer, nullable=True)
@@ -180,13 +209,16 @@ class Document(Base):
     aiConfidence = Column(Float, nullable=True)
     aiReasoning = Column(Text, nullable=True)
 
-    # --- Thông tin AI bóc ra từ chính giấy tờ, lấy KÈM trong lệnh phân loại ---
+    # --- Thông tin AI bóc ra từ chính giấy tờ (classify.extract_fields) ---
     #
-    # Vì sao gộp chung lệnh phân loại chứ không gọi riêng: mỗi file đang mất 30-150 giây
-    # ĐỒNG BỘ trong request upload (xem AGENTS.md). Thêm một lượt gọi LLM nữa là đẩy thẳng
-    # vào lỗi "Failed to fetch" đã biết. Lệnh phân loại dù sao cũng đã phải đọc hết nội dung
-    # và đã bật reasoning để phán đoán "giấy tờ này của ai trong nhà" — bắt nó ghi luôn phán
-    # đoán đó ra thay vì vứt đi gần như không tốn thêm gì.
+    # Trước đây lấy KÈM trong lệnh AI phân loại để khỏi thêm một lượt gọi LLM vào request
+    # upload vốn đã dài. AI phân loại giờ đã bỏ (mục xếp theo tên file, xem filename_rules.py)
+    # nên đây là lệnh riêng — nhưng đã tắt suy luận và tên mục cho biết luôn chủ giấy tờ, nên
+    # vẫn nhanh hơn lệnh phân loại cũ mà nó thay chỗ.
+    #
+    # Cột tên "ai*" + aiRawLabel/aiConfidence/aiReasoning phía trên giữ nguyên tên dù phần
+    # chọn mục không còn do AI: đổi tên cột là phải migrate DB đang chạy (schema quản lý tay).
+    # aiConfidence để NULL với file xếp theo tên file; aiReasoning ghi lý do xếp.
     #
     # Giấy tờ này của AI: "APPLICANT" | "SPOUSE" | "CHILD_1..3" | "FATHER" | "MOTHER" |
     # "OTHER". NULL = không xác định được. Dùng để GOM NHÓM khi đối chiếu chéo: checklist
@@ -261,6 +293,59 @@ class EmailLog(Base):
     # hỏi hay gặp nhất, mà chỉ ghi lần thành công thì nhật ký im lặng đúng lúc cần nói.
     status = Column(String(191), nullable=False)
     errorMessage = Column(Text, nullable=True)
+
+
+class ActivityLog(Base):
+    """Lịch sử thao tác của nhân viên Docs và admin — xem ở tab "Theo dõi Docs" (activity.py).
+
+    Bảng MỚI nên create_all() trong seed.py tự tạo. Không ForeignKey sang Case/Document, cùng lý
+    do với EmailLog: xoá hồ sơ không được xoá theo lịch sử — "ai đã xoá hồ sơ này" chính là câu
+    cần tra sau đó. Tên khách chép cứng vào đây vì lúc xem có thể hồ sơ đã không còn.
+    """
+
+    __tablename__ = "ActivityLog"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    createdAt = Column(DateTime, nullable=False, default=now_utc, index=True)
+    # Tên nhân viên TỰ CHỌN (cookie docs_staff) — không phải đăng nhập, xem activity.py.
+    actorName = Column(String(191), nullable=True, index=True)
+    actorRole = Column(String(16), nullable=False, default="staff")  # "staff" | "admin"
+    ip = Column(String(64), nullable=True)
+    device = Column(String(191), nullable=True)  # vd "Chrome · Windows"
+    action = Column(String(64), nullable=False, index=True)  # mã trong activity.ACTION_LABELS
+    caseId = Column(String(191), nullable=True, index=True)
+    caseClientName = Column(String(191), nullable=True)
+    documentId = Column(String(191), nullable=True)
+    detail = Column(Text, nullable=True)
+
+
+class ContractTemplate(Base):
+    """Mẫu giấy tờ theo công ty (hợp đồng lao động / thư xác nhận kinh nghiệm / phiếu lương — cột `kind`). Ban đầu chỉ có
+    mẫu hợp đồng lao động theo công ty (đơn vị xác nhận kinh nghiệm) — trang "Mẫu hợp đồng lao
+    động" của Docs. File nằm trên MinIO dưới tiền tố contract-templates/ (KHÔNG thuộc thư mục hồ sơ
+    nào, nên xoá hồ sơ không bao giờ xoá theo mẫu). Bảng MỚI — create_all() trong seed.py tự tạo."""
+
+    __tablename__ = "ContractTemplate"
+
+    id = Column(String(191), primary_key=True, default=new_id)
+    # Mỗi mẫu thuộc DUY NHẤT một công ty (đổi được ở trang xem mẫu — PATCH /contract-templates/{id}).
+    companyName = Column(String(191), nullable=False, index=True)
+    title = Column(String(191), nullable=False)
+    originalFilename = Column(String(191), nullable=False)
+    storedPath = Column(String(191), nullable=False)
+    mimeType = Column(String(191), nullable=False)
+    fileSizeBytes = Column(Integer, nullable=False)
+    notes = Column(Text, nullable=True)
+    uploadedBy = Column(String(191), nullable=True)  # tên tự chọn của nhân viên (cookie docs_staff)
+    createdAt = Column(DateTime, nullable=False, default=now_utc)
+    # Số trang của bản xem trước (contract_preview.py); NULL = chưa tạo được ảnh xem trước.
+    pageCount = Column(Integer, nullable=True)
+    # Loại mẫu — mỗi loại một trang thư viện riêng ở Docs, dùng chung bảng / API / ảnh xem trước:
+    #   HDLD = "Mẫu hợp đồng lao động" (/mau-hop-dong)
+    #   XNKN = "Mẫu thư xác nhận kinh nghiệm" (/mau-xac-nhan-kinh-nghiem)
+    #   PL   = "Mẫu phiếu lương" (/mau-phieu-luong) — file Excel, không phải Word
+    # Mẫu có từ trước khi có cột này đều là hợp đồng -> DEFAULT 'HDLD'.
+    kind = Column(String(16), nullable=False, default="HDLD", server_default="HDLD")
 
 
 # Không tạo/sửa bảng ở file này. Bảng do Prisma migrate + seed.py lo:

@@ -4,8 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+import activity
+import thong_bao
 import storage
 from admin_auth import require_admin
+from case_delete import hard_delete_case
 from case_status import FINAL_CASE_STATUSES, case_status_fields, next_status_reminder_at
 from completeness import compute_checklist_summary, compute_financial_threshold_vnd
 from db import get_db
@@ -13,6 +16,7 @@ from doc_checks import dem_han_tai_lieu
 from mappers import financial_threshold_to_dto
 from models import Case, ChecklistItem, Document, EmailLog, now_utc
 from schemas import (
+    parse_experience_units,
     AdminDocumentDTO,
     AdminStatsDTO,
     CaseListItemDTO,
@@ -33,7 +37,8 @@ def list_all_cases(db: Session = Depends(get_db)):
     result = []
     for c in cases:
         summary = compute_checklist_summary(
-            checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel
+            checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel,
+            force_complete=c.completedAt is not None,
         )
         threshold = compute_financial_threshold_vnd(c.maritalStatus, c.numberOfChildren)
         qua_han, sap_han = dem_han_tai_lieu(c.documents)
@@ -45,18 +50,26 @@ def list_all_cases(db: Session = Depends(get_db)):
                 numberOfChildren=c.numberOfChildren,
                 skillLevel=c.skillLevel,
                 partner=c.partner,
+                receiverName=c.receiverName,
+                managerName=c.managerName,
+                saleName=c.saleName,
                 occupation=c.occupation,
                 experienceMonths=c.experienceMonths,
+                experienceUnits=parse_experience_units(c.experienceUnits),
                 notes=c.notes,
                 tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
                 deletedAt=c.deletedAt,
+                completedAt=c.completedAt,
+                autoDeleteAt=c.autoDeleteAt,
+                filesPurgedAt=c.filesPurgedAt,
                 **case_status_fields(c),
                 percent=summary.percent,
                 needsReviewCount=summary.needs_review_count,
                 financialThreshold=financial_threshold_to_dto(threshold),
                 expiredDocCount=qua_han,
                 expiringSoonDocCount=sap_han,
+                idleDays=thong_bao.ngay_chua_cap_nhat(c, summary),
             )
         )
     return result
@@ -148,10 +161,11 @@ def permanently_delete_case(case_id: str, db: Session = Depends(get_db)):
             status_code=400, detail="Chỉ xoá vĩnh viễn được hồ sơ đã xoá mềm trước đó"
         )
 
-    for doc in case.documents:
-        storage.delete_document(doc.storedPath)
-    db.delete(case)  # cascade="all, delete-orphan" (models.py) tự xoá các Document liên quan
-    db.commit()
+    # Dùng chung với case_cleanup — bản cũ ở đây chỉ xoá file gốc, để sót ảnh từng trang
+    # (xem case_delete.py).
+    ten_khach = case.clientName
+    hard_delete_case(db, case)
+    activity.ghi("CASE_PURGE", case_id=case_id, client_name=ten_khach)
     return {"ok": True}
 
 
@@ -192,3 +206,10 @@ def list_email_logs(limit: int = 200, db: Session = Depends(get_db)):
             )
         )
     return result
+
+
+
+@router.get("/notifications")
+def admin_notifications(db: Session = Depends(get_db)):
+    """Chuông thông báo trang admin — cùng dữ liệu với chuông trang Docs (xem thong_bao.py)."""
+    return thong_bao.ho_so_qua_han(db)

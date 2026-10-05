@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API_URL, estimateProcessingSeconds, formatRemaining, parseUtcDate } from "@/lib/format";
+import {
+  API_URL,
+  documentPageCount,
+  estimateProcessingSeconds,
+  formatRemaining,
+  parseUtcDate,
+} from "@/lib/format";
 import type { DocumentDTO } from "@/lib/client-types";
 
 interface Props {
@@ -16,7 +22,7 @@ interface Props {
 // Export để CaseDetail.tsx dùng chung — tránh lặp lại chuỗi ở 2 nơi cho cùng 1 khái niệm.
 export const STAGE_LABEL: Partial<Record<DocumentDTO["status"], string>> = {
   OCR_RUNNING: "Bước 1/2 — đang đọc tài liệu...",
-  CLASSIFYING: "Bước 2/2 — đang phân loại AI...",
+  CLASSIFYING: "Bước 2/2 — đang xếp mục theo tên file...",
 };
 
 interface FileProgress {
@@ -344,6 +350,14 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
               {q.status === "duplicate" && <span className="text-neutral-400">⊘</span>}
               {q.status === "replaced" && <span className="text-amber-600">↻</span>}
               <span className="truncate">{q.name}</span>
+              {(q.status === "done" || q.status === "replaced") &&
+                (() => {
+                  const doc = documents.find((d) => d.originalFilename === q.name);
+                  const pages = doc ? documentPageCount(doc) : null;
+                  return pages == null ? null : (
+                    <span className="text-xs text-neutral-400 whitespace-nowrap">{pages} trang</span>
+                  );
+                })()}
               {q.status === "uploading" && (
                 <span className="text-xs text-neutral-400">
                   {(() => {

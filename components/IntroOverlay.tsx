@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import dynamic from "next/dynamic";
 import { createTimeline, splitText, stagger, utils } from "animejs";
 
@@ -38,6 +39,12 @@ function ghiNhoDaXem() {
  * qua được bằng click hoặc phím bất kỳ, và không chạy khi hệ điều hành bật giảm chuyển động.
  */
 export function IntroOverlay() {
+  // Cùng một ứng dụng nhưng gọi tên khác nhau tuỳ người đang mở: nhân viên thấy "Checklist"
+  // (việc của họ là soát đủ/thiếu giấy tờ), còn trang /admin là chỗ quản lý toàn bộ hồ sơ nên
+  // gọi đúng là "Quản lý". Đổi theo đường dẫn chứ không theo quyền đăng nhập: màn hình mở đầu
+  // chạy TRƯỚC lúc nhập mật khẩu admin, lúc đó chưa biết người mở là ai.
+  const pathname = usePathname();
+  const laAdmin = pathname.startsWith("/admin");
   const [trangThai, setTrangThai] = useState<TrangThai>("dang-do");
   const lopPhuRef = useRef<HTMLDivElement>(null);
   const tieuDeRef = useRef<HTMLHeadingElement>(null);
@@ -162,10 +169,12 @@ export function IntroOverlay() {
           ref={tieuDeRef}
           className="text-3xl font-bold tracking-tight text-white sm:text-5xl md:text-6xl"
         >
-          Checklist Hồ Sơ Canada
+          {laAdmin ? "Quản lý Hồ Sơ Canada" : "Checklist Hồ Sơ Canada"}
         </h1>
         <p ref={phuDeRef} className="mt-4 text-sm text-indigo-200 sm:text-base">
-          Đọc giấy tờ bằng AI · Tự phân loại vào checklist · Báo ngay còn thiếu gì
+          {laAdmin
+            ? "Thống kê hồ sơ · Nhật ký email · Khôi phục hồ sơ đã xoá"
+            : "Đọc giấy tờ bằng AI · Tự phân loại vào checklist · Báo ngay còn thiếu gì"}
         </p>
         <div
           ref={vachRef}

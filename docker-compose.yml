@@ -1,3 +1,114 @@
+# Stack dev cục bộ ĐẦY ĐỦ: hạ tầng (mysql/minio/phpmyadmin) + chính app (backend/frontend).
+#
+# Trước đây file này chỉ có hạ tầng, còn backend/frontend chạy thẳng trên máy bằng
+# `uvicorn`/`npm run dev`. Vẫn chạy kiểu đó được và vẫn NHANH HƠN khi đang sửa code (có
+# hot-reload, không phải build lại image) — hai đường không loại trừ nhau, chỉ đừng bật cả
+# hai cùng lúc vì tranh nhau cổng 3000/8001.
+#
+# Đổi code rồi thì phải build lại, container KHÔNG tự thấy: docker compose up -d --build
+
+# Dùng chung cho backend và seed — cùng image, cùng biến môi trường, chỉ khác lệnh chạy.
+x-backend-common: &backend-common
+  build: ./backend
+  # Key (DeepSeek/Gemini) và mật khẩu admin KHÔNG chép vào file này — đọc thẳng 2 file .env
+  # mà backend chạy trên máy vẫn đang dùng, để đổi key chỉ phải sửa đúng một chỗ và file
+  # compose không thành nơi chứa bí mật (file này KHÔNG được gitignore, .env* thì có).
+  #
+  # THỨ TỰ QUAN TRỌNG và NGƯỢC với main.py: Compose cho file ĐỨNG SAU đè file trước, còn
+  # python-dotenv mặc định không ghi đè nên file load TRƯỚC thắng. main.py load .env.local
+  # rồi mới .env, tức .env.local thắng — muốn ra cùng kết quả thì ở đây .env.local phải
+  # nằm SAU. Đảo lại là container âm thầm chạy bằng key khác với lúc chạy trên máy.
+  env_file:
+    - .env
+    - .env.local
+  environment:
+    # Ba biến dưới PHẢI đè lại giá trị trong 2 file trên: những giá trị đó viết cho tiến
+    # trình chạy trực tiếp trên máy, bê nguyên vào container là sai.
+    #   - "localhost" bên trong container là CHÍNH container đó, không phải máy thật — phải
+    #     gọi mysql/minio bằng TÊN SERVICE qua mạng nội bộ Docker.
+    #   - TESSDATA_PREFIX trong .env.local trỏ vào "C:/Users/..." (đường dẫn Windows, thêm
+    #     vào vì bộ cài Tesseract trên máy thiếu gói "vie"). Trong container Linux đường dẫn
+    #     đó không tồn tại, mà ocr.load_models() ném RuntimeError NGAY lúc khởi động nếu
+    #     không thấy gói "vie" — tức backend không lên nổi. Image đã `apt-get install
+    #     tesseract-ocr-vie` sẵn (xem backend/Dockerfile) nên trỏ về đúng thư mục của apt.
+    DATABASE_URL: mysql://canada_checklist_app:CanadaChecklist2026!@mysql:3306/canada_checklist
+    MINIO_ENDPOINT: http://minio:9000
+    # Gốc của đường link "Xem hồ sơ" trong email. Thiếu là email vẫn gửi nhưng nút bấm trong
+    # thư trỏ vào "#" (xem emailjs.build_case_row).
+    APP_BASE_URL: https://candoc.info
+    # PHẢI khớp với số service backend bên dưới. Mỗi container thấy đủ số CPU của cả máy nên
+    # tự nó sẽ mở số tiến trình Tesseract theo số nhân đó; không chia cho số replica thì 3
+    # container cùng làm vậy là gấp 3 lần số nhân, mọi lần OCR đều chậm đi (xem ocr.py).
+    BACKEND_REPLICAS: "3"
+    TESSDATA_PREFIX: /usr/share/tesseract-ocr/5/tessdata
+    # PaddleOCR-VL là một compose RIÊNG (C:\buildAIcheckhs\paddleOCRVl, cổng 8090 trên máy
+    # thật), không chung mạng Docker với stack này nên không gọi được bằng tên service — đi
+    # vòng qua cổng đã mở ra máy thật. Cùng lý do "localhost trong container là chính nó" như
+    # hai dòng mysql/minio ở trên. Container này chỉ cần phân giải được tên này TỪ BÊN TRONG
+    # Docker (luôn được trên Docker Desktop), khác hẳn chuyện trình duyệt máy khác ở frontend.
+    #
+    # ĐÃ BẬT: service chạy ở C:/buildAIcheckhs/paddleOCRVl (container "paddleocr-vl-api",
+    # chế độ native nên chỉ cần 1 image 5,91GB, không cần image vLLM server 6,83GB).
+    # Bật/tắt nguồn này chỉ bằng đúng dòng dưới — để trống là backend bỏ qua PaddleOCR-VL
+    # hoàn toàn, và nút "Đọc lại bằng PaddleOCR-VL" trên giao diện cũng tự ẩn.
+    PADDLE_OCR_VL_URL: "http://host.docker.internal:8090"
+    # CHỈ chạy khi nhân viên bấm nút, KHÔNG thành nguồn đọc mặc định lúc upload. Bỏ dòng này
+    # là mọi file upload sẽ đọc bằng PaddleOCR-VL thay vì Tesseract — xem số đo trong
+    # paddle_ocr_vl.py trước khi đổi.
+    PADDLE_OCR_VL_MANUAL_ONLY: "1"
+    # TẠM chỉ OCR bằng Tesseract (chạy CPU — Tesseract KHÔNG có chế độ GPU), tắt OCR bằng Gemini
+    # theo yêu cầu người dùng. Bước sửa lỗi chính tả bằng LLM sau OCR vẫn chạy như cũ.
+    # Đánh đổi đã đo trên giấy xác nhận cư trú thật (xntamtru.jpg): Tesseract khớp 11/18 giá
+    # trị chuẩn, hụt ở tên in hoa nhiều dấu (NGUYỄN, ĐỨC) — Gemini đọc đúng các chỗ đó. Bật lại
+    # Gemini: xoá dòng này (mặc định trong code là bật).
+    GEMINI_OCR_ENABLED: "0"
+    # Trình duyệt mở app ở cổng 3000 nhưng gọi API sang cổng 8001 — khác origin, nên phải
+    # liệt kê MỌI địa chỉ người dùng có thể gõ trên thanh địa chỉ. Thiếu một cái là backend
+    # vẫn trả 200 nhưng không kèm header CORS, trình duyệt vứt response đi và cả trang báo
+    # "Không kết nối được backend" dù backend chạy tốt (đã gặp thật khi mở bằng IP LAN).
+    # 192.168.1.250 là IP LAN của máy chủ này — đổi IP thì sửa CÙNG LÚC với
+    # NEXT_PUBLIC_API_URL của service frontend bên dưới và bản ghi DNS candoc.info trên Cloudflare.
+    # 02/10/2026: đổi từ 192.168.1.200 — router cấp trùng .200 cho một điện thoại, Windows khoá IP
+    # máy chủ ở trạng thái "Duplicate" -> cả văn phòng mất candoc.info. Nên giữ chỗ IP trên router.
+    # Thêm 2 origin của cổng 80: trình duyệt coi "http://candoc.info" và
+    # "http://192.168.1.250" (không cổng) là NGUỒN KHÁC HẲN với "...:3000" — thiếu là mọi lệnh
+    # gọi API từ tên miền mới đều bị chặn, dù vẫn cùng một máy.
+    CORS_ORIGINS: http://localhost:3000,http://192.168.1.250:3000,http://candoc.info,http://192.168.1.250,https://candoc.info,https://www.candoc.info
+  depends_on:
+    mysql:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+
+# Phần dùng chung của CẢ BA replica backend. Tách riêng khỏi x-backend-common vì "seed" cũng
+# dùng chung phần kia, mà seed là việc chạy một lần rồi thoát — gắn healthcheck/restart của
+# service thường trực vào nó là sai.
+x-backend-service: &backend-service
+  <<: *backend-common
+  restart: unless-stopped
+  # Healthcheck gọi bằng python có sẵn trong image — python:3.9-slim KHÔNG có curl/wget,
+  # dùng chúng thì healthcheck luôn báo unhealthy dù backend chạy tốt. Có healthcheck thì
+  # load balancer mới biết replica nào đang sống mà chia tải, frontend mới chờ được đúng lúc
+  # backend trả lời thật, và Docker Desktop hiện đúng trạng thái thay vì chỉ "Up".
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health').read()"]
+    interval: 10s
+    timeout: 5s
+    retries: 12
+    # Lần khởi động đầu phải chờ import cả opencv/pymupdf rồi kiểm tra Tesseract — chậm
+    # hơn hẳn lúc chạy ổn định, nên chừa thời gian khởi động để không bị báo hỏng oan.
+    start_period: 60s
+  depends_on:
+    mysql:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+    # Chờ seed XONG và THÀNH CÔNG. Seed hỏng thì backend không lên — hỏng to ngay còn hơn
+    # chạy tiếp với checklist/schema sai mà không ai biết. Seed là service RIÊNG và chỉ chạy
+    # MỘT lần đúng vì lý do này: ba replica cùng chạy seed sẽ đua nhau ghi trên cùng bảng.
+    seed:
+      condition: service_completed_successfully
+
 services:
   mysql:
     image: mysql:8.4
@@ -31,7 +142,12 @@ services:
         condition: service_healthy
 
   minio:
-    image: minio/minio:latest
+    # KHÔNG dùng "minio/minio:latest" trên Docker Hub nữa — tag đó đã bị gỡ, pull ra lỗi
+    # "docker.io/minio/minio:latest: not found" và cả `docker compose up` hỏng theo (đã gặp
+    # thật khi dựng lại môi trường local). Kho quay.io của chính MinIO vẫn còn đầy đủ.
+    # Ghim theo BẢN PHÁT HÀNH cụ thể thay vì "latest": lần hỏng vừa rồi chính là vì tag
+    # trôi nổi — ghim rồi thì dữ liệu trong volume luôn khớp đúng phiên bản server đã tạo ra nó.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -48,6 +164,182 @@ services:
       timeout: 5s
       retries: 10
 
+
+  # Chạy MỘT LẦN rồi thoát — tạo bảng còn thiếu + nạp lại checklist (backend/seed.py).
+  #
+  # Phải là service riêng chứ không nhét vào startup của backend: seed.py KHÔNG tự chạy khi
+  # backend khởi động (main.py chỉ gọi ocr.load_models()), mà schema ở đây quản lý TAY —
+  # thêm cột mới trong models.py mà seed chưa chạy là query đầu tiên chết với "Unknown
+  # column" (xem AGENTS.md). Để riêng thì mỗi lần `up` là seed chạy đúng một lượt, xong mới
+  # tới backend. Bản thân seed.py idempotent nên chạy lại bao nhiêu lần cũng an toàn.
+  seed:
+    <<: *backend-common
+    command: ["python", "seed.py"]
+    # "no" chứ không phải "unless-stopped": đây là việc chạy xong là thoát, để
+    # "unless-stopped" thì Docker hiểu nhầm là service chết và khởi động lại vô hạn.
+    restart: "no"
+
+  # Đặt HẠN NGẠCH cho bucket tài liệu. Không có service này thì MinIO chạy KHÔNG giới hạn:
+  # trần thật là dung lượng ổ đĩa, và lúc ổ đầy thì hỏng theo kiểu khó đoán (upload lỗi giữa
+  # chừng, MySQL cũng hết chỗ ghi vì chung ổ). Có hạn ngạch thì MinIO từ chối upload rõ ràng
+  # khi chạm mốc, còn ổ đĩa vẫn dư chỗ cho DB và log.
+  #
+  # `mc quota set` là API QUẢN TRỊ riêng của MinIO, boto3/S3 không gọi được — nên phải chạy
+  # bằng chính image MinIO (có sẵn mc), không nhét vào storage.py được.
+  #
+  # Chạy một lần rồi thoát, và đặt lại mỗi lần `docker compose up`: hạn ngạch nằm trong dữ
+  # liệu MinIO, dựng lại volume là mất.
+  minio-init:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set l http://minio:9000 "canada_checklist_app" "CanadaChecklistMinio2026!" &&
+        mc mb --ignore-existing l/canada-checklist-docs &&
+        mc quota set l/canada-checklist-docs --size 100gi &&
+        mc quota info l/canada-checklist-docs
+
+  # Gửi email nhắc định kỳ cho hồ sơ chưa có kết quả (xem backend/status_reminder.py).
+  #
+  # CHỈ MỘT bản — nhân theo backend là mỗi replica gửi một lần, hộp thư nhận trùng 3 email.
+  #
+  # Bật từ 25/09/2026 khi máy này (candoc.info) thành hệ thống CHÍNH của văn phòng. Máy chủ GCP
+  # cũng có service này với database RIÊNG — chạy cả hai là hộp thư nhận nhắc nhở lẫn lộn từ
+  # hai bộ dữ liệu khác nhau. Dùng máy này làm chính thì phải tắt bên GCP.
+  status-reminder:
+    <<: *backend-common
+    command: ["python", "status_reminder.py"]
+    restart: unless-stopped
+    # KHÔNG khai "environment:" ở đây. "<<: *backend-common" chỉ gộp NÔNG: khai lại
+    # environment là THAY THẾ toàn bộ khối biến kế thừa (DATABASE_URL trỏ mysql nội bộ...),
+    # và service sẽ lấy DATABASE_URL "localhost" của .env.local -> không kết nối được DB.
+    # Mọi thứ cần đã có sẵn trong x-backend-common; chu kỳ kiểm tra mặc định 1 ngày trong code.
+    depends_on:
+      mysql:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  # Tự xoá hồ sơ đã đánh dấu hoàn tất quá hạn giữ (xem backend/case_cleanup.py). Cùng image,
+  # chỉ khác lệnh chạy — giống cách seed dùng lại x-backend-common.
+  #
+  # CHỈ MỘT bản, không nhân theo backend: ba replica cùng quét thì mỗi lần tới hạn sẽ ghi ba
+  # dòng log xoá cho cùng một hồ sơ, rất khó lần khi soát lại.
+  case-cleanup:
+    <<: *backend-common
+    command: ["python", "case_cleanup.py"]
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  # BA replica backend giống hệt nhau, đứng sau load balancer "lb" bên dưới. Nhân bản được
+  # vì backend KHÔNG giữ trạng thái trong bộ nhớ: mọi thứ lâu dài nằm ở MySQL/MinIO, không có
+  # phiên đăng nhập hay hàng đợi trong RAM (đã soát: chỉ còn vài biến đếm để chống log trùng).
+  # Đó cũng là lý do MySQL/MinIO vẫn CHỈ 1 bản — xem "thứ gì có ổ đĩa riêng thì không nhân
+  # bản" trong AGENTS.md.
+  #
+  # KHÔNG service nào trong ba cái này mở cổng 8001 ra máy thật nữa: cùng một cổng thì chỉ
+  # một container giữ được, hai cái còn lại chết lúc khởi động. Cổng 8001 giờ do "lb" giữ.
+  backend:
+    <<: *backend-service
+
+  backend2:
+    <<: *backend-service
+
+  backend3:
+    <<: *backend-service
+
+  # Caddy chia tải round-robin cho 3 backend (xem Caddyfile.local để biết vì sao là Caddy
+  # chứ không phải nginx). Đây là thứ DUY NHẤT giữ cổng 8001 ra máy thật — trình duyệt và
+  # trang server-render đều gọi qua http://192.168.1.200:8001 như cũ, không phải sửa gì.
+  lb:
+    # Caddy kèm module DNS Cloudflare (xin chứng chỉ HTTPS cho candoc.info) — xem caddy/Dockerfile.
+    build: ./caddy
+    image: buildaicheckhs-caddy-cf
+    restart: unless-stopped
+    # Chỉ để lấy CLOUDFLARE_API_TOKEN cho Caddy (Caddyfile đọc qua {env.CLOUDFLARE_API_TOKEN}).
+    env_file:
+      - .env.local
+    ports:
+      - "8001:8001"
+      # Cổng 80 để vào bằng tên miền candoc.info (xem Caddyfile.local).
+      #
+      # CẢNH BÁO: trên Windows, IIS (dịch vụ W3SVC) giữ sẵn cổng 80. Nếu ai đó bật lại IIS
+      # thì Docker không bind được và container lb CHẾT HẲN — kéo theo mất luôn API ở cổng
+      # 8001, tức cả app ngừng chạy chứ không chỉ mất tên miền. Đã tắt IIS bằng:
+      #     Stop-Service W3SVC -Force; Set-Service W3SVC -StartupType Disabled
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.local:/etc/caddy/Caddyfile:ro
+      # BẮT BUỘC giữ chứng chỉ trên ổ đĩa riêng. Không có volume này thì MỖI LẦN dựng lại lb,
+      # Caddy lại xin chứng chỉ mới — Let's Encrypt chỉ cho 5 chứng chỉ trùng tên mỗi tuần,
+      # vượt là tên miền bị KHOÁ CẢ TUẦN, HTTPS chết mà không có cách nào gỡ sớm.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      # Chờ CẢ BA sẵn sàng rồi mới mở cổng: mở sớm thì request đầu tiên rơi vào replica chưa
+      # nạp xong model và trả lỗi, dù chỉ cần chờ thêm vài chục giây.
+      backend:
+        condition: service_healthy
+      backend2:
+        condition: service_healthy
+      backend3:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      args:
+        # VÌ SAO là IP LAN chứ không phải "localhost", "backend" hay "host.docker.internal":
+        # biến NEXT_PUBLIC_* được BAKE THẲNG vào bundle lúc build và lib/format.ts chỉ có
+        # MỘT hằng API_URL, mà hằng đó bị dùng ở BA nơi chạy khác hẳn nhau:
+        #   - tiến trình Node BÊN TRONG container này (4 server component fetch sẵn dữ liệu
+        #     — app/page.tsx, app/cases/[id]/page.tsx, .../summary, app/admin/cases/[id]);
+        #   - trình duyệt trên chính máy dev;
+        #   - trình duyệt trên MÁY KHÁC trong văn phòng (công cụ nội bộ, cả nhóm cùng dùng).
+        # "localhost:8001": trong container trỏ vào chính nó -> trang server-render lỗi; trên
+        #   máy khác trỏ vào máy của họ -> hỏng hết.
+        # "backend:8001": chỉ đúng trong container, trình duyệt không phân giải nổi.
+        # "host.docker.internal:8001": ĐÃ DÙNG rồi bỏ — đúng trong container và trên máy dev
+        #   (Docker Desktop ghi sẵn vào hosts file của máy đó), nhưng máy khác hỏi DNS thật
+        #   thì nhận "name does not exist" (đã đo với 8.8.8.8). Trang vẫn tải được nhưng mọi
+        #   lệnh gọi API từ trình duyệt hỏng, báo "Không kết nối được backend".
+        # IP LAN là thứ DUY NHẤT tới được từ cả ba nơi (đã kiểm tra: từ trong container gọi
+        # 192.168.1.200:8001/health trả OK). Đánh đổi: IP đổi là phải sửa đây + CORS_ORIGINS
+        # ở trên rồi build lại frontend — nên đặt IP cố định (DHCP reservation) trên router.
+        #
+        # CẬP NHẬT 25/09/2026 — chuyển sang https://candoc.info/api: có chứng chỉ HTTPS thật (xem
+        # Caddyfile.local), và API nằm CHUNG tên miền ở /api nên cùng nguồn gốc với trang. Vẫn
+        # tới được từ cả ba nơi kể trên: container này và mọi máy trong văn phòng đều phân giải
+        # candoc.info ra 192.168.1.200 (đã kiểm tra từ trong container: HTTP 200).
+        # Đường cũ 192.168.1.200:8001 VẪN MỞ, chỉ là giao diện không dùng nữa.
+        NEXT_PUBLIC_API_URL: https://candoc.info/api
+    environment:
+      # Riêng cho server component (lib/serverApi.ts): gọi thẳng bộ cân tải trong mạng Docker,
+      # KHÔNG qua DNS router + HTTPS như trình duyệt. Router chập chờn DNS là trang chủ / trang
+      # hồ sơ lỗi "EAI_AGAIN candoc.info" dù backend vẫn khoẻ (đã gặp 28/09).
+      SERVER_API_URL: http://lb:8001
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      # Chờ lb chứ không phải từng backend: trang server-render gọi API qua cổng 8001 của
+      # máy thật, mà cổng đó do lb giữ — backend sống mà lb chưa lên thì vẫn hỏng.
+      lb:
+        condition: service_started
+      backend:
+        condition: service_healthy
 volumes:
   mysql_data:
   minio_data:
+  caddy_data:
+  caddy_config:

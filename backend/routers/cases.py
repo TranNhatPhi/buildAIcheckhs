@@ -2,29 +2,41 @@ import io
 import json
 import logging
 import re
+import unicodedata
 import urllib.parse
 import zipfile
+from datetime import datetime, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import activity
 import emailjs
 import pdf_export
 import storage
-from admin_auth import require_admin
+import thong_bao
+from admin_auth import is_admin, require_admin
+from case_auto_status import dong_bo_hoan_thanh
 from case_status import (
+    CASE_AUTO_DELETE_DAYS,
     CASE_STATUS_DEFINITIONS,
     FINAL_CASE_STATUSES,
     INSTANT_EMAIL_STATUSES,
     STATUS_REMINDER_INTERVAL_DAYS,
     case_status_fields,
+    ly_do_khong_chuyen_duoc,
+    MAX_SUBMISSION_ROUND,
+    RESUBMIT_FROM_STATUSES,
 )
 from classify import summarize_case_profile
 from completeness import (
     assess_savings,
     compute_checklist_summary,
     compute_financial_threshold_vnd,
+    relink_marital_variants,
 )
 from db import get_db
 from doc_checks import danh_gia_han, dem_han_tai_lieu, doi_chieu_cheo
@@ -37,6 +49,8 @@ from mappers import (
 from models import Case, ChecklistItem, now_utc
 from savings import refresh_case_savings
 from schemas import (
+    dump_experience_units,
+    parse_experience_units,
     ALLOWED_TAGS,
     CaseAnalysisResponse,
     CaseDetailDTO,
@@ -64,7 +78,8 @@ def list_cases(db: Session = Depends(get_db)):
     result = []
     for c in cases:
         summary = compute_checklist_summary(
-            checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel
+            checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel,
+            force_complete=c.completedAt is not None,
         )
         threshold = compute_financial_threshold_vnd(c.maritalStatus, c.numberOfChildren)
         qua_han, sap_han = dem_han_tai_lieu(c.documents)
@@ -76,17 +91,25 @@ def list_cases(db: Session = Depends(get_db)):
                 numberOfChildren=c.numberOfChildren,
                 skillLevel=c.skillLevel,
                 partner=c.partner,
+                receiverName=c.receiverName,
+                managerName=c.managerName,
+                saleName=c.saleName,
                 occupation=c.occupation,
                 experienceMonths=c.experienceMonths,
+                experienceUnits=parse_experience_units(c.experienceUnits),
                 notes=c.notes,
                 tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
+                completedAt=c.completedAt,
+                autoDeleteAt=c.autoDeleteAt,
+                filesPurgedAt=c.filesPurgedAt,
                 **case_status_fields(c),
                 percent=summary.percent,
                 needsReviewCount=summary.needs_review_count,
                 financialThreshold=financial_threshold_to_dto(threshold),
                 expiredDocCount=qua_han,
                 expiringSoonDocCount=sap_han,
+                idleDays=thong_bao.ngay_chua_cap_nhat(c, summary),
             )
         )
     return result
@@ -131,6 +154,51 @@ def list_occupations(db: Session = Depends(get_db)):
     return [r for r in rows if r]
 
 
+def _goi_y(db: Session, cot) -> list[str]:
+    """Giá trị ĐANG được dùng của một ô chữ tự do, để form gợi ý — cùng lý do như /partners."""
+    rows = db.scalars(
+        select(cot).where(Case.deletedAt.is_(None), cot.is_not(None), cot != "").distinct().order_by(cot)
+    ).all()
+    return [r for r in rows if r]
+
+
+@router.get("/receivers")
+def list_receivers(db: Session = Depends(get_db)):
+    return _goi_y(db, Case.receiverName)
+
+
+@router.get("/managers")
+def list_managers(db: Session = Depends(get_db)):
+    return _goi_y(db, Case.managerName)
+
+
+@router.get("/sales")
+def list_sales(db: Session = Depends(get_db)):
+    return _goi_y(db, Case.saleName)
+
+
+@router.get("/experience-units")
+def list_experience_units(db: Session = Depends(get_db)):
+    """Tên các công ty xác nhận kinh nghiệm đã nhập ở MỌI hồ sơ — gợi ý cho ô "Đơn vị xác nhận kinh
+    nghiệm": hồ sơ khác cùng công ty thì gõ vài chữ là chọn được, khỏi gõ lại (và khỏi gõ lệch
+    "Cty A" / "Công ty A" thành hai công ty).
+
+    Cùng một công ty gõ khác hoa/thường hay khác kiểu dấu (máy Mac) gộp làm một, hiện cách gõ hay
+    dùng nhất. Phải khai TRƯỚC GET /{case_id}, không thì "experience-units" bị hiểu là một case_id.
+    """
+    dem: dict[str, dict[str, int]] = {}
+    for raw in db.scalars(
+        select(Case.experienceUnits).where(Case.deletedAt.is_(None), Case.experienceUnits.is_not(None))
+    ):
+        for u in parse_experience_units(raw):
+            ten = " ".join(unicodedata.normalize("NFC", u["name"]).split())
+            if ten:
+                cach_go = dem.setdefault(ten.casefold(), {})
+                cach_go[ten] = cach_go.get(ten, 0) + 1
+    ket_qua = [max(cach_go.items(), key=lambda kv: kv[1])[0] for cach_go in dem.values()]
+    return sorted(ket_qua, key=str.casefold)
+
+
 @router.get("/statuses")
 def list_application_statuses():
     """Danh sách có thứ tự để UI và chức năng email dùng cùng một quy ước trạng thái."""
@@ -155,13 +223,18 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
         # Cắt khoảng trắng thừa và quy chuỗi rỗng về NULL: "  " và "" phải là "không có đối
         # tác" giống hệt nhau, nếu không danh sách gợi ý sẽ mọc ra một "nhóm" vô hình.
         partner=(body.partner or "").strip() or None,
+        receiverName=(body.receiverName or "").strip() or None,
+        managerName=(body.managerName or "").strip() or None,
+        saleName=(body.saleName or "").strip() or None,
         occupation=(body.occupation or "").strip() or None,
         experienceMonths=body.experienceMonths,
+        experienceUnits=dump_experience_units(body.experienceUnits),
         notes=body.notes,
     )
     db.add(case)
     db.commit()
     db.refresh(case)
+    activity.ghi("CASE_CREATE", case=case)
 
     threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
     return CaseListItemDTO(
@@ -171,11 +244,18 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
         partner=case.partner,
+        receiverName=case.receiverName,
+        managerName=case.managerName,
+        saleName=case.saleName,
         occupation=case.occupation,
         experienceMonths=case.experienceMonths,
+        experienceUnits=parse_experience_units(case.experienceUnits),
         notes=case.notes,
         tags=[],
         createdAt=case.createdAt,
+        completedAt=case.completedAt,
+        autoDeleteAt=case.autoDeleteAt,
+        filesPurgedAt=case.filesPurgedAt,
         **case_status_fields(case),
         percent=0,
         needsReviewCount=0,
@@ -196,7 +276,8 @@ def list_deleted_cases(db: Session = Depends(get_db)):
     result = []
     for c in cases:
         summary = compute_checklist_summary(
-            checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel
+            checklist_items, c.documents, c.maritalStatus, c.numberOfChildren, c.skillLevel,
+            force_complete=c.completedAt is not None,
         )
         threshold = compute_financial_threshold_vnd(c.maritalStatus, c.numberOfChildren)
         result.append(
@@ -207,11 +288,18 @@ def list_deleted_cases(db: Session = Depends(get_db)):
                 numberOfChildren=c.numberOfChildren,
                 skillLevel=c.skillLevel,
                 partner=c.partner,
+                receiverName=c.receiverName,
+                managerName=c.managerName,
+                saleName=c.saleName,
                 occupation=c.occupation,
                 experienceMonths=c.experienceMonths,
+                experienceUnits=parse_experience_units(c.experienceUnits),
                 notes=c.notes,
                 tags=parse_tags(c.tags),
                 createdAt=c.createdAt,
+                completedAt=c.completedAt,
+                autoDeleteAt=c.autoDeleteAt,
+                filesPurgedAt=c.filesPurgedAt,
                 deletedAt=c.deletedAt,
                 **case_status_fields(c),
                 percent=summary.percent,
@@ -235,11 +323,14 @@ def restore_case(case_id: str, db: Session = Depends(get_db)):
 
     case.deletedAt = None
     db.commit()
+    dong_bo_hoan_thanh(db, case)
+    activity.ghi("CASE_RESTORE", case=case)
     db.refresh(case)
 
     checklist_items = db.scalars(select(ChecklistItem)).all()
     summary = compute_checklist_summary(
-        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren, case.skillLevel
+        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren,
+        case.skillLevel, force_complete=case.completedAt is not None,
     )
     threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
     return CaseListItemDTO(
@@ -249,11 +340,18 @@ def restore_case(case_id: str, db: Session = Depends(get_db)):
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
         partner=case.partner,
+        receiverName=case.receiverName,
+        managerName=case.managerName,
+        saleName=case.saleName,
         occupation=case.occupation,
         experienceMonths=case.experienceMonths,
+        experienceUnits=parse_experience_units(case.experienceUnits),
         notes=case.notes,
         tags=parse_tags(case.tags),
         createdAt=case.createdAt,
+        completedAt=case.completedAt,
+        autoDeleteAt=case.autoDeleteAt,
+        filesPurgedAt=case.filesPurgedAt,
         **case_status_fields(case),
         percent=summary.percent,
         needsReviewCount=summary.needs_review_count,
@@ -266,10 +364,13 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
     case = db.get(Case, case_id)
     if not case or case.deletedAt is not None:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    # Gộp theo 30 phút + bỏ qua admin/không rõ tên (xem activity._GOP_PHUT).
+    activity.ghi("CASE_VIEW", case=case)
 
     checklist_items = db.scalars(select(ChecklistItem)).all()
     summary = compute_checklist_summary(
-        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren, case.skillLevel
+        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren,
+        case.skillLevel, force_complete=case.completedAt is not None,
     )
     threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
     items_by_id = {i.id: i for i in checklist_items}
@@ -284,11 +385,18 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
             "numberOfChildren": case.numberOfChildren,
             "skillLevel": case.skillLevel,
             "partner": case.partner,
+            "receiverName": case.receiverName,
+            "managerName": case.managerName,
+            "saleName": case.saleName,
             "occupation": case.occupation,
             "experienceMonths": case.experienceMonths,
+            "experienceUnits": parse_experience_units(case.experienceUnits),
             "notes": case.notes,
             "tags": parse_tags(case.tags),
             "createdAt": case.createdAt,
+            "completedAt": case.completedAt,
+            "autoDeleteAt": case.autoDeleteAt,
+            "filesPurgedAt": case.filesPurgedAt,
             **case_status_fields(case),
             "documents": sorted(case.documents, key=lambda d: d.uploadedAt),
             "aiAnalysisStatus": case.aiAnalysisStatus,
@@ -332,6 +440,7 @@ def detect_case_savings(case_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=error)
 
     db.refresh(case)
+    activity.ghi("SAVINGS_DETECT", case=case)
     return _savings_dto(case)
 
 
@@ -352,6 +461,10 @@ def update_case_savings(
     case.savingsUpdatedAt = now_utc()
     db.commit()
     db.refresh(case)
+    activity.ghi(
+        "SAVINGS_EDIT", case=case,
+        detail=f"{body.manualVnd:,} VNĐ".replace(",", ".") if body.manualVnd is not None else "Xoá số nhập tay",
+    )
     return _savings_dto(case)
 
 
@@ -369,9 +482,11 @@ def analyze_case(case_id: str, db: Session = Depends(get_db)):
 
     checklist_items = db.scalars(select(ChecklistItem)).all()
     summary = compute_checklist_summary(
-        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren, case.skillLevel
+        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren,
+        case.skillLevel, force_complete=case.completedAt is not None,
     )
 
+    activity.ghi("AI_ANALYZE", case=case)
     case_context = (
         f"Tên khách hàng: {case.clientName}\n"
         f"Tình trạng hôn nhân: {'Đã kết hôn' if case.maritalStatus == 'MARRIED' else 'Độc thân'}\n"
@@ -499,18 +614,30 @@ def _dedupe_filename(name: str, used_names: set[str]) -> str:
 
 
 @router.get("/{case_id}/download-all")
-def download_all_documents(case_id: str, db: Session = Depends(get_db)):
-    """Nút "Tải tất cả hồ sơ" ở trang Tổng hợp thông tin — gộp toàn bộ file gốc (PDF/ảnh)
-    khách hàng đã upload cùng bản "Phân tích AI chuyên sâu" (nếu đã chạy) thành 1 file ZIP
-    duy nhất để nhân viên tải về máy cá nhân, khỏi phải tải tay từng file một."""
+def download_all_documents(case_id: str, ids: Optional[str] = None, db: Session = Depends(get_db)):
+    """Gộp file gốc (PDF/ảnh) của hồ sơ thành 1 file ZIP để nhân viên tải về một lần.
+
+    `ids` = danh sách id tài liệu, ngăn nhau bằng dấu phẩy -> CHỈ nén những file đó. Thiếu
+    `ids` thì nén toàn bộ, kèm bản "Phân tích AI chuyên sâu" (giữ nguyên hành vi cũ của nút
+    "Tải tất cả" ở trang Tổng hợp).
+
+    Khi có chọn lọc thì KHÔNG kèm bản phân tích AI: nhân viên tick vài tờ giấy cụ thể (vd gửi
+    bổ sung cho lãnh sự) mà file zip lại có thêm bản phân tích nội bộ là đưa nhầm tài liệu
+    ra ngoài.
+    """
     case = db.get(Case, case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
 
+    chon = {x for x in (ids or "").split(",") if x} or None
+    tai_lieu = [d for d in case.documents if chon is None or d.id in chon]
+    if chon is not None and not tai_lieu:
+        raise HTTPException(status_code=404, detail="Không tìm thấy file nào trong số đã chọn")
+
     buffer = io.BytesIO()
     used_names: set[str] = set()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for doc in sorted(case.documents, key=lambda d: d.uploadedAt):
+        for doc in sorted(tai_lieu, key=lambda d: d.uploadedAt):
             try:
                 content = storage.get_document_bytes(doc.storedPath)
             except Exception:  # noqa: BLE001
@@ -518,7 +645,9 @@ def download_all_documents(case_id: str, db: Session = Depends(get_db)):
             name = _dedupe_filename(doc.originalFilename or "file", used_names)
             zf.writestr(name, content)
 
-        if case.aiAnalysisSummary:
+        if chon is not None:
+            pdf_bytes = None
+        elif case.aiAnalysisSummary:
             pdf_bytes = pdf_export.render_text_to_pdf(
                 case.aiAnalysisSummary, f"Phân tích AI chuyên sâu — {case.clientName}"
             )
@@ -527,6 +656,8 @@ def download_all_documents(case_id: str, db: Session = Depends(get_db)):
 
         if pdf_bytes is not None:
             zf.writestr(_dedupe_filename("Phan tich AI chuyen sau.pdf", used_names), pdf_bytes)
+        elif chon is not None:
+            pass  # tải file đã chọn thì không kèm gì thêm
         else:
             # Không tìm được font Unicode để xuất PDF (xem pdf_export.py), hoặc chưa từng
             # chạy phân tích — fallback về .txt thay vì làm hỏng cả lượt tải ZIP.
@@ -547,14 +678,19 @@ def download_all_documents(case_id: str, db: Session = Depends(get_db)):
     # không hợp lệ nếu nhét thẳng vào filename= thường (đã xác nhận: UnicodeEncodeError khi
     # test thật). Dùng filename= ASCII an toàn làm fallback + filename*=UTF-8'' theo đúng
     # chuẩn RFC 5987/6266 để trình duyệt hiện đúng tên tiếng Việt lúc tải về.
+    hau_to = f" ({len(tai_lieu)} file da chon)" if chon is not None else ""
     ascii_fallback = re.sub(r'[^\x20-\x7e]|["\\]', "_", case.clientName).strip() or "ho-so"
-    utf8_name = urllib.parse.quote(f"{case.clientName}.zip", safe="")
+    utf8_name = urllib.parse.quote(f"{case.clientName}{hau_to}.zip", safe="")
+    activity.ghi(
+        "ZIP_DOWNLOAD", case=case,
+        detail=f"{len(tai_lieu)} file đã chọn" if chon is not None else f"Tất cả {len(tai_lieu)} file",
+    )
     return Response(
         content=buffer.getvalue(),
         media_type="application/zip",
         headers={
             "Content-Disposition": (
-                f'attachment; filename="{ascii_fallback}.zip"; filename*=UTF-8\'\'{utf8_name}'
+                f'attachment; filename="{ascii_fallback}{hau_to}.zip"; filename*=UTF-8\'\'{utf8_name}'
             )
         },
     )
@@ -594,6 +730,9 @@ def update_case(
     body: UpdateCaseRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    # Endpoint dùng chung: trang admin gửi kèm mật khẩu, trang nhân viên thì không — đó là cách
+    # duy nhất biết ai đang đổi trạng thái để áp đúng phần quyền (xem ly_do_khong_chuyen_duoc).
+    la_admin: bool = Depends(is_admin),
 ):
     case = db.get(Case, case_id)
     if not case:
@@ -603,8 +742,18 @@ def update_case(
     # đổi tên) không vô tình xoá/ghi đè các field khác không được gửi lên.
     updates = body.model_dump(exclude_unset=True)
     old_application_status = case.applicationStatus
+    # Giá trị CŨ của các trường gửi lên — để lịch sử chỉ ghi trường THỰC SỰ đổi.
+    gia_tri_cu = {f: getattr(case, f, None) for f in updates}
     for field, value in updates.items():
         setattr(case, field, value)
+    # Ô chữ tự do: xoá trắng thì lưu None, không lưu "" — không thì danh sách gợi ý và bộ lọc
+    # ở trang thống kê admin sẽ có một mục "rỗng" riêng tách khỏi "chưa nhập".
+    for field in ("receiverName", "managerName", "saleName"):
+        if field in updates:
+            setattr(case, field, (updates[field] or "").strip() or None)
+    # Vòng setattr ở trên gán nguyên list dict vào cột TEXT — ghi lại đúng dạng JSON đã chuẩn hoá.
+    if "experienceUnits" in updates:
+        case.experienceUnits = dump_experience_units(body.experienceUnits, gia_tri_cu.get("experienceUnits"))
 
     # Chỉ khởi động lại chu kỳ 14 ngày khi trạng thái THỰC SỰ đổi. Bấm lưu lại cùng một
     # trạng thái không được trì hoãn email nhắc vô thời hạn.
@@ -616,8 +765,42 @@ def update_case(
         case.applicationStatusUpdatedAt = now_utc()
         case.lastStatusReminderAt = None
 
+    # Vài mục LOW_SKILL có bản riêng cho độc thân và cho kết hôn (CCCD bố/mẹ, khai sinh con...).
+    # Đổi tình trạng hôn nhân mà không chuyển theo thì giấy tờ đã nộp nằm lại ở bản mục không
+    # còn áp dụng, checklist báo "thiếu" dù khách đã nộp. Xem LOW_SKILL_MARITAL_VARIANTS.
+    if "maritalStatus" in updates:
+        relink_marital_variants(case)
+
+    # Kiểm tra SAU khi đã áp các trường khác trong cùng request: hộp "Sửa hồ sơ" gửi cả tình
+    # trạng hôn nhân lẫn trạng thái một lúc, mà đổi hôn nhân là đổi checklist -> đổi tiến độ.
+    if status_changed:
+        tien_do = compute_checklist_summary(
+            db.scalars(select(ChecklistItem)).all(), case.documents, case.maritalStatus,
+            case.numberOfChildren, case.skillLevel, force_complete=case.completedAt is not None,
+        ).percent
+        ly_do = ly_do_khong_chuyen_duoc(updates["applicationStatus"], old_application_status, tien_do, la_admin)
+        if ly_do:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=ly_do)
+
     db.commit()
+    # Nhân viên TỰ chọn trạng thái thì tôn trọng lựa chọn đó; chỉ tự đồng bộ khi request đổi thứ
+    # khác (hôn nhân, số con, tay nghề -> checklist đổi -> tiến độ đổi).
+    if not status_changed:
+        dong_bo_hoan_thanh(db, case)
     db.refresh(case)
+
+    if status_changed:
+        activity.ghi(
+            "STATUS_CHANGE", case=case,
+            detail=f"{activity.nhan_trang_thai(old_application_status)} → {activity.nhan_trang_thai(case.applicationStatus)}",
+        )
+    doi = [
+        activity.TEN_TRUONG[f] for f in updates
+        if f in activity.TEN_TRUONG and (gia_tri_cu.get(f) or None) != (getattr(case, f, None) or None)
+    ]
+    if doi:
+        activity.ghi("CASE_EDIT", case=case, detail="Sửa " + ", ".join(doi))
 
     # Đọc giá trị ra NGAY tại đây rồi mới xếp lịch gửi: BackgroundTask chạy sau khi session
     # DB đã đóng, chạm vào thuộc tính ORM lúc đó có thể nổ DetachedInstanceError.
@@ -640,7 +823,8 @@ def update_case(
 
     checklist_items = db.scalars(select(ChecklistItem)).all()
     summary = compute_checklist_summary(
-        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren, case.skillLevel
+        checklist_items, case.documents, case.maritalStatus, case.numberOfChildren,
+        case.skillLevel, force_complete=case.completedAt is not None,
     )
     threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
 
@@ -651,11 +835,18 @@ def update_case(
         numberOfChildren=case.numberOfChildren,
         skillLevel=case.skillLevel,
         partner=case.partner,
+        receiverName=case.receiverName,
+        managerName=case.managerName,
+        saleName=case.saleName,
         occupation=case.occupation,
         experienceMonths=case.experienceMonths,
+        experienceUnits=parse_experience_units(case.experienceUnits),
         notes=case.notes,
         tags=parse_tags(case.tags),
         createdAt=case.createdAt,
+        completedAt=case.completedAt,
+        autoDeleteAt=case.autoDeleteAt,
+        filesPurgedAt=case.filesPurgedAt,
         **case_status_fields(case),
         percent=summary.percent,
         needsReviewCount=summary.needs_review_count,
@@ -683,6 +874,7 @@ def update_case_tags(case_id: str, body: UpdateTagsRequest, db: Session = Depend
 
     case.tags = json.dumps(clean, ensure_ascii=False) if clean else None
     db.commit()
+    activity.ghi("TAGS_EDIT", case=case, detail=", ".join(clean) or "Bỏ hết nhãn")
     return clean
 
 
@@ -697,4 +889,136 @@ def delete_case(case_id: str, db: Session = Depends(get_db)):
 
     case.deletedAt = now_utc()
     db.commit()
+    activity.ghi("CASE_DELETE", case=case)
     return {"ok": True}
+
+
+class CaseCompletionDTO(BaseModel):
+    """Kết quả đánh dấu/bỏ đánh dấu hoàn tất. Không trả nguyên CaseListItemDTO vì dựng nó cần
+    tính lại checklist + ngưỡng tài chính, mà danh sách hồ sơ luôn tải lại ngay sau đó."""
+
+    id: str
+    # Optional[...] chứ KHÔNG phải "datetime | None": container chạy Python 3.9, cú pháp PEP 604
+    # chỉ có từ 3.10 và Pydantic dựng model ngay lúc import -> backend chết lúc khởi động.
+    completedAt: Optional[datetime]
+    autoDeleteAt: Optional[datetime]
+    autoDeleteDays: int
+    # Trạng thái SAU khi tự đồng bộ theo tiến độ (đánh dấu -> 100% -> "Hoàn thành"; bỏ đánh dấu
+    # mà giấy tờ thật chưa đủ -> lùi về "Đang thu thập giấy tờ"). Danh sách cập nhật tại chỗ.
+    applicationStatus: str
+
+
+class ResubmitDTO(BaseModel):
+    id: str
+    submissionRound: int
+    applicationStatus: str
+    deletedFiles: int
+
+
+@router.post("/{case_id}/resubmit", response_model=ResubmitDTO, dependencies=[Depends(require_admin)])
+def resubmit_case(case_id: str, db: Session = Depends(get_db)):
+    """Admin chọn "Nộp lại lần N": làm lại hồ sơ từ đầu cho lần nộp kế tiếp.
+
+    - XOÁ VĨNH VIỄN toàn bộ file của lần trước (DB + MinIO, kể cả ảnh trang) — hồ sơ về 0%;
+    - tăng submissionRound (giao diện hiện "Nộp lại lần N" cạnh tên khách);
+    - trạng thái về "Chờ tiếp nhận" để nhân viên làm lại ở trang checklist;
+    - huỷ "Hoàn tất" + hẹn tự xoá (không thì hồ sơ đang làm lại bị xoá cứng giữa chừng);
+    - xoá số dư tiết kiệm (cả số AI lẫn số nhập tay) và bản phân tích AI — cả hai đều dựa trên
+      file vừa xoá, để lại là hồ sơ 0% vẫn hiện "đủ tiền".
+
+    Không gửi email: "Chờ tiếp nhận" không nằm trong INSTANT_EMAIL_STATUSES.
+    """
+    case = db.get(Case, case_id)
+    if not case or case.deletedAt is not None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    if case.applicationStatus not in RESUBMIT_FROM_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail="Chỉ hồ sơ 'Đang xử lý' hoặc 'Không thành công' mới chọn nộp lại được.",
+        )
+    if (case.submissionRound or 1) >= MAX_SUBMISSION_ROUND:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Hồ sơ đã nộp lần {case.submissionRound} — chỉ được nộp lại một lần, không có lần nộp thứ {case.submissionRound + 1}.",
+        )
+
+    so_file = len(case.documents)
+    for doc in list(case.documents):
+        db.delete(doc)
+    now = now_utc()
+    case.submissionRound = (case.submissionRound or 1) + 1
+    case.applicationStatus = "PENDING"
+    case.applicationStatusUpdatedAt = now
+    case.lastStatusReminderAt = None
+    case.completedAt = None
+    case.autoDeleteAt = None
+    case.savingsAiVnd = None
+    case.savingsAiNote = None
+    case.savingsManualVnd = None
+    case.savingsUpdatedAt = now
+    case.aiAnalysisStatus = "IDLE"
+    case.aiAnalysisSummary = None
+    case.aiAnalysisError = None
+    case.aiAnalysisUpdatedAt = None
+    db.commit()
+
+    # Xoá file SAU khi DB đã commit: lỗi MinIO lúc này chỉ để lại file mồ côi (tốn chỗ), còn làm
+    # ngược lại mà DB lỗi thì hồ sơ trỏ tới file đã mất.
+    try:
+        storage.delete_prefix(f"{case.id}/")
+    except Exception:
+        logger.exception("Nộp lại hồ sơ %s: không xoá được file trên MinIO", case.id)
+
+    logger.info("Hồ sơ %s: nộp lại lần %s, đã xoá %s file", case.id, case.submissionRound, so_file)
+    activity.ghi("CASE_RESUBMIT", case=case, detail=f"Lần {case.submissionRound} — đã xoá {so_file} file")
+    return ResubmitDTO(
+        id=case.id, submissionRound=case.submissionRound, applicationStatus=case.applicationStatus,
+        deletedFiles=so_file,
+    )
+
+
+@router.post("/{case_id}/complete", response_model=CaseCompletionDTO)
+def mark_case_complete(case_id: str, db: Session = Depends(get_db)):
+    """Đánh dấu hồ sơ đã xong: tiến độ thành 100% và hẹn tự xoá sau CASE_AUTO_DELETE_DAYS ngày.
+
+    Đặt ở router /cases (nhân viên dùng) chứ không phải /admin: đây là thao tác nghiệp vụ hằng
+    ngày của người làm hồ sơ, không phải việc quản trị.
+
+    KHÔNG xoá ngay: tới hạn, tiến trình case_cleanup XOÁ CỨNG cả hồ sơ lẫn file (không khôi phục
+    được). Bấm lại trên hồ sơ ĐÃ đánh dấu thì gia hạn lại từ hôm nay. Tiến độ thành 100% nên
+    trạng thái cũng tự sang "Hoàn thành" (case_auto_status).
+    """
+    case = db.get(Case, case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    if case.deletedAt is not None:
+        raise HTTPException(status_code=400, detail="Hồ sơ đã bị xoá — khôi phục trước rồi mới đánh dấu hoàn tất.")
+
+    now = now_utc()
+    case.completedAt = now
+    case.autoDeleteAt = now + timedelta(days=CASE_AUTO_DELETE_DAYS)
+    db.commit()
+    dong_bo_hoan_thanh(db, case)
+    db.refresh(case)
+    activity.ghi("CASE_COMPLETE", case=case, detail=f"Hẹn xoá vĩnh viễn {case.autoDeleteAt:%d/%m/%Y}")
+    return CaseCompletionDTO(
+        id=case.id, completedAt=case.completedAt, autoDeleteAt=case.autoDeleteAt,
+        autoDeleteDays=CASE_AUTO_DELETE_DAYS, applicationStatus=case.applicationStatus,
+    )
+
+
+@router.delete("/{case_id}/complete", response_model=CaseCompletionDTO)
+def unmark_case_complete(case_id: str, db: Session = Depends(get_db)):
+    """Bỏ đánh dấu hoàn tất: tiến độ trở lại số thật và HUỶ hẹn xoá."""
+    case = db.get(Case, case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    case.completedAt = None
+    case.autoDeleteAt = None
+    db.commit()
+    dong_bo_hoan_thanh(db, case)
+    activity.ghi("CASE_UNCOMPLETE", case=case)
+    return CaseCompletionDTO(
+        id=case_id, completedAt=None, autoDeleteAt=None, autoDeleteDays=CASE_AUTO_DELETE_DAYS,
+        applicationStatus=case.applicationStatus,
+    )

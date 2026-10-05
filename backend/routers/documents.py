@@ -5,12 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import activity
 import ocr
+import paddle_ocr_vl
 import storage
+from case_auto_status import dong_bo_hoan_thanh
 from classify import ap_thong_tin_boc_duoc, classify_ocr_text
 from completeness import is_item_applicable, is_savings_item
 from db import get_db
-from models import ChecklistItem, Document
+from models import ChecklistItem, Document, now_utc
 from savings import refresh_case_savings_quietly
 from schemas import (
     DocumentDTO,
@@ -65,6 +68,11 @@ def patch_document(document_id: str, body: PatchDocumentRequest, db: Session = D
     doc.status = "MANUALLY_SET" if body.matchedChecklistItemId else "NEEDS_REVIEW"
     doc.isManualOverride = True
     db.commit()
+    dong_bo_hoan_thanh(db, doc.case)
+    activity.ghi(
+        "DOC_ASSIGN", case=doc.case, document=doc,
+        detail=f"'{doc.originalFilename}' → {activity.ten_muc(db, doc.matchedChecklistItemId) or 'gỡ khỏi mục (cần review)'}",
+    )
 
     if was_savings or is_savings_item(doc.matchedChecklistItemId):
         refresh_case_savings_quietly(db, doc.case)
@@ -86,6 +94,7 @@ def update_manual_corrected_text(
     trimmed = body.manualCorrectedText.strip()
     doc.manualCorrectedText = trimmed or None
     db.commit()
+    activity.ghi("DOC_EDIT_TEXT", case=doc.case, document=doc, detail=f"'{doc.originalFilename}'")
     db.refresh(doc)
     return doc
 
@@ -106,6 +115,11 @@ def update_manual_expires_at(
 
     doc.manualExpiresAt = body.manualExpiresAt
     db.commit()
+    activity.ghi(
+        "DOC_EDIT_EXPIRY", case=doc.case, document=doc,
+        detail=f"'{doc.originalFilename}' → "
+        + (f"{body.manualExpiresAt:%d/%m/%Y}" if body.manualExpiresAt else "bỏ ngày nhập tay"),
+    )
     db.refresh(doc)
     return doc
 
@@ -118,10 +132,13 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
 
     was_savings = is_savings_item(doc.matchedChecklistItemId)
     case = doc.case
+    ten_file, muc = doc.originalFilename, activity.ten_muc(db, doc.matchedChecklistItemId)
 
     storage.delete_document(doc.storedPath)
     db.delete(doc)
     db.commit()
+    dong_bo_hoan_thanh(db, case)
+    activity.ghi("DOC_DELETE", case=case, detail=f"'{ten_file}'" + (f" (mục {muc})" if muc else ""))
 
     if was_savings:
         # Quan hệ đã được đọc ở trên; hết transaction phải buộc tải lại để tài liệu vừa xoá
@@ -141,6 +158,7 @@ def get_document_file(document_id: str, db: Session = Depends(get_db)):
         content = storage.get_document_bytes(doc.storedPath)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=404, detail="File không còn tồn tại trên hệ thống lưu trữ") from e
+    activity.ghi("DOC_OPEN", case=doc.case, document=doc, detail=f"'{doc.originalFilename}'")
     return Response(
         content=content,
         media_type=doc.mimeType,
@@ -151,7 +169,10 @@ def get_document_file(document_id: str, db: Session = Depends(get_db)):
 @router.get("/{document_id}/pages/{page_num}")
 def get_document_page_image(document_id: str, page_num: int, db: Session = Depends(get_db)):
     """Xem ảnh đã render của 1 trang PDF cụ thể (lưu lúc OCR — xem ocr.save_pdf_page_images).
-    Chỉ có với document là PDF đã OCR ít nhất 1 lần (đã có pageCount)."""
+
+    CHỈ PDF mới có ảnh trang. pageCount giờ được ghi cho MỌI loại file (ảnh rời = 1 trang) nên
+    nó KHÔNG còn nghĩa "file này có ảnh trang" như trước — ảnh jpg/png qua được chốt pageCount
+    rồi vẫn 404 ở bước đọc MinIO bên dưới, đúng như mong đợi."""
     doc = db.get(Document, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Không tìm thấy file")
@@ -167,7 +188,21 @@ def get_document_page_image(document_id: str, page_num: int, db: Session = Depen
 
 
 @router.post("/{document_id}/reclassify", response_model=DocumentDTO)
-def reclassify_document(document_id: str, db: Session = Depends(get_db)):
+def reclassify_document(document_id: str, engine: str = "auto", db: Session = Depends(get_db)):
+    """`engine=paddle`: đọc lại bằng PaddleOCR-VL thay vì thứ tự nguồn mặc định.
+
+    Dành cho lúc bản đọc tự động sai và nhân viên muốn thử nguồn khác. Mọi kiểm tra phải xong
+    TRƯỚC khi đặt status="OCR_RUNNING" bên dưới: trả lỗi sau khi đã đặt là document kẹt vĩnh
+    viễn ở trạng thái "đang đọc" (không có tiến trình nền nào gỡ nó ra).
+    """
+    if engine not in ("auto", "paddle"):
+        raise HTTPException(status_code=400, detail=f"Không có cách đọc tên '{engine}'.")
+    if engine == "paddle" and not paddle_ocr_vl.is_enabled():
+        raise HTTPException(
+            status_code=400,
+            detail="Máy chủ này chưa bật PaddleOCR-VL (thiếu PADDLE_OCR_VL_URL) — dùng 'Phân tích lại' thường.",
+        )
+
     # Xem giải thích ở patch_document: phải nhớ mục CŨ vì phân loại lại có thể chuyển file
     # RA KHỎI mục tiết kiệm, lúc đó tổng số dư cũng phải tính lại.
     doc = db.get(Document, document_id)
@@ -186,6 +221,7 @@ def reclassify_document(document_id: str, db: Session = Depends(get_db)):
     ]
 
     doc.status = "OCR_RUNNING"
+    doc.processingStartedAt = now_utc()
     db.commit()
 
     try:
@@ -200,13 +236,17 @@ def reclassify_document(document_id: str, db: Session = Depends(get_db)):
         # quả tốt hơn kết quả tự động lúc upload, không dùng cách nhanh mặc định nữa).
         content = storage.get_document_bytes(doc.storedPath)
         ocr_text, page_count, _lines, pages = ocr.extract_text(
-            content, doc.originalFilename, doc.mimeType, try_harder=True
+            content, doc.originalFilename, doc.mimeType, try_harder=True,
+            ocr_engine=None if engine == "auto" else engine,
         )
 
         is_pdf = doc.mimeType == "application/pdf" or doc.originalFilename.lower().endswith(".pdf")
         if is_pdf:
             ocr.save_pdf_page_images(doc.caseId, doc.id, pages)
-            doc.pageCount = page_count
+        # Ghi số trang cho MỌI loại file chứ không riêng PDF: danh sách tài liệu hiển thị
+        # số trang từng file, mà ảnh rời thì pageCount cũ để trống nên hiện ra ô trắng.
+        # Đây là SỐ TRANG OCR ĐÃ ĐỌC (ảnh rời luôn là 1), khớp với số trang ảnh đã lưu.
+        doc.pageCount = page_count
 
         doc.status = "CLASSIFYING"
         db.commit()
@@ -216,6 +256,9 @@ def reclassify_document(document_id: str, db: Session = Depends(get_db)):
         doc.status = "ERROR"
         doc.classificationError = str(e)
         db.commit()
+        dong_bo_hoan_thanh(db, doc.case)
+        activity.ghi("DOC_RECLASSIFY", case=doc.case, document=doc,
+                     detail=f"'{doc.originalFilename}' — lỗi: {str(e)[:120]}")
         db.refresh(doc)
         return doc
 
@@ -234,6 +277,12 @@ def reclassify_document(document_id: str, db: Session = Depends(get_db)):
     ap_thong_tin_boc_duoc(doc, outcome.fields)
     doc.isManualOverride = False
     db.commit()
+    dong_bo_hoan_thanh(db, doc.case)
+    activity.ghi(
+        "DOC_RECLASSIFY", case=doc.case, document=doc,
+        detail=f"'{doc.originalFilename}'{' (Chữ mờ? Đọc lại)' if engine == 'paddle' else ''} → "
+        + (activity.ten_muc(db, doc.matchedChecklistItemId) or "chưa khớp mục nào"),
+    )
 
     if was_savings or is_savings_item(doc.matchedChecklistItemId):
         refresh_case_savings_quietly(db, doc.case)

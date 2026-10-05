@@ -8,6 +8,15 @@ export function parseUtcDate(iso: string): Date {
   return new Date(/[Zz]|[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`);
 }
 
+// Số trang của 1 tài liệu để hiển thị. Ảnh rời luôn là 1 trang, nên suy thẳng từ mimeType
+// thay vì chờ pageCount: những file upload TRƯỚC khi backend ghi pageCount cho mọi loại file
+// (chỉ PDF mới ghi) sẽ mãi để trống nếu không có bước suy này, mà bắt nhân viên bấm "Phân
+// tích lại" từng ảnh chỉ để hiện con số 1 thì vô lý.
+export function documentPageCount(doc: { pageCount: number | null; mimeType: string }): number | null {
+  if (doc.pageCount != null) return doc.pageCount;
+  return doc.mimeType.startsWith("image/") ? 1 : null;
+}
+
 // Ước tính thời gian xử lý OCR + AI còn lại cho 1 file — CHỈ là ước tính mềm dựa trên số liệu
 // đo thật (xem backend/classify.py): correction đã tắt reasoning nên rất nhanh (~2-10s), còn
 // bước phân loại (giữ reasoning) dao động rất rộng tuỳ độ khó/mù mờ của tài liệu (đã đo từ
@@ -126,14 +135,17 @@ export function splitExperience(months: number | null | undefined): {
  * Số thứ tự hiển thị của từng mục checklist, đánh LIÊN TỤC xuyên suốt cả danh sách (không
  * reset về 1 ở mỗi nhóm) theo đúng bản checklist giấy khách gửi.
  *
- * Các mục liền nhau có cùng `numberGroup` dùng chung MỘT số lớn và được đánh số con phía
- * sau — "18.1", "18.2" — rồi mục kế tiếp nhận số lớn tiếp theo (19). Nếu đánh số phẳng
- * 18/19 thì mọi mục từ đó tới cuối danh sách đều lệch 1 số so với tờ giấy nhân viên đang
- * cầm, dò tay là nhầm hàng.
+ * Các mục liền nhau có cùng `numberGroup` dùng chung MỘT số lớn: mục ĐẦU giữ số trơn, các
+ * mục sau đánh số con — "23.", "23.1", "23.2" — rồi mục kế tiếp nhận số lớn tiếp theo (24).
+ * Nếu đánh số phẳng 23/24/25 thì mọi mục từ đó tới cuối danh sách đều lệch so với tờ giấy
+ * nhân viên đang cầm, dò tay là nhầm hàng.
  *
- * Cụm chỉ còn ĐÚNG MỘT mục hiển thị (mục kia bị lọc mất vì không áp dụng cho hồ sơ này)
- * thì trả về số lớn trơn, không có ".1" — một mình mà đánh "18.1" thì người đọc sẽ đi tìm
- * "18.2" vốn không tồn tại.
+ * Vì sao mục đầu KHÔNG phải "23.1": cụm này là "một giấy tờ bắt buộc + mấy bản bổ sung tuỳ
+ * ý" (vd hợp đồng lao động thứ 2, 3...), không phải một mục bị chẻ làm nhiều phần ngang
+ * hàng. Tờ giấy vẫn ghi "23. Hợp đồng lao động", các bản thêm mới là 23.1 trở đi.
+ *
+ * Cụm chỉ còn ĐÚNG MỘT mục hiển thị (các mục kia bị lọc mất vì không áp dụng cho hồ sơ
+ * này) thì cũng chỉ có số lớn trơn — rơi đúng vào nhánh "mục đầu" bên dưới.
  *
  * Trả về NHÃN đã kèm sẵn dấu chấm — "19." cho mục thường, "18.1" cho mục con (số con
  * không có dấu chấm đuôi, đúng như bản checklist giấy). Nơi hiển thị in thẳng, không nối
@@ -157,9 +169,8 @@ export function buildChecklistNumbers(
     }
     let end = i;
     while (end < items.length && items[end].item.numberGroup === group) end++;
-    const size = end - i;
     for (let k = i; k < end; k++) {
-      numbers.set(items[k].item.id, size === 1 ? `${major}.` : `${major}.${k - i + 1}`);
+      numbers.set(items[k].item.id, k === i ? `${major}.` : `${major}.${k - i}`);
     }
     i = end;
   }

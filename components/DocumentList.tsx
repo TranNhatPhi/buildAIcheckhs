@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FormattedDocumentText } from "@/components/FormattedDocumentText";
-import { API_URL } from "@/lib/format";
+import { API_URL, documentPageCount } from "@/lib/format";
 import type { ChecklistItemDTO, DocumentDTO } from "@/lib/client-types";
 
 interface Props {
@@ -33,6 +33,12 @@ const STATUS_COLOR: Record<DocumentDTO["status"], string> = {
 
 export function DocumentList({ documents, applicableItems, onChanged }: Props) {
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
+  const [daChon, setDaChon] = useState<Set<string>>(new Set());
+  // Nguồn OCR đang chạy ở lượt "phân tích lại" này — chỉ để đổi chữ trên nút, không gửi đi đâu.
+  const [analyzingEngine, setAnalyzingEngine] = useState<"auto" | "paddle">("auto");
+  // Máy chủ có PaddleOCR-VL hay không (production không có GPU nên không bật) — hỏi 1 lần,
+  // chưa biết thì coi như KHÔNG có để tránh loé nút rồi lại biến mất.
+  const [hasPaddle, setHasPaddle] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentDTO | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
@@ -82,8 +88,39 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
     onChanged();
   }
 
-  async function reclassify(docId: string) {
+  useEffect(() => {
+    let huy = false;
+    fetch(`${API_URL}/config`)
+      .then((r) => r.json())
+      .then((cfg) => {
+        if (!huy) setHasPaddle(Boolean(cfg.hasPaddleOcrVl));
+      })
+      .catch(() => {
+        // Không hỏi được cấu hình thì cứ ẩn nút — mất kết nối đã có ConfigBanner báo rồi.
+      });
+    return () => {
+      huy = true;
+    };
+  }, []);
+
+  function chonMot(id: string) {
+    setDaChon((truoc) => {
+      const sau = new Set(truoc);
+      if (sau.has(id)) sau.delete(id);
+      else sau.add(id);
+      return sau;
+    });
+  }
+
+  function chonTatCa() {
+    setDaChon((truoc) =>
+      truoc.size === documents.length ? new Set() : new Set(documents.map((d) => d.id))
+    );
+  }
+
+  async function reclassify(docId: string, engine: "auto" | "paddle" = "auto") {
     setAnalyzingId(docId);
+    setAnalyzingEngine(engine);
     // Nudge sớm để lấy trạng thái OCR_RUNNING vừa được backend commit ngay khi bắt đầu xử
     // lý — không đợi hết cả request (30-60s) mới thấy cập nhật. Sau nudge này,
     // CaseDetail tự polling định kỳ vì thấy có document đang xử lý, nên badge trạng thái
@@ -91,7 +128,17 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
     // thật ở backend, không phải % giả lập.
     const nudgeTimer = setTimeout(onChanged, 1200);
     try {
-      await fetch(`${API_URL}/documents/${docId}/reclassify`, { method: "POST" });
+      const res = await fetch(
+        `${API_URL}/documents/${docId}/reclassify${engine === "auto" ? "" : `?engine=${engine}`}`,
+        { method: "POST" }
+      );
+      // Backend từ chối (vd chọn PaddleOCR-VL mà máy chủ chưa bật) thì phải nói ra: trước đây
+      // kết quả fetch không được kiểm tra nên lỗi 400 trôi qua im lặng, nhân viên chỉ thấy
+      // "phân tích xong" mà nội dung y như cũ.
+      if (!res.ok) {
+        const chiTiet = await res.json().catch(() => null);
+        alert(chiTiet?.detail ?? "Không phân tích lại được file này.");
+      }
     } catch {
       // Mất kết nối server giữa chừng (vd server restart lúc đang chạy OCR/AI) — bắt lỗi
       // ở đây thay vì để "Failed to fetch" văng thẳng lên UI thành lỗi chưa xử lý. Vẫn
@@ -126,8 +173,52 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
     a.originalFilename.localeCompare(b.originalFilename, "vi", { numeric: true, sensitivity: "base" })
   );
 
+  // Hồ sơ bị xoá file trong lúc đang tick: id đã chọn không còn trong danh sách nữa. Lọc lại
+  // theo danh sách THẬT để số đếm trên nút không bao giờ lớn hơn số file đang hiện.
+  const idDangChon = sortedDocuments.filter((d) => daChon.has(d.id)).map((d) => d.id);
+  const caseId = documents[0]?.caseId;
+
   return (
     <>
+      {documents.length > 0 && caseId && (
+        <div className="mb-3 flex items-center justify-between gap-3 flex-wrap">
+          <label className="flex items-center gap-2 text-sm text-neutral-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={idDangChon.length === documents.length && documents.length > 0}
+              ref={(el) => {
+                // Dấu gạch ngang khi chọn dở: chỉ đặt được bằng JS, HTML không có thuộc tính này.
+                if (el) el.indeterminate = idDangChon.length > 0 && idDangChon.length < documents.length;
+              }}
+              onChange={chonTatCa}
+              className="h-4 w-4 rounded border-neutral-300"
+            />
+            {idDangChon.length > 0 ? `Đã chọn ${idDangChon.length}/${documents.length} file` : "Chọn tất cả"}
+          </label>
+
+          <div className="flex items-center gap-2">
+            {/* Thẻ <a download> chứ không phải fetch: trình duyệt tự lo việc tải, tên file lấy
+                thẳng từ header Content-Disposition của backend (có dấu tiếng Việt đúng). */}
+            <a
+              href={`${API_URL}/cases/${caseId}/download-all?ids=${idDangChon.join(",")}`}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full transition-colors ${
+                idDangChon.length === 0
+                  ? "bg-neutral-100 text-neutral-400 pointer-events-none"
+                  : "bg-indigo-600 text-white hover:bg-indigo-700"
+              }`}
+            >
+              Tải file đã chọn (ZIP)
+            </a>
+            <a
+              href={`${API_URL}/cases/${caseId}/download-all`}
+              className="text-xs font-semibold px-3 py-1.5 rounded-full bg-neutral-100 text-neutral-700 hover:bg-neutral-200 transition-colors"
+            >
+              Tải tất cả (ZIP)
+            </a>
+          </div>
+        </div>
+      )}
+
       <ul className="flex flex-col gap-3">
       {sortedDocuments.map((doc) => {
         const isExpanded = expandedId === doc.id;
@@ -135,26 +226,41 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
         // request OCR/AI đang chạy dở có thể hoàn tất ngay sau đó và ghi đè mất lựa chọn
         // tay vừa chọn (race condition), gây nhầm lẫn khó chịu cho nhân viên.
         const isProcessing = ["PENDING", "OCR_RUNNING", "CLASSIFYING"].includes(doc.status);
+        const pageCount = documentPageCount(doc);
         return (
           <li key={doc.id} className="border-2 border-neutral-200 rounded-2xl p-4 bg-white">
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              {doc.mimeType.startsWith("image/") ? (
-                <button
-                  onClick={() => setPreviewDoc(doc)}
-                  className="text-sm font-semibold underline decoration-neutral-300 truncate max-w-xs text-left"
-                >
-                  {doc.originalFilename}
-                </button>
-              ) : (
-                <a
-                  href={`${API_URL}/documents/${doc.id}/file`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm font-semibold underline decoration-neutral-300 truncate max-w-xs"
-                >
-                  {doc.originalFilename}
-                </a>
-              )}
+              <div className="flex items-center gap-2 min-w-0">
+                <input
+                  type="checkbox"
+                  checked={daChon.has(doc.id)}
+                  onChange={() => chonMot(doc.id)}
+                  className="h-4 w-4 shrink-0 rounded border-neutral-300"
+                  aria-label={`Chọn ${doc.originalFilename}`}
+                />
+                {doc.mimeType.startsWith("image/") ? (
+                  <button
+                    onClick={() => setPreviewDoc(doc)}
+                    className="text-sm font-semibold underline decoration-neutral-300 truncate max-w-xs text-left"
+                  >
+                    {doc.originalFilename}
+                  </button>
+                ) : (
+                  <a
+                    href={`${API_URL}/documents/${doc.id}/file`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm font-semibold underline decoration-neutral-300 truncate max-w-xs"
+                  >
+                    {doc.originalFilename}
+                  </a>
+                )}
+                {pageCount != null && (
+                  <span className="text-xs font-medium text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-full whitespace-nowrap">
+                    {pageCount} trang
+                  </span>
+                )}
+              </div>
               <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLOR[doc.status]}`}>
                 {STATUS_LABEL[doc.status]}
               </span>
@@ -209,21 +315,33 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                 )}
                 {analyzingId === doc.id || isProcessing
                   ? doc.status === "CLASSIFYING"
-                    ? "Đang phân loại AI..."
+                    ? "Đang xếp mục..."
                     : doc.status === "OCR_RUNNING"
-                      ? "Đang đọc tài liệu..."
+                      ? analyzingId === doc.id && analyzingEngine === "paddle"
+                        ? "Đang đọc lại kỹ hơn..."
+                        : "Đang đọc tài liệu..."
                       : "Đang bắt đầu..."
                   : doc.status === "ERROR"
                     ? "Thử lại"
                     : "Phân tích lại"}
               </button>
+              {hasPaddle && (
+                <button
+                  onClick={() => reclassify(doc.id, "paddle")}
+                  disabled={analyzingId === doc.id || isProcessing}
+                  title="Chữ không đọc được hoặc bị mờ thì bấm đây: đọc lại bằng PaddleOCR-VL (chạy trên GPU của máy) rồi phân tích lại"
+                  className="text-xs font-semibold px-3 py-1.5 rounded-full bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors disabled:opacity-50"
+                >
+                  Chữ mờ? Đọc lại
+                </button>
+              )}
               {(analyzingId === doc.id || isProcessing) && (
                 <span className="text-xs text-neutral-400 self-center">
                   {doc.status === "CLASSIFYING"
-                    ? "Bước 2/2 — AI đang phân loại vào đúng mục checklist, sắp xong..."
+                    ? "Bước 2/2 — đang sửa chữ và xếp vào mục checklist theo tên file, sắp xong..."
                     : doc.status === "OCR_RUNNING"
                       ? "Bước 1/2 — đang đọc chữ từ tài liệu, có thể mất khoảng 10–20 giây..."
-                      : "Đang đọc tài liệu + AI phân loại, có thể mất khoảng 30–60 giây, vui lòng chờ một chút..."}
+                      : "Đang đọc tài liệu và xếp mục theo tên file, có thể mất khoảng 30–60 giây, vui lòng chờ một chút..."}
                 </span>
               )}
               <button
@@ -297,11 +415,13 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                 </div>
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-neutral-400 mb-1.5">
-                    3. Kết quả phân loại AI
+                    3. Kết quả phân loại
                   </p>
+                  {/* Nhãn trung tính, không ghi "AI": mục có thể do quy tắc tên file xếp
+                      (backend/filename_rules.py) chứ không phải AI — nguồn thật ghi ở "Lý do". */}
                   <div className="text-xs bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex flex-col gap-1">
                     <p>
-                      <span className="font-semibold">Mục AI chọn:</span>{" "}
+                      <span className="font-semibold">Mục được chọn:</span>{" "}
                       {doc.aiRawLabel === "unmatched" || !doc.aiRawLabel
                         ? "Không khớp mục nào"
                         : (applicableItems.find((i) => i.id === doc.aiRawLabel)?.nameVi ?? doc.aiRawLabel)}
@@ -314,7 +434,7 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                     )}
                     {doc.aiReasoning && (
                       <p>
-                        <span className="font-semibold">Lý do AI đưa ra:</span> {doc.aiReasoning}
+                        <span className="font-semibold">Lý do:</span> {doc.aiReasoning}
                       </p>
                     )}
                   </div>

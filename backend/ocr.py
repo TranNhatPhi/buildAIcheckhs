@@ -33,7 +33,7 @@ import os
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 
 import cv2
 import fitz  # PyMuPDF
@@ -43,6 +43,7 @@ from pytesseract import Output
 from PIL import Image, ImageDraw, ImageFont
 
 import llm
+import paddle_ocr_vl
 import storage
 
 logger = logging.getLogger("ocr")
@@ -84,19 +85,36 @@ TESSERACT_TIMEOUT_SECONDS = int(os.getenv("TESSERACT_TIMEOUT_SECONDS", "90"))
 #     không có gì xếp hàng lại;
 #   - khi Gemini hết hạn mức (429), CẢ 4 file cùng rơi xuống Tesseract, mỗi trang lại chạy
 #     5 biến thể (_preprocess_variants);
-#   - production còn chạy 2 replica backend (backend + backend2) trên cùng 1 VM nhỏ.
+#   - backend chạy NHIỀU REPLICA sau load balancer trên cùng 1 máy (production 2, dev 3).
 # Tesseract là việc NGỐN CPU THẬT (khác hẳn phần gọi Gemini vốn chỉ chờ mạng — xem chỗ chạy
 # song song trong extract_text). Nhồi hàng chục tiến trình Tesseract vào vài vCPU không làm
 # xong nhanh hơn, chỉ khiến MỌI lần gọi đều chậm đến mức chạm timeout rồi hỏng cả loạt.
 # Xếp hàng lại thì mỗi lần gọi chạy gần đúng tốc độ thật của nó, tổng thời gian NGẮN HƠN.
 #
-# Chia đôi số nhân vì 2 replica backend dùng chung host và mỗi container đều thấy đủ số CPU
-# của host (cgroup không giới hạn CPU trong compose hiện tại) — không chia thì tổng số tiến
-# trình Tesseract chạy cùng lúc sẽ gấp đôi số nhân, đúng lại cái bẫy vừa nói.
+# Chia cho SỐ REPLICA backend dùng chung host: mỗi container đều thấy đủ số CPU của host
+# (cgroup không giới hạn CPU trong compose hiện tại) — không chia thì tổng số tiến trình
+# Tesseract chạy cùng lúc bằng số replica NHÂN số nhân, đúng lại cái bẫy vừa nói.
+#
+# Trước đây chia cứng cho 2 vì production có đúng 2 replica. Phải khai ra thành biến vì thêm
+# replica mà quên chỗ này là âm thầm phá vỡ giới hạn: 3 replica trên máy 72 nhân sẽ thành 108
+# tiến trình Tesseract tranh nhau 72 nhân. Đặt BACKEND_REPLICAS đúng bằng số backend trong
+# compose (xem docker-compose.yml), hoặc khai thẳng TESSERACT_MAX_WORKERS để chốt cứng.
+BACKEND_REPLICAS = max(1, int(os.getenv("BACKEND_REPLICAS", "2") or 2))
 TESSERACT_MAX_WORKERS = int(os.getenv("TESSERACT_MAX_WORKERS", "0") or 0) or max(
-    1, (os.cpu_count() or 2) // 2
+    1, (os.cpu_count() or 2) // BACKEND_REPLICAS
 )
 _tesseract_slots = threading.BoundedSemaphore(TESSERACT_MAX_WORKERS)
+
+# Mỗi tiến trình Tesseract mặc định tự bung OpenMP ra NHIỀU luồng. Chạy 1 tiến trình thì có
+# lợi, nhưng app này luôn chạy NHIỀU tiến trình cùng lúc (các trang + các biến thể song song,
+# cộng nhiều file upload một lượt) — khi đó các luồng OpenMP của mỗi tiến trình giành CPU của
+# nhau. Đo trên máy dev 72 luồng, kết quả OCR y hệt nhau giữa 2 cách:
+#   3 PDF x 8 trang cùng lúc: mặc định 47.5s -> OMP_THREAD_LIMIT=1 39.4s
+#   6 ảnh cùng lúc:           mặc định  8.8s -> OMP_THREAD_LIMIT=1  7.0s
+#   1 ảnh ĐƠN LẺ:             mặc định  2.3s -> OMP_THREAD_LIMIT=1  3.3s (chỉ ca này chậm hơn)
+# setdefault: ai đặt sẵn biến này trong môi trường thì vẫn theo người đó. Đặt lúc import là đủ
+# vì chỉ tiến trình CON (tesseract) đọc biến này, lúc nó được sinh ra.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 # Trần thời gian cho TOÀN BỘ 1 trang ở đường Tesseract (chạy nhiều biến thể, xem
 # _ocr_single_image_lines_best_of). Riêng TESSERACT_TIMEOUT_SECONDS chỉ chặn TỪNG lần gọi,
@@ -346,9 +364,11 @@ def _preprocess_variants(pil_img: Image.Image) -> dict[str, Image.Image]:
 
     # denoise_only: khử nhiễu nhưng KHÔNG CLAHE — nằm giữa "default" và "plain", hợp với ảnh
     # vừa có nhiễu hạt (scan cũ) vừa có nền hoa văn không chịu được CLAHE.
-    variants["denoise_only"] = _to_rgb_image(
-        cv2.fastNlMeansDenoising(gray, h=7, templateWindowSize=7, searchWindowSize=21)
-    )
+    # Dùng lại `denoised` ở trên thay vì khử nhiễu lần 2: cùng hàm, cùng tham số, cùng ảnh ->
+    # kết quả y hệt. Trước đây gọi lại lần nữa — fastNlMeansDenoising là bước NẶNG NHẤT của cả
+    # phần tiền xử lý (đo: 0.93s/lần với 72 luồng, ~6.5s/lần khi 1 luồng; mọi bước khác cộng
+    # lại chưa tới 0.4s), nên lần gọi thừa này chiếm gần nửa thời gian tiền xử lý mỗi trang.
+    variants["denoise_only"] = _to_rgb_image(denoised)
 
     # dropout: KHÔNG dùng `gray` chung ở trên — tự chuyển ảnh 1 kênh theo kiểu khử màu, dành
     # riêng cho giấy in nền hoa văn bảo an màu (chứng nhận kết hôn, giấy khai sinh bản gốc).
@@ -403,51 +423,76 @@ def _ocr_single_image_lines_best_of(img: Image.Image) -> list[OcrLine]:
     có TỔNG SỐ KÝ TỰ đọc được nhiều nhất — coi đọc được nhiều ký tự hơn là tín hiệu tốt
     (đọc thiếu vùng nào đó khiến số ký tự giảm hẳn, như đã gặp thật với vùng chữ to đậm bị
     bỏ sót — xem ghi chú PSM ở đầu file). Chỉ dùng cho "Phân tích lại" (chậm hơn ~4 lần vì
-    chạy Tesseract nhiều lần), KHÔNG dùng cho lần OCR đầu lúc upload (ưu tiên tốc độ).
+    chạy Tesseract nhiều lần). Dùng cho PDF lúc upload và cho "Phân tích lại".
 
-    MỘT biến thể hỏng/quá giờ KHÔNG làm hỏng cả trang: 4 biến thể còn lại vẫn đọc ra chữ
+    Các biến thể chạy SONG SONG chứ không nối đuôi: số tiến trình Tesseract chạy thật đã bị
+    chặn chung bằng _tesseract_slots, nên đẩy cả 5 biến thể một lúc không làm quá tải máy,
+    chỉ để chúng xếp hàng vào đúng số slot còn trống. Đo trên máy dev 72 luồng với PDF 8 trang
+    giấy tờ thật: nối đuôi 116.8s, song song (cùng song song hoá các trang ở extract_text) —
+    xem số đo ở ghi chú TESSERACT_PARALLEL trong extract_text.
+
+    MỘT biến thể hỏng/quá giờ KHÔNG làm hỏng cả trang: các biến thể còn lại vẫn đọc ra chữ
     thật, mà trước đây lỗi đầu tiên văng thẳng lên trên khiến CẢ TÀI LIỆU về ERROR với 0 ký
     tự — đúng kịch bản đã xảy ra thật trên production. Chỉ báo lỗi khi KHÔNG biến thể nào
     chạy nổi. Cả trang cũng có trần thời gian chung (TESSERACT_PAGE_BUDGET_SECONDS)."""
     variants = _preprocess_variants(img)
-    best_lines: list[OcrLine] = []
-    best_len = -1
-    best_name = "?"
     deadline = time.monotonic() + TESSERACT_PAGE_BUDGET_SECONDS
-    ran = 0
+
+    def run(item):
+        name, processed = item
+        # Chặn theo CẢ HAI: trần của từng lần gọi, và phần ngân sách trang còn lại. Tối thiểu
+        # 10s để biến thể nào cũng có cơ hội chạy xong thay vì bị cắt ngay khi vừa bắt đầu.
+        remaining = max(10, int(deadline - time.monotonic()))
+        return name, _lines_from_preprocessed(
+            processed, timeout=min(TESSERACT_TIMEOUT_SECONDS, remaining)
+        )
+
+    results: list[tuple[str, list[OcrLine]]] = []
     last_error: Exception | None = None
 
-    for name, processed in variants.items():
-        remaining = int(deadline - time.monotonic())
-        # Còn quá ít thời gian thì đừng bắt đầu: chạy dở rồi bị cắt vừa mất công vừa không
-        # ra kết quả nào dùng được.
-        if ran and remaining < 10:
+    def collect(finished) -> None:
+        nonlocal last_error
+        for fut in finished:
+            try:
+                results.append(fut.result())
+            except ValueError as e:
+                last_error = e
+                logger.warning("Một biến thể không đọc được (%s) — dùng các biến thể khác.", e)
+
+    pool = ThreadPoolExecutor(max_workers=len(variants))
+    try:
+        futures = [pool.submit(run, item) for item in variants.items()]
+        done, pending = wait(futures, timeout=max(0.0, deadline - time.monotonic()))
+        collect(done)
+        # Hết ngân sách mà CHƯA có biến thể nào xong (máy đang quá tải, cả 5 còn xếp hàng chờ
+        # slot) thì vẫn chờ tới khi có một cái xong — bản nối đuôi cũ luôn chạy trọn ít nhất
+        # một biến thể, không được đổi thành "trả về trang rỗng" chỉ vì chuyển sang song song.
+        while not results and pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            collect(done)
+        if pending:
             logger.warning(
-                "Hết ngân sách %ds cho 1 trang — bỏ qua biến thể còn lại (đã chạy %d/%d).",
-                TESSERACT_PAGE_BUDGET_SECONDS, ran, len(variants),
+                "Hết ngân sách %ds cho 1 trang — dùng %d/%d biến thể đã xong, bỏ phần còn lại.",
+                TESSERACT_PAGE_BUDGET_SECONDS, len(results), len(variants),
             )
-            break
+    finally:
+        # Không chờ biến thể bị bỏ: chúng tự dừng theo timeout riêng của từng lần gọi Tesseract.
+        pool.shutdown(wait=False, cancel_futures=True)
 
-        try:
-            # Chặn theo CẢ HAI: trần của từng lần gọi, và phần ngân sách trang còn lại —
-            # biến thể sau cùng không được phép tiêu quá chỗ thời gian còn thừa.
-            lines = _lines_from_preprocessed(
-                processed, timeout=min(TESSERACT_TIMEOUT_SECONDS, remaining)
-            )
-        except ValueError as e:
-            last_error = e
-            logger.warning("Biến thể '%s' không đọc được (%s) — thử biến thể tiếp theo.",
-                           name, e)
-            continue
-
-        ran += 1
-        total_len = sum(len(l.text) for l in lines)
-        if total_len > best_len:
-            best_len, best_lines, best_name = total_len, lines, name
-
-    if not ran:
+    if not results:
         # Không biến thể nào chạy nổi — giờ mới thật sự là lỗi của trang này.
         raise last_error or ValueError("Không đọc được nội dung trang tài liệu.")
+
+    # Hoà số ký tự thì lấy biến thể ĐỨNG TRƯỚC trong _preprocess_variants — đúng như bản chạy
+    # nối đuôi cũ (so `>` nên giữ cái gặp trước). Không có khoá phụ này thì max() chọn theo
+    # thứ tự CHẠY XONG, vốn đổi mỗi lần: đã bắt được thật — cùng 1 PDF chạy 2 lần ra 2 văn
+    # bản khác nhau (cùng 7196 ký tự, khác nội dung).
+    order = {name: i for i, name in enumerate(variants)}
+    best_name, best_lines = max(
+        results, key=lambda r: (sum(len(l.text) for l in r[1]), -order[r[0]])
+    )
+    best_len = sum(len(l.text) for l in best_lines)
+    ran = len(results)
 
     logger.info(
         "Best-of preprocessing: chọn '%s' (%d ký tự) trong %d/%d phương án chạy được.",
@@ -797,14 +842,16 @@ def gemini_ocr_page(
     page_img: Image.Image, page_no: int = 1, prefer_lite: bool = False
 ) -> str | None:
     """Đọc chữ 1 trang bằng Gemini Vision. Trả None khi KHÔNG dùng được (hết hạn mức mọi
-    model x mọi key, hoặc lỗi ảnh) — nơi gọi tự chuyển sang Tesseract.
+    model x mọi key, hoặc lỗi ảnh) — nơi gọi tự chuyển sang nguồn kế tiếp (PaddleOCR-VL nếu
+    có bật, rồi Tesseract).
 
     KHÔNG trả toạ độ dòng như Tesseract (Gemini chỉ trả text thuần), nên đường này không
     vẽ được khung debug ở /ocr/test — đó là lý do extract_text có tham số use_gemini.
 
     Dùng chung pool + logic xoay vòng key với các bước LLM khác (llm.try_gemini): mỗi lần
     gọi xáo ngẫu nhiên thứ tự key, duyệt hết model này tới model khác. Không có nhánh
-    DeepSeek vì DeepSeek không đọc được ảnh — dự phòng ở đây là Tesseract chạy tại chỗ."""
+    DeepSeek vì DeepSeek không đọc được ảnh — dự phòng ở đây là PaddleOCR-VL / Tesseract chạy
+    tại chỗ."""
     try:
         img = page_img.convert("RGB")
         if max(img.size) > GEMINI_OCR_MAX_DIM:
@@ -832,8 +879,31 @@ def gemini_ocr_page(
         ],
     )
     if text is None:
-        logger.info("OCR trang %d: hết lượt Gemini — chuyển sang Tesseract.", page_no)
+        logger.info("OCR trang %d: hết lượt Gemini — chuyển sang nguồn kế tiếp.", page_no)
     return text
+
+
+def _fill_missing_pages(texts, pages, source_name, read_page, concurrency) -> None:
+    """Đọc SONG SONG bằng 1 nguồn AI những trang còn trống trong `texts` (ghi đè tại chỗ).
+
+    Song song là chỗ tiết kiệm lớn nhất: đo thật trên file 2 trang, OCR bằng Gemini trang 1
+    mất 11-22s còn trang 2 mất 48-72s — chạy nối đuôi là 60-95s, chạy song song chỉ còn bằng
+    trang chậm nhất. File 7 trang thì chênh lệch gấp bội. Thời gian ở đây gần như toàn bộ là
+    CHỜ phía nguồn AI xử lý, không phải CPU của tiến trình này, nên thread là đúng công cụ —
+    GIL không cản."""
+    todo = [i for i, t in enumerate(texts) if t is None]
+    if not todo:
+        return
+    with ThreadPoolExecutor(max_workers=max(1, min(concurrency, len(todo)))) as pool:
+        futures = {pool.submit(read_page, pages[i], i + 1): i for i in todo}
+        for fut in as_completed(futures):
+            i = futures[fut]
+            try:
+                texts[i] = fut.result()
+            except Exception as e:  # noqa: BLE001
+                # Không để 1 trang lỗi làm hỏng cả file — trang đó tự rơi xuống nguồn sau.
+                logger.warning("OCR trang %d lỗi ở %s (%s) — chuyển sang nguồn kế tiếp.",
+                               i + 1, source_name, type(e).__name__)
 
 
 def extract_text(
@@ -842,6 +912,7 @@ def extract_text(
     mime_type: str,
     try_harder: bool = False,
     use_gemini: bool = True,
+    ocr_engine: str | None = None,
 ) -> tuple[str, int, list[OcrLine], list[Image.Image]]:
     """Trả về (text, pageCount, lines, pages). `lines` giữ toạ độ từng dòng (dùng cho vẽ
     khung debug ở /ocr/test — không còn dùng cho prompt LLM, xem ghi chú ở
@@ -849,13 +920,23 @@ def extract_text(
     (non-PDF) — trả ra để nơi gọi lưu lại vào MinIO nếu cần (vd PDF nhiều trang), tránh
     phải render PDF lại lần 2 chỉ để lấy ảnh.
 
-    Thứ tự đọc chữ TỪNG TRANG: GEMINI VISION trước, hết hạn mức free mới về TESSERACT chạy
-    tại chỗ (xem gemini_ocr_page). Fallback tính theo TỪNG TRANG, không phải cả file — 1
-    trang lỗi/hết suất chỉ trang đó dùng Tesseract, các trang khác vẫn được Gemini đọc.
+    Thứ tự đọc chữ TỪNG TRANG: GEMINI VISION trước, hết hạn mức free thì PADDLEOCR-VL chạy
+    trên GPU của máy (chỉ khi có khai PADDLE_OCR_VL_URL — xem paddle_ocr_vl.py; đặt
+    PADDLE_OCR_VL_FIRST=1 để nó đứng trước Gemini), cuối cùng mới về TESSERACT. Fallback tính
+    theo TỪNG TRANG, không phải cả file — 1 trang lỗi/hết suất chỉ trang đó rơi xuống nguồn
+    sau, các trang khác vẫn giữ kết quả của nguồn trước.
 
-    `use_gemini=False`: bỏ hẳn Gemini, chỉ chạy Tesseract. Dùng cho trang debug /ocr/test —
-    nơi đó cần chính TOẠ ĐỘ từng dòng do Tesseract dò ra để vẽ khung, mà Gemini không trả
-    toạ độ (xem gemini_ocr_page), nên đi đường Gemini sẽ làm công cụ debug đó vô dụng.
+    `ocr_engine="paddle"`: BẮT BUỘC đọc bằng PaddleOCR-VL, bỏ hẳn Gemini. Dùng cho nút "Đọc
+    lại bằng PaddleOCR-VL" — nhân viên bấm nút đó vì bản đọc tự động sai, nên phải đúng nguồn
+    họ chọn chứ không phải nguồn nào rảnh trước. Không chỉ là đảo thứ tự: nguồn đứng trước đọc
+    xong thì nguồn sau KHÔNG còn trang nào để đọc (xem _fill_missing_pages), nên để Gemini ở
+    lại là nút bấm không có tác dụng gì. Tesseract vẫn giữ làm lưới cuối cho trang PaddleOCR-VL
+    đọc không nổi — mất chữ hẳn còn tệ hơn đọc bằng nguồn kém.
+
+    `use_gemini=False`: bỏ hẳn các nguồn AI (Gemini lẫn PaddleOCR-VL), chỉ chạy Tesseract.
+    Dùng cho trang debug /ocr/test — nơi đó cần chính TOẠ ĐỘ từng dòng do Tesseract dò ra để
+    vẽ khung, mà các nguồn AI không trả toạ độ (xem gemini_ocr_page), nên đi đường AI sẽ làm
+    công cụ debug đó vô dụng.
 
     `try_harder=True`: mỗi trang chạy Tesseract với NHIỀU cách tiền xử lý khác nhau
     (_preprocess_variants), giữ lại kết quả đọc được nhiều ký tự nhất — chậm hơn hẳn (~5
@@ -878,9 +959,15 @@ def extract_text(
     if not pages:
         return "", 0, [], []
 
-    want_gemini = use_gemini and GEMINI_OCR_ENABLED
+    force_paddle = ocr_engine == "paddle"
+    want_gemini = use_gemini and GEMINI_OCR_ENABLED and not force_paddle
+    # Chung công tắc với Gemini: /ocr/test (use_gemini=False) cần TOẠ ĐỘ từng dòng của
+    # Tesseract để vẽ khung, mà PaddleOCR-VL cũng không trả toạ độ dòng.
+    want_paddle = force_paddle or (
+        use_gemini and paddle_ocr_vl.is_enabled() and not paddle_ocr_vl.PADDLE_OCR_VL_MANUAL_ONLY
+    )
 
-    # Khi Gemini đang lo lần đọc đầu, Tesseract chỉ còn là PHƯƠNG ÁN CUỐI — lúc đó ưu tiên
+    # Khi đã có nguồn AI lo lần đọc đầu, Tesseract chỉ còn là PHƯƠNG ÁN CUỐI — lúc đó ưu tiên
     # đọc được nhiều nhất chứ không phải nhanh, nên luôn dùng best-of bất kể `try_harder`.
     # Đây là chỗ ĐÃ TỪNG hổng thật: nơi gọi lúc upload truyền try_harder=is_pdf
     # (case_documents.py), tức ẢNH jpg/png chỉ chạy 1 biến thể — đo trên giấy khai sinh nền
@@ -889,7 +976,7 @@ def extract_text(
     # cùng nên đọc hỏng ở đây là mất hẳn nội dung.
     ocr_page = (
         _ocr_single_image_lines_best_of
-        if (want_gemini or try_harder)
+        if (want_gemini or want_paddle or try_harder)
         else _ocr_single_image_lines
     )
 
@@ -898,44 +985,63 @@ def extract_text(
     # lite nửa kia bằng bản thường chỉ làm kết quả khó lý giải khi soát lại.
     prefer_lite = len(pages) <= GEMINI_LITE_MAX_PAGES
 
-    # Gọi Gemini cho các trang SONG SONG. Đây là chỗ tiết kiệm lớn nhất còn lại: đo thật trên
-    # file 2 trang, OCR trang 1 mất 11-22s còn trang 2 mất 48-72s — chạy nối đuôi là 60-95s,
-    # chạy song song chỉ còn bằng trang chậm nhất. File 7 trang thì chênh lệch gấp bội.
-    # Thời gian ở đây gần như toàn bộ là CHỜ MẠNG (Gemini xử lý), không phải CPU của mình,
-    # nên thread là đúng công cụ — GIL không cản.
-    #
-    # Giới hạn số luồng: gọi ồ ạt sẽ chạm hạn mức RPM nhanh hơn, mà chạm rồi thì phần thắng
-    # được lại mất vào việc dò key/model khác. 4 là điểm cân bằng, chỉnh được qua .env.
-    gemini_texts: list[str | None] = [None] * len(pages)
-    if want_gemini and pages:
-        with ThreadPoolExecutor(max_workers=min(OCR_PAGE_CONCURRENCY, len(pages))) as pool:
-            futures = {
-                pool.submit(gemini_ocr_page, img, i + 1, prefer_lite): i
-                for i, img in enumerate(pages)
-            }
-            for fut in as_completed(futures):
-                i = futures[fut]
-                try:
-                    gemini_texts[i] = fut.result()
-                except Exception as e:  # noqa: BLE001
-                    # Không để 1 trang lỗi làm hỏng cả file — trang đó tự rơi về Tesseract.
-                    logger.warning("OCR trang %d lỗi (%s) — dùng Tesseract cho trang này.",
-                                   i + 1, type(e).__name__)
+    # Các nguồn AI theo THỨ TỰ ƯU TIÊN; nguồn sau chỉ đọc những trang nguồn trước bỏ trống.
+    # Mặc định Gemini trước, PaddleOCR-VL sau — xem docstring paddle_ocr_vl.py vì sao.
+    # Giới hạn luồng Gemini: gọi ồ ạt sẽ chạm hạn mức RPM nhanh hơn, mà chạm rồi thì phần
+    # thắng được lại mất vào việc dò key/model khác. 4 là điểm cân bằng, chỉnh được qua .env.
+    sources = []
+    if want_gemini:
+        sources.append(("Gemini", lambda img, n: gemini_ocr_page(img, n, prefer_lite),
+                        OCR_PAGE_CONCURRENCY))
+    if want_paddle:
+        paddle = ("PaddleOCR-VL", paddle_ocr_vl.ocr_page, paddle_ocr_vl.PAGE_CONCURRENCY)
+        if paddle_ocr_vl.PADDLE_OCR_VL_FIRST or force_paddle:
+            sources.insert(0, paddle)
+        else:
+            sources.append(paddle)
 
-    # Trang nào Gemini không đọc được thì đọc bằng Tesseract. CỐ Ý chạy TUẦN TỰ ở đây (khác
-    # phần trên): Tesseract ngốn CPU thật, chạy song song nhiều trang sẽ giành CPU với các
-    # request khác đang xử lý trên cùng VM.
+    ai_texts: list[str | None] = [None] * len(pages)
+    for name, read_page, concurrency in sources:
+        _fill_missing_pages(ai_texts, pages, name, read_page, concurrency)
+
+    # Trang nào các nguồn AI không đọc được thì đọc bằng Tesseract — các trang chạy SONG SONG.
+    #
+    # TESSERACT_PARALLEL: trước đây CỐ Ý chạy tuần tự vì sợ nhiều trang giành CPU với request
+    # khác trên VM. Nỗi lo đó giờ đã do _tesseract_slots lo (chặn TỔNG số tiến trình Tesseract
+    # của cả backend), nên song song ở đây chỉ để các trang xếp hàng vào slot trống chứ không
+    # làm quá tải máy. Số trang đọc cùng lúc cũng chặn bằng TESSERACT_MAX_WORKERS, để PDF vài
+    # chục trang không bung hàng trăm ảnh biến thể vào bộ nhớ một lúc.
+    #
+    # Đo trên máy dev 72 luồng, PDF 8 trang giấy tờ thật (đọc kỹ 5 biến thể/trang), văn bản ra
+    # GIỐNG HỆT nhau (cùng md5) giữa các cách:
+    #   trang + biến thể nối đuôi, khử nhiễu 2 lần/trang (bản cũ)   116.8s
+    #   bỏ lần khử nhiễu thừa, vẫn nối đuôi                          85.8s
+    #   bỏ khử nhiễu thừa + trang và biến thể song song              ~20s
+    tesseract_results: dict[int, list[OcrLine] | ValueError] = {}
+    todo = [i for i, t in enumerate(ai_texts) if t is None]
+    if todo:
+        with ThreadPoolExecutor(max_workers=max(1, min(len(todo), TESSERACT_MAX_WORKERS))) as pool:
+            futures = {pool.submit(ocr_page, pages[i]): i for i in todo}
+            for fut in as_completed(futures):
+                try:
+                    tesseract_results[futures[fut]] = fut.result()
+                except ValueError as e:
+                    tesseract_results[futures[fut]] = e
+
     page_texts = []
     all_lines: list[OcrLine] = []
     read_ok = 0
     last_error: Exception | None = None
-    for i, page_img in enumerate(pages):
-        text = gemini_texts[i]
+    for i in range(len(pages)):
+        text = ai_texts[i]
         if text is None:
             try:
-                page_lines = ocr_page(page_img)
+                result = tesseract_results[i]
+                if isinstance(result, ValueError):
+                    raise result
+                page_lines = result
             except ValueError as e:
-                # 1 trang hỏng KHÔNG được làm mất luôn các trang đọc tốt — đường Gemini phía
+                # 1 trang hỏng KHÔNG được làm mất luôn các trang đọc tốt — đường AI phía
                 # trên đã theo nguyên tắc này từ đầu, đường Tesseract thì chưa: file 5 trang
                 # mà trang 3 quá giờ là cả tài liệu về ERROR với 0 ký tự (sự cố thật). Ghi
                 # thẳng chỗ hỏng vào văn bản để người soát biết trang nào thiếu mà mở file

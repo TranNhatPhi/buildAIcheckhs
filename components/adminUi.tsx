@@ -40,6 +40,44 @@ export const STATUS_COLOR: Record<DocumentDTO["status"], string> = {
   ERROR: EL.danger,
 };
 
+// Nút bật/tắt "Nhóm theo nguồn" — dùng chung cho bảng hồ sơ ở trang Tổng quan và trang Thống kê.
+export function NutNhomTheoNguon({ bat, onToggle }: { bat: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={bat}
+      className="inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-xs font-semibold transition-colors"
+      style={
+        bat
+          ? { backgroundColor: EL.primary, borderColor: EL.primary, color: "white" }
+          : { borderColor: "#dcdfe6", color: "#606266" }
+      }
+      title={bat ? "Bỏ nhóm, xem danh sách liền" : "Chia bảng thành từng nhóm theo nguồn"}
+    >
+      <span aria-hidden>▤</span>
+      {bat ? "Đang nhóm theo nguồn ✕" : "Nhóm theo nguồn"}
+    </button>
+  );
+}
+
+// Dòng tiêu đề của một nhóm nguồn trong bảng (tên nguồn + số hồ sơ).
+export function DongTieuDeNhom({ ten, soHoSo, chuaNhap, colSpan }: {
+  ten: string;
+  soHoSo: number;
+  chuaNhap: boolean;
+  colSpan: number;
+}) {
+  return (
+    <tr className="bg-neutral-50">
+      <td colSpan={colSpan} className="px-3 py-2 border-t border-neutral-200">
+        <span className={`text-sm font-semibold ${chuaNhap ? "italic text-neutral-500" : "text-neutral-800"}`}>{ten}</span>
+        <span className="ml-2 text-xs text-neutral-500 tabular-nums">{soHoSo} hồ sơ</span>
+      </td>
+    </tr>
+  );
+}
+
 export function Tag({ color, children }: { color: string; children: React.ReactNode }) {
   return (
     <span
@@ -60,7 +98,7 @@ export function AdminSidebar({
   onNavigate,
   onLogout,
 }: {
-  activeTab?: "overview" | "documents" | "emails";
+  activeTab?: "overview" | "report" | "activity" | "documents" | "emails";
   onNavigate?: () => void;
   onLogout?: () => void;
 }) {
@@ -90,6 +128,22 @@ export function AdminSidebar({
           📊 Tổng quan
         </Link>
         <Link
+          href="/admin/thong-ke"
+          onClick={onNavigate}
+          className="flex items-center gap-2.5 text-sm font-medium px-3.5 py-3 rounded text-left transition-colors"
+          style={activeTab === "report" ? { backgroundColor: EL.primary, color: "white" } : { color: "#bfcbd9" }}
+        >
+          📈 Thống kê hồ sơ
+        </Link>
+        <Link
+          href="/admin/theo-doi"
+          onClick={onNavigate}
+          className="flex items-center gap-2.5 text-sm font-medium px-3.5 py-3 rounded text-left transition-colors"
+          style={activeTab === "activity" ? { backgroundColor: EL.primary, color: "white" } : { color: "#bfcbd9" }}
+        >
+          🕵️ Theo dõi Docs
+        </Link>
+        <Link
           href="/admin?tab=documents"
           onClick={onNavigate}
           className="flex items-center gap-2.5 text-sm font-medium px-3.5 py-3 rounded text-left transition-colors"
@@ -106,6 +160,20 @@ export function AdminSidebar({
           ✉️ Nhật ký email
         </Link>
       </nav>
+      {/* Mở trang checklist mà team Docs dùng hằng ngày. Thẻ <a> thường + tab MỚI chứ không phải
+          Link: đây là rời khỏi khu quản trị, admin thường muốn xem song song rồi quay lại bảng
+          đang lọc dở — mở đè lên tab này là mất chỗ đang xem. */}
+      <a
+        href="/"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mx-3 mb-1 flex items-center gap-2.5 rounded border border-white/20 px-3.5 py-2.5 text-sm font-medium text-white transition-colors hover:border-white/40 hover:bg-white/10"
+        title="Mở trang checklist hồ sơ của team Docs ở tab mới"
+      >
+        <span aria-hidden>🌐</span>
+        <span className="flex-1">Xem trang Docs</span>
+        <span aria-hidden className="text-xs text-neutral-400">↗</span>
+      </a>
       <button
         onClick={handleLogout}
         className="m-3 text-xs font-semibold text-neutral-300 hover:text-white hover:bg-white/10 rounded px-3.5 py-2.5 text-left transition-colors"

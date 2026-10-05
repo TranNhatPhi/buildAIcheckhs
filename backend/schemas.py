@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 import json
+import unicodedata
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -25,13 +26,12 @@ ApplicationStatus = Literal[
     "PENDING",
     "COLLECTING_DOCUMENTS",
     "REVIEWING_DOCUMENTS",
+    "COMPLETED",
     "READY_TO_SUBMIT",
     "SUBMITTED",
-    "UNDER_REVIEW",
-    "ADDITIONAL_DOCUMENTS_REQUIRED",
-    "AWAITING_DECISION",
     "APPROVED",
     "REJECTED",
+    "LIQUIDATED",
 ]
 
 
@@ -46,16 +46,73 @@ def parse_tags(raw: str | None) -> list[str]:
         return []
 
 
+class ExperienceUnit(BaseModel):
+    """Một đơn vị (công ty) xác nhận kinh nghiệm của khách + ngày nhập.
+
+    Ngày KHÔNG do người dùng nhập: máy chủ tự ghi ngày (giờ Việt Nam) lúc bấm "Tạo hồ sơ" / "Lưu"
+    — xem dump_experience_units. confirmedDate gửi lên từ trình duyệt bị bỏ qua.
+
+    Tên field là confirmedDate chứ không phải "date": field trùng tên kiểu `date` làm Pydantic
+    đọc chú thích "date | None" thành chính field đó.
+    """
+
+    name: str = Field(default="", max_length=191)
+    confirmedDate: date | None = None
+
+
+def parse_experience_units(raw: str | None) -> list[dict]:
+    """Cột experienceUnits (JSON text) -> list cho DTO. NULL / rỗng / JSON hỏng -> []."""
+    if not raw:
+        return []
+    try:
+        result = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(result, list):
+        return []
+    return [
+        {"name": str(u.get("name") or ""), "confirmedDate": u.get("confirmedDate") or None}
+        for u in result
+        if isinstance(u, dict) and u.get("name")
+    ]
+
+
+def dump_experience_units(units: list[ExperienceUnit] | None, cu_raw: str | None = None) -> str | None:
+    """List từ request -> JSON để lưu. Bỏ dòng không có tên công ty; không còn dòng nào -> NULL.
+
+    Ngày = hôm nay (giờ VN) cho đơn vị MỚI hoặc vừa đổi tên; đơn vị đã có (cùng tên, không phân
+    biệt hoa/thường) GIỮ ngày cũ. Không giữ thì bấm "Lưu" chỉ để sửa ghi chú cũng làm đổi ngày của
+    mọi đơn vị, ngày mất hết ý nghĩa.
+    """
+    hom_nay = datetime.now(timezone(timedelta(hours=7))).date().isoformat()
+    # NFC: máy Mac hay gửi chữ có dấu dạng tách (ô = o + dấu mũ) — so thẳng là "Công ty" cũ và mới
+    # lệch nhau dù nhìn giống hệt, đơn vị cũ bị coi là mới và mất ngày.
+    ngay_cu = {
+        unicodedata.normalize("NFC", u["name"]).casefold(): u["confirmedDate"]
+        for u in parse_experience_units(cu_raw)
+    }
+    sach = []
+    for u in units or []:
+        ten = " ".join(unicodedata.normalize("NFC", u.name or "").split())
+        if ten:
+            sach.append({"name": ten, "confirmedDate": ngay_cu.get(ten.casefold()) or hom_nay})
+    return json.dumps(sach, ensure_ascii=False) if sach else None
+
+
 class CreateCaseRequest(BaseModel):
     clientName: str = Field(min_length=1, max_length=191)
     maritalStatus: Literal["SINGLE", "MARRIED"]
     numberOfChildren: int = Field(ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] = "LOW_SKILL"
     partner: str | None = Field(default=None, max_length=191)
+    receiverName: str | None = Field(default=None, max_length=191)
+    managerName: str | None = Field(default=None, max_length=191)
+    saleName: str | None = Field(default=None, max_length=191)
     occupation: str | None = Field(default=None, max_length=191)
     # Trần 100 năm: chặn lỗi gõ nhầm (vd nhập 2024 vì tưởng là năm) chứ không phải giới
     # hạn nghiệp vụ thật.
     experienceMonths: int | None = Field(default=None, ge=0, le=1200)
+    experienceUnits: list[ExperienceUnit] | None = Field(default=None, max_length=10)
     notes: str | None = None
 
 
@@ -67,8 +124,12 @@ class UpdateCaseRequest(BaseModel):
     numberOfChildren: int | None = Field(default=None, ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] | None = None
     partner: str | None = Field(default=None, max_length=191)
+    receiverName: str | None = Field(default=None, max_length=191)
+    managerName: str | None = Field(default=None, max_length=191)
+    saleName: str | None = Field(default=None, max_length=191)
     occupation: str | None = Field(default=None, max_length=191)
     experienceMonths: int | None = Field(default=None, ge=0, le=1200)
+    experienceUnits: list[ExperienceUnit] | None = Field(default=None, max_length=10)
     notes: str | None = None
     applicationStatus: ApplicationStatus | None = None
 
@@ -234,9 +295,13 @@ class CaseDTO(BaseModel):
     # Đối tác / nguồn giới thiệu. None = hồ sơ khách tự tìm đến, hoặc hồ sơ tạo trước khi
     # có trường này.
     partner: str | None = None
+    receiverName: str | None = None
+    managerName: str | None = None
+    saleName: str | None = None
     occupation: str | None = None
     # Luôn là SỐ THÁNG; giao diện tự đổi sang "x năm y tháng" khi hiển thị.
     experienceMonths: int | None = None
+    experienceUnits: list[ExperienceUnit] = []
     notes: str | None
     tags: list[str] = []
     createdAt: datetime
@@ -248,9 +313,20 @@ class CaseDTO(BaseModel):
     nextStatusReminderAt: datetime | None
     statusReminderDue: bool
     statusReminderIntervalDays: int = 14
+    submissionRound: int = 1
+    lastDocumentAt: datetime | None = None
+    # Số ngày chưa cập nhật nếu thuộc diện nhắc "7 ngày chưa cập nhật" (thong_bao.ngay_chua_cap_nhat),
+    # None nếu không. Chỉ có ở 2 endpoint danh sách (GET /cases, GET /admin/cases).
+    idleDays: int | None = None
     # None ở các endpoint bình thường (hồ sơ đang hoạt động) — chỉ có giá trị khi trả về từ
     # endpoint danh sách hồ sơ đã xoá mềm (GET /cases/deleted), phục vụ giao diện admin sau.
     deletedAt: datetime | None = None
+    # Mốc nhân viên bấm "Đánh dấu hoàn tất" ở trang admin, và mốc hồ sơ sẽ tự xoá mềm.
+    # None = chưa đánh dấu. Chỉ endpoint admin điền; các endpoint khác để mặc định.
+    completedAt: datetime | None = None
+    autoDeleteAt: datetime | None = None
+    # Lúc file giấy tờ bị xoá sạch sau khi hoàn tất; None = file vẫn còn.
+    filesPurgedAt: datetime | None = None
 
     class Config:
         from_attributes = True

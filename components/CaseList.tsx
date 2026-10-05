@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ResubmitBadge } from "@/components/ResubmitBadge";
 import { useEffect, useMemo, useState } from "react";
 import { CanhCuonHoSo } from "@/components/CanhCuonHoSo";
 import { ChecklistOverview3D } from "@/components/ChecklistOverview3D";
@@ -11,7 +12,8 @@ import {
   APPLICATION_STATUS_HEX_COLOR,
   getApplicationStatus,
 } from "@/lib/application-status";
-import { API_URL, formatExperience } from "@/lib/format";
+import { API_URL, formatExperience, parseUtcDate } from "@/lib/format";
+import { useHydrated } from "@/lib/useHydrated";
 import type { ApplicationStatus, CaseListItemDTO, TagDefinition } from "@/lib/client-types";
 
 /** Ánh xạ tên màu từ API ("red", "yellow"...) sang Tailwind class cụ thể. Đặt ở đây thay vì
@@ -34,7 +36,7 @@ type ChecklistStatusFilter = "ALL" | "NEEDS_REVIEW" | "EXPIRED_DOCS" | "INCOMPLE
 type ApplicationStatusFilter = "ALL" | ApplicationStatus;
 type SkillFilter = "ALL" | "HIGH_SKILL" | "LOW_SKILL";
 type MaritalFilter = "ALL" | "MARRIED" | "SINGLE";
-type SortOption = "NEWEST" | "OLDEST" | "NEEDS_ATTENTION" | "NAME";
+type SortOption = "PERCENT_DESC" | "NEWEST" | "OLDEST" | "NEEDS_ATTENTION" | "NAME";
 
 const VIETNAMESE_COLLATOR = new Intl.Collator("vi", { sensitivity: "base" });
 
@@ -49,15 +51,38 @@ function normalizeSearchText(value: string) {
 
 export function CaseList({ initialCases }: Props) {
   const [cases, setCases] = useState(initialCases);
+  const hydrated = useHydrated();
+  // Hồ sơ "7 ngày chưa cập nhật" (không có file mới mà còn thiếu giấy tờ bắt buộc) — lấy đúng danh
+  // sách của chuông thông báo (backend/thong_bao.py) để thẻ tô vàng khớp với chuông, không tự tính lại.
+  const [chuaCapNhat, setChuaCapNhat] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    fetch(`${API_URL}/notifications`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d?.items) return;
+        setChuaCapNhat(
+          new Map(
+            d.items
+              .filter((x: { kind?: string }) => x.kind === "CHUA_CAP_NHAT")
+              .map((x: { caseId: string; daysIdle: number }) => [x.caseId, x.daysIdle] as [string, number]),
+          ),
+        );
+      })
+      .catch(() => {});
+  }, []);
   const [editingCase, setEditingCase] = useState<CaseListItemDTO | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [hoanTatId, setHoanTatId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [checklistStatusFilter, setChecklistStatusFilter] = useState<ChecklistStatusFilter>("ALL");
   const [applicationStatusFilter, setApplicationStatusFilter] =
     useState<ApplicationStatusFilter>("ALL");
   const [skillFilter, setSkillFilter] = useState<SkillFilter>("ALL");
   const [maritalFilter, setMaritalFilter] = useState<MaritalFilter>("ALL");
-  const [sortOption, setSortOption] = useState<SortOption>("NEWEST");
+  // Mặc định xếp theo TIẾN ĐỘ GIẢM DẦN chứ không phải theo ngày tạo: việc hằng ngày là nhìn
+  // hồ sơ nào sắp xong để đẩy nốt, mà xếp theo ngày tạo thì mấy con số % nhảy lộn xộn
+  // (90, 85, 85, 95, 45...) nên phải dò từng dòng.
+  const [sortOption, setSortOption] = useState<SortOption>("PERCENT_DESC");
   const [tagFilter, setTagFilter] = useState<string>("ALL");
   // "ALL" = mọi hồ sơ; "__NONE__" = hồ sơ chưa gán đối tác (khách tự tìm đến, hoặc hồ sơ
   // tạo trước khi có trường này). Dùng chuỗi riêng chứ không dùng "" vì "" là giá trị
@@ -98,7 +123,7 @@ export function CaseList({ initialCases }: Props) {
     maritalFilter !== "ALL" ||
     tagFilter !== "ALL" ||
     partnerFilter !== "ALL" ||
-    sortOption !== "NEWEST";
+    sortOption !== "PERCENT_DESC";
 
   const visibleCases = useMemo(() => {
     const normalizedQuery = normalizeSearchText(searchQuery.trim());
@@ -138,6 +163,11 @@ export function CaseList({ initialCases }: Props) {
         );
       })
       .sort((a, b) => {
+        if (sortOption === "PERCENT_DESC") {
+          // Cùng % thì xếp theo tên để thứ tự không đổi lung tung mỗi lần tải lại — hiện có
+          // tới 2-3 hồ sơ cùng 85%.
+          return b.percent - a.percent || VIETNAMESE_COLLATOR.compare(a.clientName, b.clientName);
+        }
         if (sortOption === "OLDEST") {
           return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
         }
@@ -181,7 +211,97 @@ export function CaseList({ initialCases }: Props) {
     setSkillFilter("ALL");
     setMaritalFilter("ALL");
     setTagFilter("ALL");
-    setSortOption("NEWEST");
+    setSortOption("PERCENT_DESC");
+  }
+
+  // Phải khớp với CASE_AUTO_DELETE_DAYS ở backend/case_status.py — chỉ dùng cho câu hỏi xác
+  // nhận; ngày xoá THẬT do backend tính và trả về trong autoDeleteAt.
+  const SO_NGAY_TU_XOA = 14;
+
+  // "Cập nhật: 01/10/2026 14:32 · hôm nay" — lần có FILE MỚI gần nhất (cùng mốc với cột "Ngày cập
+  // nhật" trang thống kê và nhắc "7 ngày chưa cập nhật"). Chỉ dựng sau khi hydrate: server chạy giờ
+  // UTC nên tự format sẽ ra giờ lệch 7 tiếng và lệch với lần render ở trình duyệt.
+  function capNhatLuc(c: CaseListItemDTO): string | null {
+    if (!hydrated) return null;
+    const moc = c.lastDocumentAt ?? null;
+    if (!moc) return `Chưa có file nào · tạo ${ngayVN(c.createdAt)}`;
+    const d = parseUtcDate(moc);
+    const gio = d.toLocaleString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+    const homNay = new Date();
+    homNay.setHours(0, 0, 0, 0);
+    const ngayFile = new Date(d);
+    ngayFile.setHours(0, 0, 0, 0);
+    const soNgay = Math.round((homNay.getTime() - ngayFile.getTime()) / 86400000);
+    const tuongDoi = soNgay <= 0 ? "hôm nay" : soNgay === 1 ? "hôm qua" : `${soNgay} ngày trước`;
+    return `Cập nhật: ${gio} · ${tuongDoi}`;
+  }
+
+  function ngayVN(iso: string) {
+    return parseUtcDate(iso).toLocaleDateString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  }
+
+  async function doiHoanTat(c: CaseListItemDTO, bat: boolean) {
+    if (
+      bat &&
+      !confirm(
+        `Đánh dấu hồ sơ "${c.clientName}" đã hoàn tất?\n\n` +
+          `• Tiến độ hiển thị thành 100%\n` +
+          `• Sau ${SO_NGAY_TU_XOA} ngày, hồ sơ bị XOÁ VĨNH VIỄN — cả thông tin khách hàng lẫn toàn bộ file\n` +
+          `• KHÔNG khôi phục được. Tải file về trước nếu còn cần.`
+      )
+    )
+      return;
+    setHoanTatId(c.id);
+    try {
+      const res = await fetch(`${API_URL}/cases/${c.id}/complete`, {
+        method: bat ? "POST" : "DELETE",
+      }).catch(() => null);
+      if (!res || !res.ok) {
+        const chiTiet = res ? await res.json().catch(() => null) : null;
+        alert(chiTiet?.detail ?? "Không đổi được trạng thái hoàn tất — thử lại sau.");
+        return;
+      }
+      const kq = await res.json();
+      // Cập nhật tại chỗ thay vì tải lại cả danh sách: danh sách này giữ sẵn bộ lọc/sắp xếp
+      // người dùng đang đặt, tải lại là nhảy về đầu trang.
+      setCases((prev) =>
+        prev.map((x) =>
+          x.id === c.id
+            ? {
+                ...x,
+                completedAt: kq.completedAt,
+                autoDeleteAt: kq.autoDeleteAt,
+                percent: bat ? 100 : x.percent,
+                // Backend tự đổi trạng thái theo tiến độ (100% -> "Hoàn thành").
+                applicationStatus: kq.applicationStatus ?? x.applicationStatus,
+              }
+            : x
+        )
+      );
+      // Bỏ đánh dấu thì tiến độ phải về SỐ THẬT, mà số đó chỉ backend tính được — hỏi lại
+      // ĐÚNG hồ sơ đó thay vì tải lại cả danh sách, để bộ lọc/sắp xếp đang đặt không bị mất.
+      if (!bat) {
+        const ct = await fetch(`${API_URL}/cases/${c.id}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null);
+        if (ct?.checklist)
+          setCases((prev) =>
+            prev.map((x) => (x.id === c.id ? { ...x, percent: ct.checklist.percent } : x))
+          );
+      }
+    } finally {
+      setHoanTatId(null);
+    }
   }
 
   async function handleDelete(c: CaseListItemDTO) {
@@ -311,6 +431,7 @@ export function CaseList({ initialCases }: Props) {
               onChange={(event) => setSortOption(event.target.value as SortOption)}
               className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2.5 text-sm text-neutral-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
             >
+              <option value="PERCENT_DESC">Tiến độ cao → thấp</option>
               <option value="NEWEST">Mới tạo gần đây</option>
               <option value="OLDEST">Tạo lâu nhất</option>
               <option value="NEEDS_ATTENTION">Cần xử lý trước</option>
@@ -398,7 +519,13 @@ export function CaseList({ initialCases }: Props) {
                 ? "border-green-300 bg-green-50 hover:border-green-400"
                 : c.applicationStatus === "REJECTED"
                   ? "border-red-300 bg-red-50 hover:border-red-400"
-                  : "border-neutral-200 bg-white hover:border-indigo-300";
+                  : c.applicationStatus === "LIQUIDATED"
+                    ? "border-slate-300 bg-slate-100 hover:border-slate-400"
+                    : chuaCapNhat.has(c.id)
+                      // Vàng tươi kiểu bút dạ quang — cùng màu khung nhắc cũ trong trang hồ sơ, nay
+                      // đưa ra ngoài danh sách để lướt là thấy hồ sơ nào đang bị bỏ quên.
+                      ? "border-yellow-400 bg-[#FFFF00] hover:border-yellow-500"
+                      : "border-neutral-200 bg-white hover:border-indigo-300";
             return (
               <li key={c.id}>
                 <div
@@ -420,6 +547,7 @@ export function CaseList({ initialCases }: Props) {
                         <span className="font-semibold text-neutral-800 truncate">
                           {c.clientName}
                         </span>
+                        <ResubmitBadge round={c.submissionRound} />
                         {c.partner && (
                           <span className="shrink-0 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800">
                             🏢 {c.partner}
@@ -436,12 +564,32 @@ export function CaseList({ initialCases }: Props) {
                           ? ` · ${formatExperience(c.experienceMonths)}`
                           : ""}
                       </p>
+                      {/* Tên công ty xác nhận kinh nghiệm — nhiều đơn vị thì cách nhau dấu phẩy. Ngày nhập
+                          từng đơn vị xem ở trang hồ sơ. Chưa nhập thì không hiện dòng này. */}
+                      {c.experienceUnits?.length > 0 && (
+                        <p className="mt-0.5 text-xs text-neutral-700">
+                          <span aria-hidden>💼 </span>
+                          <span className="text-neutral-500">Đơn vị XNKN:</span>{" "}
+                          <span className="font-medium">{c.experienceUnits.map((u) => u.name).join(", ")}</span>
+                        </p>
+                      )}
+                      {capNhatLuc(c) && (
+                        <p className="mt-0.5 text-xs text-neutral-500">
+                          <span aria-hidden>🕒 </span>
+                          {capNhatLuc(c)}
+                        </p>
+                      )}
                       <p className="mt-1.5 flex flex-wrap gap-1.5">
                         <span
                           className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${APPLICATION_STATUS_BADGE_CLASS[c.applicationStatus]}`}
                         >
                           {applicationStatus.label}
                         </span>
+                        {chuaCapNhat.has(c.id) && (
+                          <span className="rounded-full border border-black/20 bg-white px-2 py-0.5 text-[11px] font-semibold text-black">
+                            ⏰ {chuaCapNhat.get(c.id)} ngày chưa cập nhật
+                          </span>
+                        )}
                         {c.statusReminderDue && (
                           <span className="rounded-full border border-rose-200 bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800">
                             Đã đến hạn nhắc admin
@@ -508,6 +656,33 @@ export function CaseList({ initialCases }: Props) {
                     >
                       Sửa
                     </button>
+                    {c.completedAt ? (
+                      <button
+                        onClick={() => doiHoanTat(c, false)}
+                        disabled={hoanTatId === c.id}
+                        title={
+                          c.autoDeleteAt
+                            ? `Hồ sơ sẽ bị xoá vĩnh viễn ngày ${ngayVN(c.autoDeleteAt)} — bấm để huỷ`
+                            : "Bấm để bỏ đánh dấu hoàn tất"
+                        }
+                        className="text-xs font-semibold px-3 py-1.5 rounded-full bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-50 transition-colors"
+                      >
+                        {hoanTatId === c.id
+                          ? "Đang lưu..."
+                          : c.autoDeleteAt
+                            ? `✓ Xoá ${ngayVN(c.autoDeleteAt)}`
+                            : "✓ Hoàn tất"}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => doiHoanTat(c, true)}
+                        disabled={hoanTatId === c.id}
+                        title={`Đặt tiến độ thành 100% và hẹn XOÁ VĨNH VIỄN hồ sơ sau ${SO_NGAY_TU_XOA} ngày`}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-full bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-50 transition-colors"
+                      >
+                        {hoanTatId === c.id ? "Đang lưu..." : "Hoàn tất"}
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(c)}
                       disabled={deletingId === c.id}

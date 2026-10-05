@@ -402,6 +402,18 @@ def try_gemini(
                 logger.warning("%s: Gemini %s lỗi phía model (mã %s) — nghỉ %ds, sang model kế tiếp.",
                                step, model, e.status_code, wait)
                 break
+            except APITimeoutError:
+                # Quá giờ cũng là chuyện của MODEL (quá tải), xử lý như 5xx ở trên. Trước đây
+                # rơi vào nhánh chung bên dưới -> thử KEY KHÁC của cùng model đang nghẹt, mỗi key
+                # lại chờ đủ timeout. Đo thật: 1 lệnh "Đọc thông tin" gọi gemini-3.7-flash treo
+                # ~254s rồi mới trả 503, kéo cả lượt upload lên 292s trong khi OCR chỉ mất ~8s.
+                # Phải bắt TRƯỚC `except Exception` và KHÔNG gộp vào APIStatusError: timeout
+                # là lỗi kết nối (không có mã HTTP), không phải lớp con của APIStatusError.
+                wait = _backoff(model, GEMINI_MODEL_COOLDOWN_SECONDS)
+                _model_cooldown[model] = now + wait
+                logger.warning("%s: Gemini %s quá giờ — nghỉ %ds, sang model kế tiếp.",
+                               step, model, wait)
+                break
             except Exception as e:  # noqa: BLE001
                 # Timeout/mất mạng: có thể do riêng lần gọi này, thử nốt các key còn lại.
                 logger.warning("%s: Gemini %s key %s lỗi (%s) — thử tiếp.",
@@ -437,6 +449,7 @@ def complete_with_fallback(
     gemini_reasoning_effort: str | None = None,
     deepseek_extra_body: dict | None = None,
     prefer_lite: bool = False,
+    timeout: float | None = None,
 ) -> str | None:
     """Gọi LLM văn bản: GEMINI trước, hết sạch mới sang DEEPSEEK. Trả về nội dung, hoặc None
     nếu nguồn cuối trả rỗng.
@@ -448,12 +461,18 @@ def complete_with_fallback(
 
     CỐ Ý để lỗi của DeepSeek (nguồn cuối) NÉM RA NGOÀI thay vì nuốt: nơi gọi vốn đã có sẵn
     except riêng để dịch lỗi sang tiếng Việt cho nhân viên (describe_error) và để quyết định
-    fallback riêng của từng bước — giữ nguyên hành vi đó."""
+    fallback riêng của từng bước — giữ nguyên hành vi đó.
+
+    `timeout`: trần giây cho TỪNG lần gọi (mỗi model/key), thay cho mặc định 600s của client.
+    Chỉ đặt cho bước có đầu ra ngắn, biết trước — bước sửa lỗi OCR tài liệu dày có thể sinh
+    hàng chục nghìn token, cắt sớm là mất nửa văn bản."""
     gemini_extra: dict = {}
     if response_format:
         gemini_extra["response_format"] = response_format
     if gemini_reasoning_effort:
         gemini_extra["reasoning_effort"] = gemini_reasoning_effort
+    if timeout:
+        gemini_extra["timeout"] = timeout
 
     content = try_gemini(
         step=step, messages=messages, prefer_lite=prefer_lite, **gemini_extra
@@ -466,6 +485,8 @@ def complete_with_fallback(
         deepseek_extra["response_format"] = response_format
     if deepseek_extra_body:
         deepseek_extra["extra_body"] = deepseek_extra_body
+    if timeout:
+        deepseek_extra["timeout"] = timeout
 
     completion = get_deepseek_client().chat.completions.create(
         model=os.environ["DEEPSEEK_MODEL"],

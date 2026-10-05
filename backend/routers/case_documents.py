@@ -4,8 +4,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import activity
 import ocr
 import storage
+from case_auto_status import dong_bo_hoan_thanh
 from classify import ap_thong_tin_boc_duoc, classify_ocr_text
 from completeness import is_item_applicable, is_savings_item
 from db import get_db
@@ -105,6 +107,7 @@ def _reset_for_new_version(document: Document, key: str, mime_type: str, size: i
     document.classificationError = None
     document.isManualOverride = False
     document.status = "OCR_RUNNING"
+    document.processingStartedAt = now_utc()
 
 
 def _xoa_anh_trang_cu(case_id: str, document_id: str, page_count: int | None) -> None:
@@ -190,6 +193,7 @@ def upload_document(
             mimeType=mime_type,
             fileSizeBytes=len(content),
             status="OCR_RUNNING",
+            processingStartedAt=now_utc(),
         )
         db.add(document)
     db.commit()
@@ -225,7 +229,10 @@ def upload_document(
 
         if is_pdf:
             ocr.save_pdf_page_images(case_id, document.id, pages)
-            document.pageCount = page_count
+        # Ghi số trang cho MỌI loại file chứ không riêng PDF: danh sách tài liệu hiển thị
+        # số trang từng file, mà ảnh rời thì pageCount cũ để trống nên hiện ra ô trắng.
+        # Đây là SỐ TRANG OCR ĐÃ ĐỌC (ảnh rời luôn là 1), khớp với số trang ảnh đã lưu.
+        document.pageCount = page_count
 
         document.status = "CLASSIFYING"
         db.commit()
@@ -258,6 +265,17 @@ def upload_document(
     if is_savings_item(document.matchedChecklistItemId) or replaced_was_savings:
         refresh_case_savings_quietly(db, case)
 
+    # Đủ 100% thì tự sang "Hoàn thành" (xem case_auto_status).
+    dong_bo_hoan_thanh(db, case)
+
+    activity.ghi(
+        "DOC_UPLOAD", case=case, document=document,
+        detail=f"'{document.originalFilename}'{' (bản mới thay bản cũ)' if previous is not None else ''} → "
+        + (activity.ten_muc(db, document.matchedChecklistItemId)
+           or ("lỗi đọc file" if document.status == "ERROR" else "chưa khớp mục nào (cần review)"))
+        + (f" · {document.pageCount} trang" if document.pageCount else ""),
+    )
+
     db.refresh(document)
     return document
 
@@ -274,6 +292,8 @@ def delete_all_documents(case_id: str, db: Session = Depends(get_db)):
         storage.delete_document(doc.storedPath)
         db.delete(doc)
     db.commit()
+    dong_bo_hoan_thanh(db, case)
+    activity.ghi("DOC_DELETE_ALL", case=case, detail=f"{len(documents)} file")
 
     if had_savings_document:
         db.expire(case, ["documents"])

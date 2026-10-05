@@ -4,8 +4,10 @@ Case.skillLevel ("LOW_SKILL" / "HIGH_SKILL") — mỗi bộ tự xử lý SINGLE
 bằng field `appliesTo` (xem is_item_applicable ở completeness.py), giống hệt cách app đã làm
 từ trước — chỉ khác là giờ có 2 bộ độc lập thay vì 1 bộ chung cho mọi hồ sơ.
 
-Nguồn: 4 file checklist khách hàng gửi (CHECKLIST – LOW/HIGH SKILLED – SINGLE/MARRIED),
-giữ đúng thứ tự mục + tên mục như bản gốc trong từng trường hợp.
+Nguồn: 4 file docs/CHECKLIST - {LOW,HIGH}SKILLED - {SINGLE,MARRIED}.md (bản "Edit lần 1", kèm
+.docx cùng tên) — giữ ĐÚNG thứ tự + tên mục + bắt buộc/tuỳ chọn như bản giấy trong từng trường
+hợp, vì nhân viên dò số thứ tự trên giấy để tìm mục trong app (số trên app là VỊ TRÍ trong danh
+sách mục đang áp dụng, xem lib/format.ts buildChecklistNumbers). Sửa file .md thì sửa ở đây theo.
 
 Chạy: ./.venv/bin/python seed.py
 Idempotent — chạy lại nhiều lần không tạo trùng (dùng merge theo id), tự xoá mục cũ không
@@ -19,8 +21,10 @@ load_dotenv("../.env")
 
 from sqlalchemy import select, text
 
+from completeness import relink_marital_variants
 from db import SessionLocal, engine
-from models import Base, ChecklistItem
+from case_status import LEGACY_STATUS_MAP
+from models import Base, Case, ChecklistItem
 
 SECTION_APPLICANT = "Hồ sơ đương đơn"
 SECTION_DEPENDENTS = "Hồ sơ người phụ thuộc"
@@ -59,16 +63,16 @@ LOW_SKILL_ITEMS = [
     dict(id="giay-khai-sinh", order=5, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
          nameVi="Giấy khai sinh",
          verificationNote="Thường kiểm tra ngày tháng năm sinh của cha mẹ có khớp không."),
-    # appliesTo=ALWAYS chứ KHÔNG phải SPOUSE, giống hệt bộ HIGH_SKILL. Trước đây mục này bị
-    # ẩn với hồ sơ độc thân, kéo theo MỌI mục phía sau tụt 1 số so với bản checklist giấy —
-    # nhân viên đọc số trên giấy rồi dò trong app là lệch hàng. Mục vốn đã là "(nếu có)" nên
-    # hiện với hồ sơ độc thân cũng không bắt ai phải nộp thêm giấy gì.
+    # appliesTo=SPOUSE: bản LOW SKILLED độc thân mới đã BỎ mục này (mục 6 của bản độc thân giờ
+    # là quyết định ly hôn). Bản cũ thì có ở cả hai nên từng để ALWAYS cho số thứ tự khớp giấy —
+    # giờ để ALWAYS thì ngược lại: mọi mục từ số 6 trở đi của hồ sơ độc thân lệch 1 so với giấy.
+    # Khác bộ HIGH_SKILL, nơi bản độc thân VẪN liệt kê mục này (xem hs-dang-ky-ket-hon).
     dict(id="dang-ky-ket-hon", order=6, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
-         nameVi="Giấy đăng ký kết hôn (nếu có)", isOptional=True),
+         nameVi="Giấy đăng ký kết hôn (Nếu có)", isOptional=True, appliesTo="SPOUSE"),
     dict(id="quyet-dinh-ly-hon", order=7, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
-         nameVi="Giấy quyết định ly hôn (nếu có)", isOptional=True),
+         nameVi="Giấy quyết định ly hôn (Nếu có)", isOptional=True),
     dict(id="hinh-the-trang", order=8, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
-         nameVi="Photo",
+         nameVi="Ảnh thẻ phông trắng",
          note="Kích thước: 3.5cm x 4.5cm. Chỉ cần gửi file hình, không cần rửa ra ảnh."),
     dict(id="ly-lich-tu-phap-so-2", order=9, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
          nameVi="Lý lịch tư pháp số 2",
@@ -81,22 +85,28 @@ LOW_SKILL_ITEMS = [
          note="Tổ chức di cư quốc tế IOM"),
 
     # --- II. Giấy tờ chứng minh bằng cấp ---
+    # "(nếu có)" thêm 23/09/2026 theo yêu cầu nghiệp vụ — bản checklist giấy trong docs/ KHÔNG
+    # ghi vậy, nên đừng "sửa lại cho khớp docs" khi soát sau này. Chỉ áp dụng cho ĐƯƠNG ĐƠN;
+    # mục cùng loại của con (hs-child*-xac-nhan-hoc-tap) vẫn bắt buộc.
     dict(id="giay-xac-nhan-qua-trinh-hoc-tap", order=12, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Giấy xác nhận quá trình học tập"),
+         nameVi="Giấy xác nhận quá trình học tập (nếu có)", isOptional=True),
     dict(id="bang-tot-nghiep-c2-c3", order=13, section=SECTION_APPLICANT, group=GROUP_DEGREE,
          nameVi="Bằng tốt nghiệp THCS / THPT",
          verificationNote="Phải khớp với thực tế: khách có thể học trễ hơn 1 năm, nhưng không "
                            "được tốt nghiệp sớm so với tuổi thật."),
+    # "(nếu có)" thêm 24/09/2026 theo yêu cầu nghiệp vụ — bản checklist giấy trong docs/
+    # KHÔNG ghi vậy, đừng "sửa lại cho khớp docs" khi soát sau này.
     dict(id="hoc-ba-c2-c3", order=14, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Học bạ THCS / THPT", note="Nếu mất học bạ thì cung cấp bảng điểm học tập"),
+         nameVi="Học bạ THCS/ THPT (nếu có)", isOptional=True,
+         note="Nếu mất học bạ thì cung cấp bảng điểm học tập"),
     dict(id="bang-trung-cap-cd-dh", order=15, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Bằng Trung cấp / Cao đẳng / Đại học (nếu có)", isOptional=True,
+         nameVi="Bằng Trung Cấp / Cao Đẳng/ Đại học (Nếu có)", isOptional=True,
          verificationNote="Phải khớp với thực tế: khách có thể học trễ hơn 1 năm, nhưng không "
                            "được tốt nghiệp sớm so với tuổi thật."),
     dict(id="bang-diem-trung-cap-cd-dh", order=16, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Bảng điểm Trung cấp / Cao đẳng / Đại học (nếu có)", isOptional=True),
+         nameVi="Bảng điểm Trung Cấp / Cao Đẳng/ Đại học (Nếu có)", isOptional=True),
     dict(id="chung-chi-nghe-khac", order=17, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Các bằng cấp / chứng chỉ nghề khác (nếu có)", isOptional=True,
+         nameVi="Các bằng cấp/chứng chỉ nghề khác (Nếu có)", isOptional=True,
          note="Ví dụ: chứng chỉ nghề nail"),
     dict(id="chung-chi-tieng-anh", order=18, section=SECTION_APPLICANT, group=GROUP_DEGREE,
          nameVi="Chứng chỉ thi tiếng Anh",
@@ -106,11 +116,11 @@ LOW_SKILL_ITEMS = [
                            "có bằng ĐH thì C1 vẫn ổn. Giấy xác nhận học tại trung tâm: thời gian "
                            "học và trình độ phải hợp lý, phải có dấu xác nhận, song ngữ hoặc "
                            "tiếng Anh — không dùng giấy xác nhận chỉ bằng tiếng Việt."),
-    # Đi cặp với "Chứng chỉ thi tiếng Anh" ở trên (mục 18.1/18.2 của bản checklist LOW
-    # SKILL mới) — bản mới bỏ hẳn chữ "(nếu có)", nên mục này KHÔNG còn isOptional: thiếu
-    # giấy xác nhận của trung tâm thì chứng chỉ thi không đứng một mình được.
+    # Tuỳ chọn trở lại: bản "Edit lần 1" ghi "Giấy xác nhận học tiếng Anh (nếu có)", thay cho
+    # "Xác nhận học tiếng Anh tại trung tâm" (bắt buộc) của bản trước. Giờ trùng tên + trùng
+    # tính chất với mục hs-giay-xac-nhan-hoc-tieng-anh của bộ HIGH_SKILL.
     dict(id="giay-xac-nhan-hoc-tieng-anh", order=19, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Xác nhận học tiếng Anh tại trung tâm",
+         nameVi="Giấy xác nhận học tiếng Anh (nếu có)", isOptional=True,
          verificationNote="Thời gian học và trình độ phải hợp lý so với chứng chỉ thi. Phải có "
                            "dấu xác nhận của trung tâm, và phải song ngữ hoặc tiếng Anh — "
                            "giấy chỉ bằng tiếng Việt KHÔNG dùng được. Nếu khách thi online "
@@ -118,56 +128,92 @@ LOW_SKILL_ITEMS = [
 
     # --- III. Giấy tờ chứng minh kinh nghiệm làm việc ---
     dict(id="resume-cv", order=20, section=SECTION_APPLICANT, group=GROUP_WORK,
-         nameVi="Resume / CV"),
+         nameVi="Resume/ CV"),
     dict(id="thu-xac-nhan-kinh-nghiem", order=21, section=SECTION_APPLICANT, group=GROUP_WORK,
          nameVi="Thư xác nhận kinh nghiệm làm việc"),
     dict(id="thu-tai-tuyen-dung", order=22, section=SECTION_APPLICANT, group=GROUP_WORK,
-         nameVi="Thư xác nhận tái tuyển dụng"),
+         nameVi="Thư xác nhận tái tuyển dụng (nếu có)", isOptional=True),
     dict(id="thu-xac-nhan-ubnd", order=23, section=SECTION_APPLICANT, group=GROUP_WORK,
          nameVi="Thư xác nhận của UBND (nếu có)", isOptional=True),
     dict(id="hop-dong-lao-dong", order=24, section=SECTION_APPLICANT, group=GROUP_WORK,
-         nameVi="Hợp đồng lao động"),
-    dict(id="sao-ke-ngan-hang-phieu-luong", order=25, section=SECTION_APPLICANT, group=GROUP_WORK,
+         nameVi="Hợp đồng lao động", numberGroup="hop-dong-lao-dong"),
+    dict(id="hop-dong-lao-dong-2", order=25, section=SECTION_APPLICANT, group=GROUP_WORK,
+         nameVi="Hợp đồng lao động 2 (nếu có)", isOptional=True,
+         numberGroup="hop-dong-lao-dong"),
+    dict(id="hop-dong-lao-dong-3", order=26, section=SECTION_APPLICANT, group=GROUP_WORK,
+         nameVi="Hợp đồng lao động 3 (nếu có)", isOptional=True,
+         numberGroup="hop-dong-lao-dong"),
+    dict(id="hop-dong-lao-dong-4", order=27, section=SECTION_APPLICANT, group=GROUP_WORK,
+         nameVi="Hợp đồng lao động 4 (nếu có)", isOptional=True,
+         numberGroup="hop-dong-lao-dong"),
+    dict(id="hop-dong-lao-dong-5", order=28, section=SECTION_APPLICANT, group=GROUP_WORK,
+         nameVi="Hợp đồng lao động 5 (nếu có)", isOptional=True,
+         numberGroup="hop-dong-lao-dong"),
+    dict(id="sao-ke-ngan-hang-phieu-luong", order=29, section=SECTION_APPLICANT, group=GROUP_WORK,
          nameVi="Phiếu lương / sao kê lương"),
 
     # --- IV. Giấy tờ chứng minh tài chính ---
-    dict(id="so-tiet-kiem", order=26, section=SECTION_APPLICANT, group=GROUP_FINANCE,
+    dict(id="so-tiet-kiem", order=30, section=SECTION_APPLICANT, group=GROUP_FINANCE,
          nameVi="Sổ tiết kiệm", note="Yêu cầu làm bản song ngữ Anh - Việt."),
-    dict(id="xac-nhan-so-du-tiet-kiem", order=27, section=SECTION_APPLICANT, group=GROUP_FINANCE,
+    dict(id="xac-nhan-so-du-tiet-kiem", order=31, section=SECTION_APPLICANT, group=GROUP_FINANCE,
          nameVi="Giấy xác nhận số dư sổ tiết kiệm",
          note="Yêu cầu làm bản song ngữ Anh - Việt. Độc thân: tối thiểu 100-150 triệu. "
               "Đã kết hôn: tối thiểu 200-300 triệu. Kết hôn có 1 con: 350 triệu. "
               "Kết hôn 2 con: 400 triệu. Thêm 1 người thì tăng thêm 50 triệu.",
          verificationNote="Tuỳ theo khách mà bỏ số dư cho hợp lý."),
-    dict(id="giay-to-nha-dat", order=28, section=SECTION_APPLICANT, group=GROUP_FINANCE,
+    dict(id="giay-to-nha-dat", order=32, section=SECTION_APPLICANT, group=GROUP_FINANCE,
          nameVi="Quyền sử dụng đất",
          note="Sao y công chứng tại văn phòng công chứng hoặc cơ quan nhà nước, không quá 1 tháng. "
               "Nếu không đứng tên trên sổ hồng/sổ đỏ thì lấy giấy tờ đất của bố mẹ ruột. "
               "Nếu đang thế chấp ngân hàng thì nhờ ngân hàng photo công chứng 1 bản."),
 
-    # --- V. Giấy tờ cá nhân (người phụ thuộc) — chỉ hiện khi đã kết hôn / có con ---
-    dict(id="cccd-vo-chong", order=29, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
-         nameVi="Căn cước công dân vợ/chồng", appliesTo="SPOUSE"),
-    dict(id="giay-khai-sinh-vo-chong", order=30, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
-         nameVi="Giấy khai sinh vợ/chồng", appliesTo="SPOUSE"),
-    dict(id="giay-khai-sinh-con1", order=31, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
-         nameVi="Giấy khai sinh – con 1 (nếu có)", isOptional=True, appliesTo="CHILD_1"),
-    dict(id="giay-khai-sinh-con2", order=32, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
-         nameVi="Giấy khai sinh – con 2 (nếu có)", isOptional=True, appliesTo="CHILD_2"),
-    # Checklist LOW_SKILL-SINGLE gốc chỉ liệt kê tới con 2 (không có mục con 3), nhưng đây rõ
-    # ràng là thiếu sót của bản gốc (không có lý do nghiệp vụ nào để hồ sơ độc thân có 3 con
-    # lại không cần thu khai sinh con thứ 3) — dùng chung mục CHILD_3 này cho cả SINGLE lẫn
-    # MARRIED thay vì chỉ giới hạn theo MARRIED như bản LOW_SKILL-MARRIED gốc.
-    dict(id="giay-khai-sinh-con3", order=33, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
-         nameVi="Giấy khai sinh – con 3 (nếu có)", isOptional=True, appliesTo="CHILD_3"),
+    # Từ đây trở xuống bản ĐỘC THÂN và bản KẾT HÔN tách hẳn: cùng loại giấy tờ nhưng khác thứ
+    # tự, khác phần, khác bắt buộc/tuỳ chọn — mỗi bản một bộ mục riêng, lọc bằng appliesTo.
+    # Xem LOW_SKILL_MARITAL_VARIANTS ở completeness.py (vì sao tách + cách chuyển giấy tờ đã
+    # khớp khi hồ sơ đổi tình trạng hôn nhân).
 
-    # --- VI. Giấy tờ khác — bố mẹ ruột đương đơn, không phụ thuộc tình trạng hôn nhân ---
-    dict(id="cccd-cha-vo-chong", order=34, section=SECTION_DEPENDENTS, group=GROUP_OTHER,
-         nameVi="Căn cước công dân bố (nếu có)", isOptional=True),
-    dict(id="cccd-me-vo-chong", order=35, section=SECTION_DEPENDENTS, group=GROUP_OTHER,
-         nameVi="Căn cước công dân mẹ (nếu có)", isOptional=True),
-    dict(id="thu-ho-tro-bo-me", order=36, section=SECTION_DEPENDENTS, group=GROUP_OTHER,
-         nameVi="Thư hỗ trợ từ bố mẹ (nếu có)", isOptional=True),
+    # === Bản KẾT HÔN — B. Hồ sơ người phụ thuộc (mục 29-36 bản giấy) ===
+    # --- V. Giấy tờ cá nhân ---
+    dict(id="cccd-vo-chong", order=33, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
+         nameVi="Căn cước công dân vợ/chồng", appliesTo="SPOUSE"),
+    dict(id="giay-khai-sinh-vo-chong", order=34, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
+         nameVi="Giấy khai sinh vợ/chồng", appliesTo="SPOUSE"),
+    # Khai sinh con LUÔN hiện, kể cả hồ sơ chưa khai số con — KHÔNG lọc theo số con như các mục
+    # con của bộ HIGH_SKILL. Lý do: 3 mục này đứng TRƯỚC CCCD bố/mẹ + thư hỗ trợ (34-36); ẩn đi
+    # là 3 mục đó tụt số (0 con: app 31-33, giấy 34-36) và nhân viên dò theo số trên giấy thì
+    # lệch hàng. Người dùng chốt: checklist phải y chang bản giấy. Mục đều "(nếu có)" nên hiện
+    # thừa với hồ sơ không con cũng không làm giảm % hoàn thành.
+    dict(id="giay-khai-sinh-con1", order=35, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
+         nameVi="Giấy khai sinh - con 1 (nếu có)", isOptional=True, appliesTo="SPOUSE"),
+    dict(id="giay-khai-sinh-con2", order=36, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
+         nameVi="Giấy khai sinh - con 2 (nếu có)", isOptional=True, appliesTo="SPOUSE"),
+    # CHỈ bản kết hôn có con 3. Bản độc thân dừng ở con 2 — đã từng coi đó là thiếu sót và
+    # cho độc thân dùng chung mục này, nhưng bản "Edit lần 1" vẫn giữ nguyên con 1-2 cho độc
+    # thân nên theo đúng bản giấy. Độc thân có con thứ 3 thì giấy đó rơi vào "Giấy tờ khác".
+    dict(id="giay-khai-sinh-con3", order=37, section=SECTION_DEPENDENTS, group=GROUP_DEPENDENT_PERSONAL,
+         nameVi="Giấy khai sinh - con 3 (nếu có)", isOptional=True, appliesTo="SPOUSE"),
+    # --- VI. Giấy tờ khác — bố mẹ ruột đương đơn, TUỲ CHỌN ở bản kết hôn ---
+    dict(id="cccd-cha-vo-chong", order=38, section=SECTION_DEPENDENTS, group=GROUP_OTHER,
+         nameVi="Căn cước công dân bố (nếu có)", isOptional=True, appliesTo="SPOUSE"),
+    dict(id="cccd-me-vo-chong", order=39, section=SECTION_DEPENDENTS, group=GROUP_OTHER,
+         nameVi="Căn cước công dân mẹ (nếu có)", isOptional=True, appliesTo="SPOUSE"),
+    dict(id="thu-ho-tro-bo-me", order=40, section=SECTION_DEPENDENTS, group=GROUP_OTHER,
+         nameVi="Thư hỗ trợ từ bố mẹ (nếu có)", isOptional=True, appliesTo="SPOUSE"),
+
+    # === Bản ĐỘC THÂN — A. Hồ sơ đương đơn, V. Giấy tờ khác (mục 28-32 bản giấy) ===
+    # order 37+ chỉ để đứng SAU mục 28 (Quyền sử dụng đất); không bao giờ hiện cùng bản kết hôn
+    # ở trên nên không đụng thứ tự của nhau. CCCD bố/mẹ BẮT BUỘC ở bản này (không có "nếu có").
+    # Khai sinh con luôn hiện như bản giấy, cùng lý do với bản kết hôn ở trên.
+    dict(id="cccd-bo-doc-than", order=41, section=SECTION_APPLICANT, group=GROUP_OTHER,
+         nameVi="Căn cước công dân bố", appliesTo="SINGLE"),
+    dict(id="cccd-me-doc-than", order=42, section=SECTION_APPLICANT, group=GROUP_OTHER,
+         nameVi="Căn cước công dân mẹ", appliesTo="SINGLE"),
+    dict(id="thu-ho-tro-bo-me-doc-than", order=43, section=SECTION_APPLICANT, group=GROUP_OTHER,
+         nameVi="Thư hỗ trợ từ bố mẹ (nếu có)", isOptional=True, appliesTo="SINGLE"),
+    dict(id="giay-khai-sinh-con1-doc-than", order=44, section=SECTION_APPLICANT, group=GROUP_OTHER,
+         nameVi="Giấy khai sinh con 1 (nếu có)", isOptional=True, appliesTo="SINGLE"),
+    dict(id="giay-khai-sinh-con2-doc-than", order=45, section=SECTION_APPLICANT, group=GROUP_OTHER,
+         nameVi="Giấy khai sinh con 2 (nếu có)", isOptional=True, appliesTo="SINGLE"),
 ]
 for _d in LOW_SKILL_ITEMS:
     _d["skillLevel"] = "LOW_SKILL"
@@ -204,7 +250,7 @@ HIGH_SKILL_APPLICANT_ITEMS = [
     dict(id="hs-quyet-dinh-ly-hon", order=7, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
          nameVi="Giấy quyết định ly hôn (Nếu có)", isOptional=True),
     dict(id="hs-anh-the-phong-trang", order=8, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
-         nameVi="Photo",
+         nameVi="Ảnh thẻ phông trắng",
          note="Kích thước: 3.5cm x 4.5cm. Chỉ cần gửi file hình, không cần rửa ra ảnh."),
     dict(id="hs-lltp-so-2", order=9, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
          nameVi="Lý lịch tư pháp số 2",
@@ -220,13 +266,16 @@ HIGH_SKILL_APPLICANT_ITEMS = [
     # Checklist HIGH_SKILL-MARRIED gốc KHÔNG có mục "Giấy xác nhận quá trình học tập" (chỉ
     # HIGH_SKILL-SINGLE có) — giữ đúng khác biệt này bằng appliesTo="SINGLE".
     dict(id="hs-giay-xac-nhan-qua-trinh-hoc-tap", order=12, section=SECTION_APPLICANT,
-         group=GROUP_DEGREE, nameVi="Giấy xác nhận quá trình học tập", appliesTo="SINGLE"),
+         group=GROUP_DEGREE, nameVi="Giấy xác nhận quá trình học tập (nếu có)",
+         isOptional=True, appliesTo="SINGLE"),
     dict(id="hs-bang-tot-nghiep-c2-c3", order=13, section=SECTION_APPLICANT, group=GROUP_DEGREE,
          nameVi="Bằng tốt nghiệp THCS / THPT",
          verificationNote="Phải khớp với thực tế: khách có thể học trễ hơn 1 năm, nhưng không "
                            "được tốt nghiệp sớm so với tuổi thật."),
+    # Xem ghi chú ở mục cùng loại của checklist LOW_SKILL.
     dict(id="hs-hoc-ba-c2-c3", order=14, section=SECTION_APPLICANT, group=GROUP_DEGREE,
-         nameVi="Học bạ THCS/ THPT", note="Nếu mất học bạ thì cung cấp bảng điểm học tập"),
+         nameVi="Học bạ THCS/ THPT (nếu có)", isOptional=True,
+         note="Nếu mất học bạ thì cung cấp bảng điểm học tập"),
     dict(id="hs-bang-trung-cap", order=15, section=SECTION_APPLICANT, group=GROUP_DEGREE,
          nameVi="Bằng Trung Cấp (Nếu có)", isOptional=True,
          verificationNote="Phải khớp với thực tế: khách có thể học trễ hơn 1 năm, nhưng không "
@@ -251,7 +300,7 @@ HIGH_SKILL_APPLICANT_ITEMS = [
                            "học và trình độ phải hợp lý, phải có dấu xác nhận, song ngữ hoặc "
                            "tiếng Anh — không dùng giấy xác nhận chỉ bằng tiếng Việt."),
     dict(id="hs-giay-xac-nhan-hoc-tieng-anh", order=21, section=SECTION_APPLICANT,
-         group=GROUP_DEGREE, nameVi="Giấy xác nhận học tiếng Anh (Nếu có)", isOptional=True,
+         group=GROUP_DEGREE, nameVi="Giấy xác nhận học tiếng Anh (nếu có)", isOptional=True,
          verificationNote="Thời gian học và trình độ phải hợp lý so với chứng chỉ thi. Phải có "
                            "dấu xác nhận của trung tâm, và phải song ngữ hoặc tiếng Anh — "
                            "giấy chỉ bằng tiếng Việt KHÔNG dùng được. Nếu khách thi online "
@@ -263,24 +312,39 @@ HIGH_SKILL_APPLICANT_ITEMS = [
     dict(id="hs-thu-xac-nhan-kinh-nghiem", order=23, section=SECTION_APPLICANT, group=GROUP_WORK,
          nameVi="Thư xác nhận kinh nghiệm làm việc"),
     dict(id="hs-thu-tai-tuyen-dung", order=24, section=SECTION_APPLICANT, group=GROUP_WORK,
-         nameVi="Thư xác nhận tái tuyển dụng"),
+         nameVi="Thư xác nhận tái tuyển dụng (nếu có)", isOptional=True),
     dict(id="hs-thu-xac-nhan-ubnd", order=25, section=SECTION_APPLICANT, group=GROUP_WORK,
          nameVi="Thư xác nhận của UBND (nếu có)", isOptional=True),
     dict(id="hs-hop-dong-lao-dong", order=26, section=SECTION_APPLICANT, group=GROUP_WORK,
-         nameVi="Hợp đồng lao động"),
-    dict(id="hs-phieu-luong", order=27, section=SECTION_APPLICANT, group=GROUP_WORK,
+         nameVi="Hợp đồng lao động", numberGroup="hs-hop-dong-lao-dong"),
+    dict(id="hs-hop-dong-lao-dong-2", order=27, section=SECTION_APPLICANT, group=GROUP_WORK,
+         nameVi="Hợp đồng lao động 2 (nếu có)", isOptional=True,
+         numberGroup="hs-hop-dong-lao-dong"),
+    dict(id="hs-hop-dong-lao-dong-3", order=28, section=SECTION_APPLICANT, group=GROUP_WORK,
+         nameVi="Hợp đồng lao động 3 (nếu có)", isOptional=True,
+         numberGroup="hs-hop-dong-lao-dong"),
+    dict(id="hs-hop-dong-lao-dong-4", order=29, section=SECTION_APPLICANT, group=GROUP_WORK,
+         nameVi="Hợp đồng lao động 4 (nếu có)", isOptional=True,
+         numberGroup="hs-hop-dong-lao-dong"),
+    dict(id="hs-hop-dong-lao-dong-5", order=30, section=SECTION_APPLICANT, group=GROUP_WORK,
+         nameVi="Hợp đồng lao động 5 (nếu có)", isOptional=True,
+         numberGroup="hs-hop-dong-lao-dong"),
+    # Bản HIGH độc thân ghi "Phiếu lương", bản kết hôn ghi "Phiếu lương / sao kê lương" — CỐ Ý
+    # giữ một mục chung với tên đầy đủ: cùng loại giấy tờ, cùng số thứ tự ở cả hai bản, tách
+    # làm hai mục chỉ vì chữ hiển thị thì phải chuyển giấy tờ qua lại mỗi khi đổi hôn nhân.
+    dict(id="hs-phieu-luong", order=31, section=SECTION_APPLICANT, group=GROUP_WORK,
          nameVi="Phiếu lương / sao kê lương"),
 
     # --- IV. Giấy tờ chứng minh tài chính ---
-    dict(id="hs-so-tiet-kiem", order=28, section=SECTION_APPLICANT, group=GROUP_FINANCE,
+    dict(id="hs-so-tiet-kiem", order=32, section=SECTION_APPLICANT, group=GROUP_FINANCE,
          nameVi="Sổ tiết kiệm", note="Yêu cầu làm bản song ngữ Anh - Việt."),
-    dict(id="hs-xac-nhan-so-du-tiet-kiem", order=29, section=SECTION_APPLICANT, group=GROUP_FINANCE,
+    dict(id="hs-xac-nhan-so-du-tiet-kiem", order=33, section=SECTION_APPLICANT, group=GROUP_FINANCE,
          nameVi="Giấy xác nhận số dư sổ tiết kiệm",
          note="Yêu cầu làm bản song ngữ Anh - Việt. Độc thân: tối thiểu 100-150 triệu. "
               "Đã kết hôn: tối thiểu 200-300 triệu. Kết hôn có 1 con: 350 triệu. "
               "Kết hôn 2 con: 400 triệu. Thêm 1 người thì tăng thêm 50 triệu.",
          verificationNote="Tuỳ theo khách mà bỏ số dư cho hợp lý."),
-    dict(id="hs-quyen-su-dung-dat", order=30, section=SECTION_APPLICANT, group=GROUP_FINANCE,
+    dict(id="hs-quyen-su-dung-dat", order=34, section=SECTION_APPLICANT, group=GROUP_FINANCE,
          nameVi="Quyền sử dụng đất",
          note="Sao y công chứng tại văn phòng công chứng hoặc cơ quan nhà nước, không quá 1 tháng. "
               "Nếu không đứng tên trên sổ hồng/sổ đỏ thì lấy giấy tờ đất của bố mẹ ruột. "
@@ -289,52 +353,52 @@ HIGH_SKILL_APPLICANT_ITEMS = [
 
 # --- V-VII. Hồ sơ người phụ thuộc (Vợ/chồng) — chỉ HIGH_SKILL-MARRIED, appliesTo=SPOUSE ---
 HIGH_SKILL_SPOUSE_ITEMS = [
-    dict(id="hs-spouse-passport", order=31, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
+    dict(id="hs-spouse-passport", order=35, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
          nameVi="Passport"),
-    dict(id="hs-spouse-cccd", order=32, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
+    dict(id="hs-spouse-cccd", order=36, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
          nameVi="Căn cước công dân"),
-    dict(id="hs-spouse-cmnd", order=33, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
+    dict(id="hs-spouse-cmnd", order=37, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
          nameVi="Chứng minh nhân dân (Nếu có)", isOptional=True),
-    dict(id="hs-spouse-khai-sinh", order=34, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
+    dict(id="hs-spouse-khai-sinh", order=38, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
          nameVi="Giấy khai sinh"),
-    dict(id="hs-spouse-hinh-the-trang", order=35, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
+    dict(id="hs-spouse-hinh-the-trang", order=39, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
          nameVi="Hình thẻ trắng",
          note="Kích thước: 3.5cm x 4.5cm. Chỉ cần gửi file hình, không cần rửa ra ảnh."),
-    dict(id="hs-spouse-ly-hon", order=36, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
+    dict(id="hs-spouse-ly-hon", order=40, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
          nameVi="Giấy quyết định ly hôn (Nếu có)", isOptional=True,
          note="Trường hợp vợ/chồng đã từng ly hôn thì bổ sung"),
-    dict(id="hs-spouse-lltp2", order=37, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
+    dict(id="hs-spouse-lltp2", order=41, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
          nameVi="Lý lịch tư pháp số 2",
          verificationNote="Hạn trong vòng 1 năm, phải có chữ ký điện tử và tên của cán bộ làm "
                            "giấy, phải khớp thông tin như CCCD, ngày cấp..."),
-    dict(id="hs-spouse-lltp-nuoc-ngoai", order=38, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
+    dict(id="hs-spouse-lltp-nuoc-ngoai", order=42, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
          nameVi="Lý lịch tư pháp tại nước ngoài (nếu có)", isOptional=True),
-    dict(id="hs-spouse-kham-suc-khoe", order=39, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
+    dict(id="hs-spouse-kham-suc-khoe", order=43, section=SECTION_SPOUSE, group=GROUP_PERSONAL,
          nameVi="Giấy khám sức khoẻ tại nơi chỉ định (nếu có)", isOptional=True,
          note="Tổ chức di cư quốc tế IOM"),
 
-    dict(id="hs-spouse-bang-cao-nhat", order=40, section=SECTION_SPOUSE, group=GROUP_DEGREE,
+    dict(id="hs-spouse-bang-cao-nhat", order=44, section=SECTION_SPOUSE, group=GROUP_DEGREE,
          nameVi="Bằng cấp cao nhất"),
-    dict(id="hs-spouse-hocba-bangdiem-cao-nhat", order=41, section=SECTION_SPOUSE, group=GROUP_DEGREE,
+    dict(id="hs-spouse-hocba-bangdiem-cao-nhat", order=45, section=SECTION_SPOUSE, group=GROUP_DEGREE,
          nameVi="Học bạ/ bảng điểm cao nhất"),
-    dict(id="hs-spouse-chung-chi-nghe-khac", order=42, section=SECTION_SPOUSE, group=GROUP_DEGREE,
+    dict(id="hs-spouse-chung-chi-nghe-khac", order=46, section=SECTION_SPOUSE, group=GROUP_DEGREE,
          nameVi="Các bằng cấp/chứng chỉ nghề khác (Nếu có)", isOptional=True),
-    dict(id="hs-spouse-chung-chi-tieng-anh", order=43, section=SECTION_SPOUSE, group=GROUP_DEGREE,
+    dict(id="hs-spouse-chung-chi-tieng-anh", order=47, section=SECTION_SPOUSE, group=GROUP_DEGREE,
          nameVi="Chứng chỉ thi tiếng Anh (Nếu có)", isOptional=True),
 
-    dict(id="hs-spouse-thu-xac-nhan-kinh-nghiem", order=44, section=SECTION_SPOUSE,
+    dict(id="hs-spouse-thu-xac-nhan-kinh-nghiem", order=48, section=SECTION_SPOUSE,
          group=GROUP_WORK_FINANCE, nameVi="Thư xác nhận kinh nghiệm làm việc"),
-    dict(id="hs-spouse-hop-dong-lao-dong", order=45, section=SECTION_SPOUSE,
+    dict(id="hs-spouse-hop-dong-lao-dong", order=49, section=SECTION_SPOUSE,
          group=GROUP_WORK_FINANCE, nameVi="Hợp đồng lao động"),
-    dict(id="hs-spouse-phieu-luong", order=46, section=SECTION_SPOUSE,
+    dict(id="hs-spouse-phieu-luong", order=50, section=SECTION_SPOUSE,
          group=GROUP_WORK_FINANCE, nameVi="Phiếu lương / sao kê lương"),
-    dict(id="hs-spouse-so-tiet-kiem", order=47, section=SECTION_SPOUSE,
+    dict(id="hs-spouse-so-tiet-kiem", order=51, section=SECTION_SPOUSE,
          group=GROUP_WORK_FINANCE, nameVi="Sổ tiết kiệm (nếu có)", isOptional=True,
          note="Yêu cầu làm bản song ngữ Anh - Việt."),
-    dict(id="hs-spouse-xac-nhan-so-du", order=48, section=SECTION_SPOUSE,
+    dict(id="hs-spouse-xac-nhan-so-du", order=52, section=SECTION_SPOUSE,
          group=GROUP_WORK_FINANCE, nameVi="Giấy xác nhận số dư sổ tiết kiệm (nếu có)",
          isOptional=True, note="Yêu cầu làm bản song ngữ Anh - Việt."),
-    dict(id="hs-spouse-quyen-su-dung-dat", order=49, section=SECTION_SPOUSE,
+    dict(id="hs-spouse-quyen-su-dung-dat", order=53, section=SECTION_SPOUSE,
          group=GROUP_WORK_FINANCE, nameVi="Quyền sử dụng đất"),
 ]
 for _d in HIGH_SKILL_SPOUSE_ITEMS:
@@ -371,7 +435,7 @@ def _high_skill_child_items(child_number: int, start_order: int) -> list[dict]:
 
 
 HIGH_SKILL_CHILDREN_ITEMS = (
-    _high_skill_child_items(1, 50) + _high_skill_child_items(2, 58) + _high_skill_child_items(3, 66)
+    _high_skill_child_items(1, 54) + _high_skill_child_items(2, 62) + _high_skill_child_items(3, 70)
 )
 
 HIGH_SKILL_ITEMS = HIGH_SKILL_APPLICANT_ITEMS + HIGH_SKILL_SPOUSE_ITEMS + HIGH_SKILL_CHILDREN_ITEMS
@@ -397,6 +461,13 @@ ADDED_COLUMNS = [
     # tồn tại. Giữ chúng trong danh sách để DB cũ/DB khôi phục cũng nâng cấp được đầy đủ;
     # production hiện tại có cột rồi thì truy vấn information_schema sẽ bỏ qua an toàn.
     ("Case", "deletedAt", "DATETIME NULL"),
+    ("Case", "completedAt", "DATETIME NULL"),
+    ("Document", "processingStartedAt", "DATETIME NULL"),
+    ("Case", "autoDeleteAt", "DATETIME NULL"),
+    ("Case", "filesPurgedAt", "DATETIME NULL"),
+    ("Case", "receiverName", "VARCHAR(191) NULL"),
+    ("Case", "managerName", "VARCHAR(191) NULL"),
+    ("Case", "saleName", "VARCHAR(191) NULL"),
     ("Case", "aiAnalysisStatus", "VARCHAR(191) NOT NULL DEFAULT 'IDLE'"),
     ("Case", "aiAnalysisSummary", "TEXT NULL"),
     ("Case", "aiAnalysisError", "TEXT NULL"),
@@ -435,6 +506,14 @@ ADDED_COLUMNS = [
     # để điền ngược, và "0 tháng kinh nghiệm" là một khẳng định sai chứ không phải "chưa biết".
     ("Case", "occupation", "VARCHAR(191) NULL"),
     ("Case", "experienceMonths", "INT NULL"),
+    # Đơn vị xác nhận kinh nghiệm (JSON) — NULL cho hồ sơ cũ = chưa nhập.
+    ("Case", "experienceUnits", "TEXT NULL"),
+    # Số trang bản xem trước của mẫu hợp đồng (contract_preview.py) — NULL = chưa có ảnh xem trước.
+    ("ContractTemplate", "pageCount", "INT NULL"),
+    # Loại mẫu (models.ContractTemplate.kind). Mẫu cũ đều là hợp đồng lao động -> DEFAULT 'HDLD'.
+    ("ContractTemplate", "kind", "VARCHAR(16) NOT NULL DEFAULT 'HDLD'"),
+    # Lần nộp hồ sơ (xem models.Case.submissionRound). Hồ sơ cũ đều là lần đầu -> DEFAULT 1.
+    ("Case", "submissionRound", "INT NOT NULL DEFAULT 1"),
 ]
 
 
@@ -454,9 +533,26 @@ def ensure_columns():
             print(f"Added column {table}.{column} ({ddl})")
 
 
+def migrate_legacy_statuses():
+    """Chuyển hồ sơ còn mang trạng thái đã bỏ sang trạng thái mới (case_status.LEGACY_STATUS_MAP).
+
+    Bắt buộc chứ không chỉ cho gọn: schemas.ApplicationStatus không còn các mã cũ, hồ sơ nào còn
+    giữ mã cũ sẽ làm API trả danh sách hồ sơ lỗi 500. Tính cả hồ sơ đã xoá mềm (khôi phục lại
+    thì cũng phải hiện được). Chạy lại bao nhiêu lần cũng an toàn."""
+    with engine.begin() as conn:
+        for cu, moi in LEGACY_STATUS_MAP.items():
+            n = conn.execute(
+                text("UPDATE `Case` SET applicationStatus = :moi WHERE applicationStatus = :cu"),
+                {"moi": moi, "cu": cu},
+            ).rowcount
+            if n:
+                print(f"Migrated {n} case(s) from status {cu} to {moi}")
+
+
 def main():
     Base.metadata.create_all(engine)
     ensure_columns()
+    migrate_legacy_statuses()
 
     db = SessionLocal()
     try:
@@ -493,6 +589,18 @@ def main():
             f"Seeded {len(CHECKLIST_ITEMS)} checklist items "
             f"({len(LOW_SKILL_ITEMS)} LOW_SKILL + {len(HIGH_SKILL_ITEMS)} HIGH_SKILL)."
         )
+
+        # Chạy SAU commit ở trên: Document.matchedChecklistItemId có khoá ngoại sang
+        # ChecklistItem, mục bản độc thân phải có trong DB rồi mới trỏ giấy tờ vào được.
+        # Tính cả hồ sơ đã xoá mềm — khôi phục lại ở trang admin thì checklist vẫn phải đúng.
+        # Chạy lại bao nhiêu lần cũng an toàn: giấy tờ đã nằm đúng bản thì không đụng tới.
+        moved = sum(
+            relink_marital_variants(case)
+            for case in db.scalars(select(Case).where(Case.skillLevel == "LOW_SKILL")).all()
+        )
+        db.commit()
+        if moved:
+            print(f"Relinked {moved} document(s) to the checklist variant of their case's marital status.")
     finally:
         db.close()
 

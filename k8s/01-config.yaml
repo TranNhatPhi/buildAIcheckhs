@@ -16,7 +16,6 @@ data:
   MINIO_BUCKET: "canada-checklist-docs"
   DEEPSEEK_BASE_URL: "https://api.deepseek.com"
   DEEPSEEK_MODEL: "deepseek-v4-flash"
-  CONFIDENCE_THRESHOLD: "0.6"
   # QUAN TRỌNG — phải đặt TAY, không để code tự suy ra.
   #
   # Mặc định trong backend/ocr.py là os.cpu_count()//2. Nhưng trong container,

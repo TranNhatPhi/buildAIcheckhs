@@ -80,6 +80,23 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod \
 
 ## Lỗi đã gặp
 
+**Từ 25/09/2026 dùng tài khoản EmailJS mới** (Public Key `p6o5oKEFvgPL-OgZk`, Service
+`service_vn1wcgl`, Template `template_xwaibcj`, gửi qua Gmail `phivt1234@gmail.com`), cấu hình
+ở `.env.local` của máy `candoc.info`. Khoá cũ `a4rsQiK-...` trong `.env.prod` ĐÃ CHẾT (tài
+khoản đó bấm Refresh Keys). Lúc chuyển đã gặp lần lượt 4 lỗi dưới đây — mỗi lần sửa xong một
+cái thì lộ ra cái tiếp theo, nên gặp lỗi mới là dấu hiệu ĐANG TIẾN, không phải sửa sai:
+
+| Lỗi | Nguyên nhân | Sửa |
+|---|---|---|
+| `Thiếu cấu hình EmailJS: accessToken` | Code bắt buộc ĐỦ 4 khoá, kể cả Private Key. `.env.prod` cũ chỉ có 3 -> email **chưa từng gửi được** trên máy chủ GCP, lỗi âm thầm vì chạy nền | Thêm `EMAILJS_PRIVATE_KEY` |
+| `403 API access from non-browser environments is currently disabled` | EmailJS mặc định chỉ cho gửi TỪ TRÌNH DUYỆT, chặn máy chủ | Account → Security → tick "Allow EmailJS API for non-browser applications" + "Use Private Key" |
+| `400 The service ID not found` | Service/Template thuộc tài khoản khác với Public Key đang dùng — 4 khoá phải CÙNG một tài khoản | Dựng lại Service + Template trong đúng tài khoản |
+| `412 Gmail_API: Invalid grant` | Lúc kết nối Gmail, màn hình Google để ô "Gửi email thay mặt bạn" KHÔNG tick sẵn, bỏ qua là thiếu quyền | Thu hồi quyền ở myaccount.google.com/permissions, rồi Disconnect → Connect lại và tick ô đó |
+
+Thử được ngay trong EmailJS (Email Templates → Test It) để phân biệt lỗi của app hay của
+EmailJS: lỗi hiện y hệt ở đó thì không phải do code.
+
+
 **`RuntimeError: EmailJS trả lỗi HTTP 403: error code: 1010`**
 
 Đây là lỗi của **Cloudflare** đứng trước `api.emailjs.com`, không phải của EmailJS: nó chặn
@@ -126,7 +143,7 @@ vòng lặp vì chuyện này: file ghi `...gJk7-` mà log vẫn in `...glk7-`.
 docker compose -f docker-compose.prod.yml --env-file .env.prod \
   up -d --force-recreate status-reminder
 
-# Phải in ra a4rsQiK-a4DVgJk7- rồi mới test tiếp
+# Phải in ra đúng Public Key hiện hành (từ 25/09/2026: p6o5oKEFvgPL-OgZk) rồi mới test tiếp
 docker compose -f docker-compose.prod.yml --env-file .env.prod \
   exec status-reminder printenv EMAILJS_PUBLIC_KEY
 ```

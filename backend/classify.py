@@ -1,9 +1,13 @@
 """
-Xử lý sau OCR: (1) dùng DeepSeek sửa lỗi chính tả/sắp xếp lại câu cho mạch lạc (có kèm
-toạ độ từng dòng để LLM hiểu bố cục), (2) phân loại nội dung vào đúng mục checklist.
-Port từ lib/classify.ts (Next.js) + bổ sung bước sửa lỗi vì OCR trên giấy tờ thật (đóng
-dấu, viết tay, layout phức tạp) thường đọc sai/xáo trộn thứ tự nhiều hơn hẳn so với ảnh
-test sạch — bước sửa lỗi giúp cả người đọc và bước phân loại có tín hiệu tốt hơn.
+Xử lý sau OCR: (1) dùng LLM sửa lỗi chính tả/sắp xếp lại câu cho mạch lạc, (2) xếp file vào
+mục checklist THEO TÊN FILE (filename_rules.py — không có AI), (3) LLM đọc thông tin trên
+giấy tờ (chủ giấy tờ, số, ngày hết hạn) cho cảnh báo hạn + đối chiếu chéo. Bước sửa lỗi có vì
+OCR trên giấy tờ thật (đóng dấu, viết tay, layout phức tạp) thường đọc sai/xáo trộn thứ tự
+nhiều hơn hẳn so với ảnh test sạch.
+
+AI PHÂN LOẠI (AI đọc nội dung rồi tự chọn mục) ĐÃ BỎ HẲN theo quyết định của người dùng — thay
+bằng quy tắc tên file. Lý do đo được ghi ở dưới (mục PHÂN LOẠI): AI chậm, và nhầm âm thầm
+giữa giấy tờ của các thành viên trong gia đình với confidence vẫn cao.
 
 Lưu ý quan trọng về model: DEEPSEEK_MODEL cấu hình là model có suy luận (reasoning) — đã
 xác nhận qua thực nghiệm là với input càng lộn xộn/khó hiểu thì model càng "suy nghĩ" lâu
@@ -16,46 +20,39 @@ thể tắt hẳn phần suy luận qua tham số request `extra_body={"thinking
 - SỬA LỖI OCR (correct_ocr_text): tắt reasoning AN TOÀN — chỉ là việc sửa chính tả/sắp xếp
   lại câu theo quy tắc cố định, không cần phán đoán. Giảm 150-450s xuống 1-10s (nhanh hơn
   40-150 lần), output kiểm tra bằng tay vẫn mạch lạc, không bịa/sai số liệu.
-- PHÂN LOẠI (classify_ocr_text): ĐÃ THỬ tắt reasoning rồi PHỤC HỒI LẠI vì phát hiện lỗi thật
-  qua thực nghiệm — chạy lặp lại 4 lần cùng 1 file "CCCD của mẹ khách hàng" (tên file có ghi
-  rõ "mother"), 3/4 lần model bỏ qua tín hiệu tên file, khớp nhầm thành mục CCCD của chính
-  đương đơn thay vì mục CCCD của mẹ — với confidence vẫn 0.9-1.0 (tức sẽ TỰ ĐỘNG khớp, không
-  đưa nhân viên soát lại vì confidence cao hơn CONFIDENCE_THRESHOLD). Việc phân biệt "giấy tờ
-  này là của ai trong gia đình" (đương đơn/vợ chồng/cha/mẹ/con) cần suy luận thật, không phải
-  việc máy móc — nên giữ nguyên reasoning bật cho bước này dù chậm hơn.
+- PHÂN LOẠI bằng AI (ĐÃ BỎ, xem trên): từng thử tắt reasoning rồi phải bật lại — chạy lặp 4
+  lần cùng 1 file "CCCD của mẹ khách hàng" (tên file ghi rõ "mother"), 3/4 lần model khớp nhầm
+  thành CCCD của chính đương đơn với confidence 0.9-1.0, tức tự khớp mà không đưa ai soát lại.
+  Bật reasoning thì đúng hơn nhưng chậm hàng chục tới hàng trăm giây mỗi file. Quy tắc tên
+  file không có cả hai vấn đề đó.
+- ĐỌC THÔNG TIN (extract_fields): tắt reasoning — mục đã biết từ tên file nên tên mục cho biết
+  luôn giấy tờ của ai ("CCCD mẹ" -> MOTHER), phần khó nhất của lệnh phân loại cũ không còn.
 - "Phân tích AI chuyên sâu" (summarize_case_profile — đối chiếu chéo nhiều giấy tờ, phát hiện
   bất nhất): CỐ Ý giữ reasoning bật, vì cần suy luận thật (so sánh nhiều nguồn dữ liệu), theo
   đúng yêu cầu người dùng "reason chỉ dành cho phân tích chuyên sâu".
 
-Kết quả: 1 file giảm từ ~300-450s (2 lệnh có reasoning) xuống còn ~150-230s (chỉ còn lệnh
-phân loại có reasoning, lệnh sửa lỗi gần như tức thời) — giảm khoảng nửa thời gian AN TOÀN,
-thay vì giảm ~100 lần nhưng có rủi ro sai âm thầm ở các mục dễ nhầm lẫn giữa thành viên gia
-đình. Vẫn giữ `max_tokens` cao + timeout lớn cho client dùng chung (áp dụng cho cả lệnh
-có/không reasoning).
+Vẫn giữ `max_tokens` cao + timeout lớn cho client dùng chung (áp dụng cho cả lệnh có/không
+reasoning).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from filename_rules import match_by_filename
 from llm import GEMINI_LOW_REASONING, _env_int, complete_with_fallback, describe_error
 from models import ChecklistItem
 
 logger = logging.getLogger("classify")
 
-# Tắt suy luận (reasoning) — CHỈ dùng cho correct_ocr_text (sửa chính tả OCR, việc máy móc
-# theo quy tắc cố định). KHÔNG dùng cho classify_ocr_text (đã thử rồi bỏ — cần suy luận thật
-# để phân biệt giấy tờ của thành viên nào trong gia đình) hay summarize_case_profile (phân
-# tích chuyên sâu) — xem giải thích + số liệu thực nghiệm ở docstring đầu file.
+# Tắt suy luận (reasoning) — dùng cho correct_ocr_text và extract_fields (việc máy móc: sửa
+# chính tả, chép thông tin khi đã biết mục). KHÔNG dùng cho summarize_case_profile (phân tích
+# chuyên sâu, cần suy luận thật) — xem giải thích + số liệu thực nghiệm ở docstring đầu file.
 _NO_THINKING = {"thinking": {"type": "disabled"}}
-
-
-CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.6"))
 
 
 # ĐÃ THỬ giới hạn max_tokens thấp (4000) để chặn suy luận vô hạn — THẤT BẠI: đã xác nhận
@@ -87,14 +84,22 @@ CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.6"))
 #     lên 60000 (~90% margin so với đỉnh 31662 đã đo) — client timeout đã sẵn 600s (nâng lúc
 #     thêm SUMMARY_MAX_TOKENS=60000) nên không cần đổi thêm.
 CORRECTION_MAX_TOKENS = 60000
-CLASSIFICATION_MAX_TOKENS = 8000
+# Lệnh đọc thông tin chỉ trả 1 JSON vài trường và đã tắt suy luận — 8000 là con số cũ của lệnh
+# phân loại (vốn CÓ suy luận), giữ nguyên nên còn dư nhiều.
+FIELDS_MAX_TOKENS = 8000
+# Trần giây cho MỖI lần gọi model ở bước đọc thông tin (quá giờ thì sang model kế tiếp, xem
+# nhánh APITimeoutError trong llm.try_gemini). Đo thật: lần thành công chậm nhất của bước này
+# ~27s (gemini-3.5-flash lúc các model khác đang 429/503), bình thường vài giây — 60s là gấp
+# đôi mức chậm nhất. Không có trần này, 1 lần gemini-3.7-flash nghẹt đã treo ~254s.
+FIELDS_TIMEOUT_SECONDS = _env_int("FIELDS_TIMEOUT_SECONDS", 60)
 
 # Text ngắn hơn mức này thì bước sửa OCR ưu tiên model lite của Gemini (hạn mức free gấp 3 —
 # xem GEMINI_LITE_MODELS trong llm.py). Dùng SỐ KÝ TỰ chứ không phải số trang vì hàm sửa lỗi
 # chỉ nhận được text, không biết file mấy trang — mà "ít token" mới đúng là thứ quyết định.
 # 3000 lấy từ số đo thật: tài liệu 1 trang đọc ra 723-1036 ký tự, 2 trang khoảng 1300-2200 —
 # nên 3000 phủ trọn nhóm 1-2 trang mà không đụng tới tài liệu dày (7 trang: 7541 ký tự).
-# CHỈ áp cho bước sửa lỗi (việc máy móc), KHÔNG áp cho phân loại — xem docstring đầu file.
+# CHỈ áp cho bước sửa lỗi (việc máy móc), KHÔNG áp cho bước đọc thông tin (extract_fields) —
+# ngày hết hạn đọc sai làm hồ sơ quá hạn trông như còn hạn, nên để chuỗi model thường lo.
 LITE_CORRECTION_MAX_CHARS = _env_int("LITE_CORRECTION_MAX_CHARS", 3000)
 
 CORRECTION_SYSTEM_PROMPT = """Bạn là trợ lý sửa lỗi văn bản OCR tiếng Việt. Bạn sẽ nhận được các
@@ -153,33 +158,9 @@ def correct_ocr_text(raw_text: str) -> str | None:
         return None
 
 
-def _build_classification_system_prompt(items: list[ChecklistItem]) -> str:
-    lines = []
-    for i in items:
-        line = f'- id="{i.id}" | nhóm="{i.group}" | tên="{i.nameVi}"'
-        if i.note:
-            line += f' | ghi chú="{i.note}"'
-        if i.isOptional:
-            line += " | (tuỳ chọn)"
-        lines.append(line)
-    item_lines = "\n".join(lines)
-
-    return f"""Bạn là trợ lý phân loại giấy tờ hồ sơ định cư Canada cho một công ty tư vấn di trú Việt Nam.
-Bạn sẽ nhận được nội dung văn bản đã trích xuất (OCR, đã qua bước sửa lỗi chính tả) từ một file
-khách hàng upload (ảnh chụp/scan giấy tờ hoặc PDF).
-Nhiệm vụ: xác định file này khớp với MỘT mục nào trong danh sách checklist dưới đây, dựa trên nội dung được cung cấp.
-
-Danh sách mục checklist hợp lệ:
-{item_lines}
-
-Quy tắc:
-- Chỉ chọn "matched_item_id" là một trong các id ở trên, hoặc chuỗi "unmatched" nếu nội dung không rõ ràng khớp mục nào.
-- Nhiều mục có tên gần giống nhau (vd bằng cấp vs học bạ vs bảng điểm) — đọc kỹ nội dung để phân biệt loại giấy tờ chính xác.
-- "confidence" là số từ 0 đến 1, thể hiện mức độ chắc chắn.
-- "reasoning" là 1 câu ngắn gọn bằng tiếng Việt giải thích vì sao chọn mục đó.
-
-Ngoài việc phân loại, ghi luôn những thông tin đọc được TRÊN CHÍNH GIẤY TỜ này:
-- "doc_owner": giấy tờ này là của AI trong gia đình. Chọn đúng MỘT trong: "APPLICANT" (đương
+# Hướng dẫn "đọc thông tin trên giấy tờ" — trước đây nằm chung trong prompt phân loại (AI vừa
+# chọn mục vừa đọc thông tin trong 1 lệnh); AI phân loại đã bỏ nên giờ là prompt riêng.
+_FIELDS_INSTRUCTIONS = """- "doc_owner": giấy tờ này là của AI trong gia đình. Chọn đúng MỘT trong: "APPLICANT" (đương
   đơn), "SPOUSE" (vợ/chồng), "CHILD_1", "CHILD_2", "CHILD_3", "FATHER" (bố), "MOTHER" (mẹ),
   "OTHER" (người khác hoặc giấy tờ không của riêng ai, vd hợp đồng công ty). Không đoán được
   thì để null.
@@ -198,8 +179,58 @@ Quy tắc BẮT BUỘC cho phần thông tin này:
   ở đây nguy hiểm hơn hẳn để trống: ngày hết hạn sai làm hồ sơ đã quá hạn trông như còn hạn.
 - Ngày tháng PHẢI đúng dạng "YYYY-MM-DD". Giấy tờ Việt Nam thường ghi ngày/tháng/năm — đổi
   đúng thứ tự, đừng để lẫn ngày với tháng.
+"""
 
-- Trả lời CHỈ bằng JSON hợp lệ theo đúng format: {{"matched_item_id": string, "confidence": number, "reasoning": string, "doc_owner": string|null, "holder_name": string|null, "holder_dob": string|null, "id_number": string|null, "id_type": string|null, "issued_at": string|null, "expires_at": string|null, "fields_note": string|null}}"""
+_FIELDS_JSON = ('"doc_owner": string|null, "holder_name": string|null, "holder_dob": string|null, '
+                '"id_number": string|null, "id_type": string|null, "issued_at": string|null, '
+                '"expires_at": string|null, "fields_note": string|null')
+
+
+def _build_fields_system_prompt(item: ChecklistItem | None) -> str:
+    if item is not None:
+        context = (f'Theo tên file nhân viên đặt, giấy tờ này thuộc mục checklist "{item.nameVi}" (phần\n'
+                   f'"{item.section}") — dựa vào tên mục đó để biết giấy tờ này là của ai trong gia đình.')
+    else:
+        # File chưa xếp được mục (tên file không đủ, nhân viên sẽ chọn tay) — vẫn đọc thông tin
+        # ngay để lúc nhân viên chọn mục xong là có sẵn ngày hết hạn, không phải chạy lại.
+        context = ("Chưa biết giấy tờ này thuộc mục nào trong checklist — xác định giấy tờ của ai\n"
+                   "trong gia đình dựa vào chính nội dung và tên file; không chắc thì để null.")
+    return f"""Bạn đọc nội dung đã trích xuất (OCR, đã qua bước sửa lỗi chính tả) của MỘT giấy tờ trong hồ sơ
+định cư Canada. {context}
+
+Nhiệm vụ: ghi lại những thông tin đọc được TRÊN CHÍNH GIẤY TỜ này:
+{_FIELDS_INSTRUCTIONS}
+- Trả lời CHỈ bằng JSON hợp lệ theo đúng format: {{{_FIELDS_JSON}}}"""
+
+
+def extract_fields(text: str, filename: str, item: ChecklistItem | None) -> ExtractedFields:
+    """Đọc thông tin trên giấy tờ (chủ giấy tờ, số, ngày hết hạn...). `item` là mục đã xếp
+    theo tên file, hoặc None nếu chưa xếp được.
+
+    Vẫn cần AI ở đây dù mục xếp theo tên file: những trường này nuôi cảnh báo hạn giấy tờ và
+    đối chiếu chéo (doc_checks.py) — bỏ đi là hai tính năng đó im lặng ngừng chạy. Nhưng việc
+    này rẻ hơn hẳn lệnh phân loại cũ: không phải chọn giữa mấy chục mục, và tên mục cho biết
+    chủ giấy tờ ("CCCD mẹ" -> MOTHER) — thứ khó nhất từng phải bật suy luận (xem docstring đầu
+    file) — nên TẮT suy luận ở cả 2 nhà cung cấp.
+
+    Không bao giờ ném lỗi: hỏng thì trả về các trường trống, mục đã xếp vẫn giữ nguyên."""
+    try:
+        raw = complete_with_fallback(
+            step="Đọc thông tin",
+            messages=[
+                {"role": "system", "content": _build_fields_system_prompt(item)},
+                {"role": "user", "content": f"Tên file gốc: {filename}\n\nNội dung trích xuất được:\n{text}"},
+            ],
+            deepseek_max_tokens=FIELDS_MAX_TOKENS,
+            response_format={"type": "json_object"},
+            gemini_reasoning_effort=GEMINI_LOW_REASONING,
+            deepseek_extra_body=_NO_THINKING,
+            timeout=FIELDS_TIMEOUT_SECONDS,
+        )
+        return _parse_extracted_fields(json.loads(raw or ""))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Lỗi đọc thông tin giấy tờ (%s): %s", filename, describe_error(e))
+        return ExtractedFields()
 
 
 DOC_OWNERS = {"APPLICANT", "SPOUSE", "CHILD_1", "CHILD_2", "CHILD_3", "FATHER", "MOTHER", "OTHER"}
@@ -309,95 +340,35 @@ def classify_ocr_text(
     filename: str,
     applicable_items: list[ChecklistItem],
 ) -> ClassifyOutcome:
-    # File gần như không có chữ (vd ảnh chân dung trơn cho mục "Hình thẻ trắng") — bỏ qua
-    # cả 2 lệnh gọi DeepSeek (sửa lỗi + phân loại) vì không có gì để sửa/phân loại từ text
-    # rỗng, chỉ tốn thời gian gọi API vô ích. Trả thẳng "chưa phân loại" để nhân viên tự
-    # chọn tay — đã thử gợi ý heuristic cụ thể theo mục nhưng người dùng không muốn, chỉ
-    # cần giữ lại phần bỏ qua DeepSeek (thuần lợi ích hiệu năng, không đổi kết quả).
-    if len(ocr_text.strip()) < EMPTY_TEXT_THRESHOLD:
-        return ClassifyOutcome(
-            ocr_text=ocr_text,
-            corrected_text=None,
-            status="NEEDS_REVIEW",
-            matched_checklist_item_id=None,
-            ai_raw_label="unmatched",
-            ai_confidence=0.1,
-            ai_reasoning="File không đọc được chữ nào, không đủ căn cứ để xác định loại giấy tờ.",
-            classification_error=None,
-        )
+    """Xếp file vào mục checklist THEO TÊN FILE (số thứ tự mục + loại giấy tờ ghi trong tên,
+    xem filename_rules.py) — AI không chọn mục. Tên file không đủ để quyết thì để NEEDS_REVIEW
+    cho nhân viên chọn tay, kèm lý do cụ thể; KHÔNG đoán.
 
-    corrected_text = correct_ocr_text(ocr_text)
-    # Ưu tiên dùng text đã sửa cho bước phân loại (tín hiệu sạch hơn); nếu bước sửa lỗi
-    # thất bại thì fallback về text OCR thô thay vì chặn cả pipeline.
-    text_for_classification = corrected_text or ocr_text
-
-    try:
-        # KHÔNG truyền reasoning_effort cho Gemini ở bước này — cần suy luận thật để phân
-        # biệt "giấy tờ này của ai trong gia đình" (xem docstring đầu file: DeepSeek tắt
-        # reasoning từng khớp nhầm CCCD của mẹ thành CCCD đương đơn 3/4 lần). Đã kiểm chứng
-        # lại đúng case đó với Gemini để reasoning mặc định: gemini-3.6-flash đúng 6/6 lần,
-        # mỗi lần ~4s, trong khi DeepSeek có reasoning mất hàng chục tới hàng trăm giây.
-        raw = complete_with_fallback(
-            step="Phân loại",
-            messages=[
-                {"role": "system", "content": _build_classification_system_prompt(applicable_items)},
-                {
-                    "role": "user",
-                    "content": f"Tên file gốc: {filename}\n\nNội dung trích xuất được:\n{text_for_classification or '(không đọc được nội dung)'}",
-                },
-            ],
-            deepseek_max_tokens=CLASSIFICATION_MAX_TOKENS,
-            response_format={"type": "json_object"},
-        )
-        parsed = json.loads(raw or "")
-
-        matched_item_id = str(parsed["matched_item_id"])
-        confidence = float(parsed["confidence"])
-        reasoning = str(parsed.get("reasoning", ""))
-        fields = _parse_extracted_fields(parsed)
-
-        valid_ids = {i.id for i in applicable_items}
-        is_known_match = matched_item_id != "unmatched" and matched_item_id in valid_ids
-        meets_threshold = confidence >= CONFIDENCE_THRESHOLD
-
-        if is_known_match and meets_threshold:
-            return ClassifyOutcome(
-                ocr_text=ocr_text,
-                corrected_text=corrected_text,
-                status="CLASSIFIED",
-                matched_checklist_item_id=matched_item_id,
-                ai_raw_label=matched_item_id,
-                ai_confidence=confidence,
-                ai_reasoning=reasoning,
-                classification_error=None,
-                fields=fields,
-            )
-
-        # Chưa khớp được mục nào, nhưng thông tin bóc ra từ giấy tờ vẫn giữ lại: nhân viên
-        # gán tay xong là có ngay ngày hết hạn và thông tin chủ giấy tờ, không phải chạy lại.
-        return ClassifyOutcome(
-            ocr_text=ocr_text,
-            corrected_text=corrected_text,
-            status="NEEDS_REVIEW",
-            matched_checklist_item_id=None,
-            ai_raw_label=matched_item_id,
-            ai_confidence=confidence,
-            ai_reasoning=reasoning,
-            classification_error=None,
-            fields=fields,
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Lỗi phân loại DeepSeek: %s", e)
-        return ClassifyOutcome(
-            ocr_text=ocr_text,
-            corrected_text=corrected_text,
-            status="ERROR",
-            matched_checklist_item_id=None,
-            ai_raw_label=None,
-            ai_confidence=None,
-            ai_reasoning=None,
-            classification_error=f"Lỗi phân loại: {describe_error(e)}",
-        )
+    AI chỉ còn 2 việc không phải chọn mục: sửa lỗi OCR (để nhân viên đọc) và đọc thông tin
+    trên giấy tờ (extract_fields) — làm cả với file chưa xếp được mục, để nhân viên chọn tay
+    xong là có sẵn ngày hết hạn, không phải chạy lại."""
+    match = match_by_filename(filename, applicable_items)
+    text = ocr_text or ""
+    corrected_text = None
+    fields = ExtractedFields()
+    # File gần như không có chữ (ảnh thẻ trơn) vẫn xếp mục được theo tên file — chỉ bỏ qua 2
+    # lệnh gọi AI vì không có gì để sửa hay đọc, gọi chỉ tốn thời gian.
+    if len(text.strip()) >= EMPTY_TEXT_THRESHOLD:
+        corrected_text = correct_ocr_text(text)
+        fields = extract_fields(corrected_text or text, filename, match.item)
+    return ClassifyOutcome(
+        ocr_text=ocr_text,
+        corrected_text=corrected_text,
+        status="CLASSIFIED" if match.item else "NEEDS_REVIEW",
+        matched_checklist_item_id=match.item.id if match.item else None,
+        ai_raw_label=match.item.id if match.item else None,
+        # None chứ không phải 1.0: giao diện hiện "AI tin cậy: X%" khi có số — ghi 100% cho một
+        # quyết định AI không hề tham gia là nói sai với nhân viên. Lý do thật nằm ở ai_reasoning.
+        ai_confidence=None,
+        ai_reasoning=match.reason,
+        classification_error=None,
+        fields=fields,
+    )
 
 
 # Theo yêu cầu người dùng: cần bản phân tích CHI TIẾT ĐẦY ĐỦ (không phải bản tóm tắt ngắn
@@ -484,7 +455,7 @@ def summarize_case_profile(case_context: str, documents_text: str) -> tuple[str 
 # Đọc số dư tiết kiệm từ giấy tờ chứng minh tài chính
 # ---------------------------------------------------------------------------
 
-# Nhỏ hơn hẳn CLASSIFICATION_MAX_TOKENS: đầu ra chỉ là 1 con số + vài dòng liệt kê nguồn,
+# Nhỏ hơn hẳn SUMMARY_MAX_TOKENS: đầu ra chỉ là 1 con số + vài dòng liệt kê nguồn,
 # không phải đoạn phân tích dài. Vẫn để rộng rãi vì Gemini 3.x là model lai — phần suy luận
 # ăn CHUNG hạn mức này, cắt sát quá là trả về rỗng với finish_reason="length" (đã gặp thật
 # ở SUMMARY_MAX_TOKENS, xem ghi chú ở đó).

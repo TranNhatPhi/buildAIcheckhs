@@ -1,11 +1,11 @@
 import { CaseList } from "@/components/CaseList";
-import { API_URL } from "@/lib/format";
+import { SERVER_API_URL } from "@/lib/serverApi";
 import type { CaseListItemDTO } from "@/lib/client-types";
 
 export const dynamic = "force-dynamic";
 
 async function getCases(): Promise<CaseListItemDTO[]> {
-  const res = await fetch(`${API_URL}/cases`, { cache: "no-store" });
+  const res = await fetch(`${SERVER_API_URL}/cases`, { cache: "no-store" });
   if (!res.ok) return [];
   return res.json();
 }

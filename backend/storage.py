@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+from datetime import datetime
 
 import boto3
 from botocore.exceptions import ClientError
@@ -14,6 +15,12 @@ _s3 = boto3.client(
 )
 
 BUCKET = os.environ["MINIO_BUCKET"]
+
+# Thư mục giữ bản dịch của trang "Kiểm tra dịch thuật". Khai ở đây chứ không ở router vì
+# case_cleanup.py cũng phải biết đúng tiền tố này để dọn — hai nơi tự khai là dọn nhầm chỗ
+# hoặc dọn hụt mà không ai thấy (không có bảng DB nào đối chiếu được).
+TRANSLATION_CHECK_PREFIX = "translation-checks"
+
 
 
 def _ensure_bucket_exists() -> None:
@@ -54,6 +61,59 @@ def upload_object(key: str, content: bytes, mime_type: str) -> str:
     document_id + số trang) thay vì phải lưu riêng danh sách key vào DB."""
     _s3.put_object(Bucket=BUCKET, Key=key, Body=content, ContentType=mime_type)
     return key
+
+
+def list_objects(prefix: str) -> list[str]:
+    """Các key đang có dưới một tiền tố. Dùng cho bộ bản dịch (translation-checks/<id>/...) —
+    chỗ đó KHÔNG có bảng DB nào lưu key, nên phải hỏi thẳng MinIO xem file nằm ở key nào."""
+    res = _s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
+    return sorted(item["Key"] for item in res.get("Contents", []))
+
+
+def delete_prefix(prefix: str) -> int:
+    """Xoá MỌI object dưới một tiền tố, trả về số object đã xoá.
+
+    Dùng để xoá sạch file của một hồ sơ (tiền tố "<case_id>/"): gồm cả file gốc LẪN ảnh từng
+    trang PDF ("<doc_id>-pages/page-N.png"). Xoá từng tài liệu qua delete_document chỉ xoá
+    file gốc — ảnh trang (chính là ảnh chụp CCCD/khai sinh, và nặng gấp hàng chục lần file gốc)
+    sẽ nằm lại vĩnh viễn.
+
+    Tiền tố PHẢI kết thúc bằng "/": "abc" sẽ khớp cả thư mục "abcdef/" của hồ sơ khác.
+    """
+    if not prefix.endswith("/"):
+        raise ValueError(f"Tiền tố phải kết thúc bằng '/': {prefix!r}")
+    keys = [k for k, _ in list_objects_with_time(prefix)]
+    # delete_objects nhận tối đa 1000 key mỗi lần.
+    for i in range(0, len(keys), 1000):
+        res = _s3.delete_objects(
+            Bucket=BUCKET,
+            Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]], "Quiet": True},
+        )
+        loi = res.get("Errors") or []
+        if loi:
+            raise RuntimeError(f"Không xoá được {len(loi)} file, vd {loi[0].get('Key')}: {loi[0].get('Message')}")
+    return len(keys)
+
+
+def list_objects_with_time(prefix: str) -> list[tuple[str, "datetime"]]:
+    """(key, thời điểm ghi lên MinIO) của MỌI object dưới tiền tố, có phân trang.
+
+    Khác list_objects ở hai chỗ, đều cần cho việc dọn theo tuổi file:
+      - trả kèm LastModified để biết file bao nhiêu tuổi (không bảng DB nào lưu mốc này);
+      - ĐI HẾT các trang: list_objects_v2 chỉ trả tối đa 1000 key mỗi lần, mà một lượt kiểm
+        tra đã có thể 60 file — dọn hụt thì file cũ nằm lại vĩnh viễn và không ai biết.
+    """
+    ra: list[tuple[str, datetime]] = []
+    token = None
+    while True:
+        kw = {"Bucket": BUCKET, "Prefix": prefix}
+        if token:
+            kw["ContinuationToken"] = token
+        res = _s3.list_objects_v2(**kw)
+        ra.extend((item["Key"], item["LastModified"]) for item in res.get("Contents", []))
+        if not res.get("IsTruncated"):
+            return ra
+        token = res.get("NextContinuationToken")
 
 
 def get_document_bytes(key: str) -> bytes:
