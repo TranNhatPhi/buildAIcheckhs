@@ -86,6 +86,10 @@ x-backend-common: &backend-common
 x-backend-service: &backend-service
   <<: *backend-common
   restart: unless-stopped
+  # Khởi động lại (deploy) thì CHỜ request đang chạy xong rồi mới tắt: upload đọc chữ + phân loại ngay
+  # trong request (có thể vài phút), mặc định Docker chỉ chờ 10 giây rồi giết -> file kẹt "bị gián đoạn"
+  # (đã xảy ra 13/10/2026). uvicorn nhận SIGTERM là ngừng nhận request mới, chờ request cũ xong mới thoát.
+  stop_grace_period: 5m
   # Healthcheck gọi bằng python có sẵn trong image — python:3.9-slim KHÔNG có curl/wget,
   # dùng chúng thì healthcheck luôn báo unhealthy dù backend chạy tốt. Có healthcheck thì
   # load balancer mới biết replica nào đang sống mà chia tải, frontend mới chờ được đúng lúc

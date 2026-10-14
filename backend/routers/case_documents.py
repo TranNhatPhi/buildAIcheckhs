@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 import activity
 import ocr
 import storage
-from case_auto_status import dong_bo_hoan_thanh
+from case_auto_status import bo_hoan_tat_neu_tut, dong_bo_hoan_thanh, tien_do_that
 from classify import ap_thong_tin_boc_duoc, classify_ocr_text
 from completeness import is_item_applicable, is_savings_item
 from db import get_db
@@ -288,10 +288,12 @@ def delete_all_documents(case_id: str, db: Session = Depends(get_db)):
 
     documents = db.scalars(select(Document).where(Document.caseId == case_id)).all()
     had_savings_document = any(is_savings_item(doc.matchedChecklistItemId) for doc in documents)
+    truoc = tien_do_that(db, case) if case.completedAt is not None else 0
     for doc in documents:
         storage.delete_document(doc.storedPath)
         db.delete(doc)
     db.commit()
+    bo_hoan_tat_neu_tut(db, case, truoc)
     dong_bo_hoan_thanh(db, case)
     activity.ghi("DOC_DELETE_ALL", case=case, detail=f"{len(documents)} file")
 

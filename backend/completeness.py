@@ -289,3 +289,25 @@ def assess_savings(
         short_of_min_vnd=short_of_min,
         short_of_max_vnd=short_of_max,
     )
+
+
+def xep_lai_theo_ten_file(doc: Document, case, all_items: list[ChecklistItem]) -> bool:
+    """Xếp file CHƯA có mục vào mục theo TÊN FILE (filename_rules — cùng quy tắc lúc upload). Trả True
+    nếu đã xếp. KHÔNG đụng file đã có mục hoặc nhân viên đã chọn tay.
+
+    Hai chỗ dùng (14/10/2026): seed.xep_lai_file_chua_khop — file đặt tên đúng số nhưng upload TRƯỚC
+    khi checklist có mục đó (vd "0. … - Phiếu thông tin" nộp 23/09, mục số 0 thêm 13/10); và
+    case_cleanup.don_tai_lieu_ket — file bị gián đoạn khi máy chủ khởi động lại (bước xếp mục nằm cuối
+    quá trình xử lý nên chưa kịp chạy)."""
+    from filename_rules import match_by_filename
+
+    if doc.isManualOverride or doc.matchedChecklistItemId:
+        return False
+    items = [i for i in all_items if is_item_applicable(i, case.maritalStatus, case.numberOfChildren, case.skillLevel)]
+    khop = match_by_filename(doc.originalFilename, items)
+    if khop.item is None:
+        return False
+    doc.matchedChecklistItemId = khop.item.id
+    doc.aiRawLabel = khop.item.id
+    doc.aiReasoning = khop.reason
+    return True

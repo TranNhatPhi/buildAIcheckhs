@@ -74,3 +74,41 @@ def dong_bo_hoan_thanh(db: Session, case: Case | None, items: list[ChecklistItem
         logger.exception("Không tự đồng bộ được trạng thái hồ sơ %s", getattr(case, "id", "?"))
         db.rollback()
         return False
+
+
+def tien_do_that(db: Session, case: Case) -> int:
+    """Tiến độ THẬT theo giấy tờ — KHÔNG tính dấu "Hoàn tất" (force_complete=False)."""
+    db.expire(case, ["documents"])
+    return compute_checklist_summary(
+        db.scalars(select(ChecklistItem)).all(), case.documents,
+        case.maritalStatus, case.numberOfChildren, case.skillLevel, force_complete=False,
+    ).percent
+
+
+def bo_hoan_tat_neu_tut(db: Session, case: Case, truoc: int) -> bool:
+    """Xoá file làm % giảm (Docs yêu cầu 14/10/2026: "xoá file nào ràng buộc % thì % phải giảm").
+
+    Hồ sơ thường tự giảm vì % tính lại từ giấy tờ. Hồ sơ ĐÃ "Hoàn tất" bị ép 100% (force_complete) nên
+    phải BỎ Hoàn tất — completedAt + hẹn xoá file (autoDeleteAt) — khi tiến độ THẬT sau khi xoá thấp hơn
+    `truoc` (tiến độ thật ngay trước khi xoá). Xoá file không tính vào % (file thừa, mục tuỳ chọn còn file
+    khác...) thì giữ nguyên Hoàn tất. Gọi TRƯỚC dong_bo_hoan_thanh để trạng thái lùi theo % mới. Trả True
+    nếu đã bỏ Hoàn tất. Không ném lỗi (bước phụ sau thao tác xoá đã thành công)."""
+    if case is None or case.completedAt is None:
+        return False
+    try:
+        sau = tien_do_that(db, case)
+        if sau >= truoc:
+            return False
+        case.completedAt = None
+        case.autoDeleteAt = None
+        db.commit()
+        logger.info("Hồ sơ %s: xoá file làm tiến độ thật %d%% -> %d%% — tự bỏ Hoàn tất", case.id, truoc, sau)
+        import activity
+
+        activity.ghi("CASE_UNCOMPLETE", case=case,
+                     detail=f"Tự bỏ Hoàn tất: xoá file làm tiến độ giảm {truoc}% → {sau}% (huỷ hẹn xoá file)")
+        return True
+    except Exception:
+        logger.exception("Không tự bỏ Hoàn tất được cho hồ sơ %s", getattr(case, "id", "?"))
+        db.rollback()
+        return False

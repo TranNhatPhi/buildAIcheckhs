@@ -162,6 +162,23 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
     onChanged();
   }
 
+  // Xoá NHIỀU file đã tick một lần (14/10/2026, Docs yêu cầu) — gọi lần lượt đúng API xoá từng file như
+  // nút "Xoá" trên mỗi file (MinIO + ảnh trang + ghi lịch sử DOC_DELETE từng file).
+  const [dangXoaNhieu, setDangXoaNhieu] = useState(false);
+  async function xoaDaChon(ids: string[]) {
+    if (!ids.length || !confirm(`Xoá ${ids.length} file đã chọn khỏi hồ sơ?\n\nFile xoá rồi KHÔNG khôi phục được.`)) return;
+    setDangXoaNhieu(true);
+    let loi = 0;
+    for (const id of ids) {
+      const r = await fetch(`${API_URL}/documents/${id}`, { method: "DELETE" }).catch(() => null);
+      if (!r || !r.ok) loi++;
+    }
+    setDangXoaNhieu(false);
+    setDaChon(new Set());
+    if (loi) alert(`Không xoá được ${loi}/${ids.length} file — thử lại sau.`);
+    onChanged();
+  }
+
   if (documents.length === 0) {
     return <p className="text-sm text-neutral-400">Chưa có file nào được upload.</p>;
   }
@@ -209,6 +226,18 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
             >
               Tải file đã chọn (ZIP)
             </a>
+            <button
+              type="button"
+              onClick={() => xoaDaChon(idDangChon)}
+              disabled={idDangChon.length === 0 || dangXoaNhieu}
+              className="text-xs font-semibold px-3 py-1.5 rounded-full bg-red-50 text-red-700 hover:bg-red-100 disabled:bg-neutral-100 disabled:text-neutral-400 transition-colors"
+            >
+              {dangXoaNhieu
+                ? "Đang xoá..."
+                : idDangChon.length > 0
+                  ? `Xoá ${idDangChon.length} file đã chọn`
+                  : "Xoá file đã chọn"}
+            </button>
             <a
               href={`${API_URL}/cases/${caseId}/download-all`}
               className="text-xs font-semibold px-3 py-1.5 rounded-full bg-neutral-100 text-neutral-700 hover:bg-neutral-200 transition-colors"

@@ -36,7 +36,7 @@ from case_auto_status import dong_bo_hoan_thanh, trang_thai_theo_tien_do  # noqa
 from case_delete import purge_case_files  # noqa: E402
 from case_status import CASE_AUTO_DELETE_DAYS  # noqa: E402
 from db import SessionLocal  # noqa: E402
-from completeness import compute_checklist_summary  # noqa: E402
+from completeness import compute_checklist_summary, xep_lai_theo_ten_file  # noqa: E402
 from models import ActivityLog, Case, ChecklistItem, Document, now_utc  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -198,6 +198,7 @@ def don_tai_lieu_ket(*, dry_run: bool = False) -> int:
             logger.info("Không có tài liệu nào kẹt ở trạng thái đang xử lý.")
             return 0
 
+        tat_ca_muc = list(db.scalars(select(ChecklistItem)).all())
         for d in ket:
             logger.warning(
                 "%s tài liệu '%s' (%s) kẹt ở %s từ %s.",
@@ -210,6 +211,9 @@ def don_tai_lieu_ket(*, dry_run: bool = False) -> int:
                     "Xử lý bị gián đoạn giữa chừng (máy chủ khởi động lại) — bấm \"Thử lại\" "
                     "để đọc lại từ file gốc."
                 )
+                # Vẫn xếp mục theo TÊN FILE (14/10/2026): bước xếp mục nằm cuối quá trình xử lý nên file
+                # gián đoạn chưa có mục — nhân viên phải chọn tay dù tên file đã nói rõ ("0. … - Phiếu TT").
+                xep_lai_theo_ten_file(d, d.case, tat_ca_muc)
         if not dry_run:
             db.commit()
         return len(ket)

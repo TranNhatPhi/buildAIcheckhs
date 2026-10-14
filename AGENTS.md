@@ -481,6 +481,16 @@ Máy dev (`192.168.1.200`) là hệ thống CHÍNH của văn phòng từ 25/09/
 
 ## Vận hành
 
+**Khởi động lại backend mà không làm hỏng file đang upload (14/10/2026).** Upload đọc chữ + xếp mục
+chạy NGAY TRONG request — giết backend giữa chừng là file kẹt "Xử lý bị gián đoạn". Đã xảy ra 13/10 vì
+lệnh kiểm tra trước deploy dò nhầm trạng thái `PENDING`/`PROCESSING` (không tồn tại — luôn ra 0). Đúng là
+`Document.status IN ('OCR_RUNNING','CLASSIFYING')` (`case_cleanup.TRANG_THAI_DANG_XU_LY`). Backend có
+`stop_grace_period: 5m` (uvicorn chờ request đang chạy xong rồi mới thoát); khởi động lại TỪNG backend
+một (`docker compose up -d --no-deps backend`, chờ healthy, rồi backend2, backend3) để luôn còn bản phục vụ.
+File vẫn bị gián đoạn thì `don_tai_lieu_ket` chuyển LỖI nhưng VẪN xếp mục theo tên file
+(`completeness.xep_lai_theo_ten_file`); seed mỗi lần chạy cũng xếp lại file "chưa khớp" theo tên file với
+checklist hiện tại (vd file "0. …" nộp trước khi có mục số 0).
+
 Production chạy trên một VM GCP (`instance-20260825-021254`, 8 vCPU / 31 GB).
 
 ```bash

@@ -9,7 +9,7 @@ import activity
 import ocr
 import paddle_ocr_vl
 import storage
-from case_auto_status import dong_bo_hoan_thanh
+from case_auto_status import bo_hoan_tat_neu_tut, dong_bo_hoan_thanh, tien_do_that
 from classify import ap_thong_tin_boc_duoc, classify_ocr_text
 from completeness import is_item_applicable, is_savings_item
 from db import get_db
@@ -133,10 +133,13 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
     was_savings = is_savings_item(doc.matchedChecklistItemId)
     case = doc.case
     ten_file, muc = doc.originalFilename, activity.ten_muc(db, doc.matchedChecklistItemId)
+    truoc = tien_do_that(db, case) if case.completedAt is not None else 0
 
     storage.delete_document(doc.storedPath)
     db.delete(doc)
     db.commit()
+    # Hồ sơ đã "Hoàn tất" (ép 100%) mà file này làm % thật giảm -> bỏ Hoàn tất để % giảm theo.
+    bo_hoan_tat_neu_tut(db, case, truoc)
     dong_bo_hoan_thanh(db, case)
     activity.ghi("DOC_DELETE", case=case, detail=f"'{ten_file}'" + (f" (mục {muc})" if muc else ""))
 

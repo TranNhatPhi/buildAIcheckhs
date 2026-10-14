@@ -21,11 +21,11 @@ load_dotenv("../.env")
 
 from sqlalchemy import select, text
 
-from completeness import relink_marital_variants
+from completeness import relink_marital_variants, xep_lai_theo_ten_file
 from filename_rules import NHOM_SO_0
 from db import SessionLocal, engine
 from case_status import LEGACY_STATUS_MAP
-from models import Base, Case, ChecklistItem
+from models import Base, Case, ChecklistItem, Document
 
 SECTION_APPLICANT = "Hồ sơ đương đơn"
 SECTION_DEPENDENTS = "Hồ sơ người phụ thuộc"
@@ -665,6 +665,23 @@ def main():
         db.commit()
         if moved:
             print(f"Relinked {moved} document(s) to the checklist variant of their case's marital status.")
+
+        # File "chưa khớp" (NEEDS_REVIEW, không mục, không chọn tay) xếp lại theo TÊN FILE với checklist
+        # HIỆN TẠI — file đặt đúng số nhưng upload trước khi có mục đó (vd mục 0 "Phiếu TT khách hàng"
+        # thêm 13/10/2026) tự vào mục. Đã đọc chữ xong nên chuyển thẳng CLASSIFIED như lúc upload.
+        tat_ca_muc = list(db.scalars(select(ChecklistItem)).all())
+        xep = 0
+        for doc in db.scalars(select(Document).where(
+            Document.status == "NEEDS_REVIEW", Document.matchedChecklistItemId.is_(None),
+            Document.isManualOverride.is_(False),
+        )).all():
+            if xep_lai_theo_ten_file(doc, doc.case, tat_ca_muc):
+                doc.status = "CLASSIFIED"
+                xep += 1
+                print(f"Xep lai theo ten file: {doc.originalFilename!r} -> {doc.matchedChecklistItemId}")
+        db.commit()
+        if xep:
+            print(f"Xep lai {xep} file chua khop theo ten file.")
     finally:
         db.close()
 
