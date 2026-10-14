@@ -177,6 +177,12 @@ Trang **Danh sách hồ sơ** có nút **"Hoàn tất"** trên từng thẻ: `Ca
 trang) và các dòng Document; **GIỮ hồ sơ khách**, ghi `filesPurgedAt` (trang hồ sơ hiện "File đã xoá
 ngày …"), bỏ `autoDeleteAt`. File xoá rồi không khôi phục được.
 
+- **Xoá file làm % giảm (14/10/2026, Docs yêu cầu).** Hồ sơ thường tự giảm vì % tính lại từ giấy tờ.
+  Hồ sơ ĐÃ Hoàn tất bị ép 100% nên `case_auto_status.bo_hoan_tat_neu_tut` (gọi ở xoá 1 file, "Xoá file đã
+  chọn" và "Xoá tất cả") so tiến độ THẬT trước/sau khi xoá: giảm thì TỰ BỎ Hoàn tất (completedAt +
+  autoDeleteAt = NULL, lịch sử CASE_UNCOMPLETE "Tự bỏ Hoàn tất…") rồi trạng thái lùi theo %; xoá file không
+  tính vào % (mục tuỳ chọn, file thừa) thì giữ Hoàn tất.
+
 - **Lịch sử quy tắc:** 25/09/2026 đổi hai lần (xoá mềm cả hồ sơ -> chỉ xoá file -> xoá HẲN cả hồ sơ).
   **13/10/2026** tiến trình xoá hẳn 2 hồ sơ (Võ Thị Diễm Hương, Nguyễn Hoàng Long — cả thông tin khách,
   không có bản sao lưu nên mất luôn); Docs yêu cầu: "xoá là xoá file thôi, profile vẫn giữ" -> quay
