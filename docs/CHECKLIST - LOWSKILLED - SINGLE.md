@@ -4,6 +4,7 @@
 
 ### I. Giấy tờ cá nhân
 
+0. Phiếu TT khách hàng
 1. Passport
 2. Căn cước công dân
 3. Chứng minh nhân dân cũ (nếu có)

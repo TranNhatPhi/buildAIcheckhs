@@ -3,7 +3,6 @@
 export type ApplicationStatus =
   | "PENDING"
   | "COLLECTING_DOCUMENTS"
-  | "REVIEWING_DOCUMENTS"
   | "READY_TO_SUBMIT"
   | "COMPLETED"
   | "SUBMITTED"
@@ -25,6 +24,8 @@ export interface ChecklistItemDTO {
   skillLevel: string;
   /** Các mục cùng giá trị này, nằm liền nhau, dùng chung số lớn: "18.1", "18.2". */
   numberGroup: string | null;
+  /** false = giấy tờ mục này không phải dịch (ô vàng trong checklist 4th) — không tính vào số trang dịch. */
+  needsTranslation?: boolean;
 }
 
 export interface DocumentDTO {
@@ -145,6 +146,16 @@ export interface CaseListItemDTO {
   submissionRound: number;
   // Lần có file mới gần nhất (null = chưa có file) — cột "Ngày cập nhật" ở trang thống kê.
   lastDocumentAt: string | null;
+  // Công tắc "Đã gửi nguồn": lúc bật + người bật; null = chưa gửi.
+  sentToSourceAt?: string | null;
+  sentToSourceBy?: string | null;
+  // Công tắc "Đã sẵn sàng nộp" (thẻ ở danh sách) — phải bật mới bấm "Hoàn tất"; null = chưa bật.
+  readyToSubmitAt?: string | null;
+  readyToSubmitBy?: string | null;
+  // Ngày lăn tay "YYYY-MM-DD" — admin chọn ở bảng hồ sơ trang tổng quan; null = chưa có lịch.
+  biometricsDate?: string | null;
+  // Ngày nộp cho Chính phủ "YYYY-MM-DD" — admin chọn ở trang "CP đang xử lý"; null = chưa ghi.
+  submittedDate?: string | null;
   // Số ngày chưa cập nhật nếu thuộc diện nhắc "7 ngày chưa cập nhật" (backend thong_bao.py), null nếu không.
   // Chỉ có ở danh sách (GET /cases, GET /admin/cases).
   idleDays?: number | null;
@@ -246,6 +257,10 @@ export interface CaseDetailDTO {
     statusReminderIntervalDays: number;
     submissionRound: number;
     lastDocumentAt: string | null;
+    sentToSourceAt?: string | null;
+    sentToSourceBy?: string | null;
+    readyToSubmitAt?: string | null;
+    readyToSubmitBy?: string | null;
     documents: DocumentDTO[];
     aiAnalysisStatus: string;
     aiAnalysisSummary: string | null;

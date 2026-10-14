@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ResubmitBadge } from "@/components/ResubmitBadge";
 import { tomTatDonVi } from "@/components/ExperienceUnitsField";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -28,6 +29,7 @@ import {
   estimateProcessingSeconds,
   formatExperience,
   formatRemaining,
+  gioNgayVN,
   parseUtcDate,
 } from "@/lib/format";
 import { useHydrated } from "@/lib/useHydrated";
@@ -70,6 +72,9 @@ export function CaseDetail({ caseId, initialData }: Props) {
   const [notFound, setNotFound] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [nguonSaving, setNguonSaving] = useState(false);
+  const [dangChep, setDangChep] = useState(false);
+  const router = useRouter();
   // Thông báo "đã gửi email" tự tắt sau 5 giây. Giữ id timer trong ref để lần đổi trạng thái
   // kế tiếp huỷ được timer cũ — không huỷ thì timer của lần trước sẽ tắt sớm thông báo mới.
   const [emailNotice, setEmailNotice] = useState<string | null>(null);
@@ -207,6 +212,24 @@ export function CaseDetail({ caseId, initialData }: Props) {
     }
   }
 
+  // Công tắc "Đã gửi nguồn" — chỉ đánh dấu (backend lưu giờ bật + người bật), không đổi trạng thái.
+  async function doiGuiNguon(bat: boolean) {
+    setNguonSaving(true);
+    setStatusError(null);
+    try {
+      const res = await fetch(`${API_URL}/cases/${caseId}/sent-to-source`, { method: bat ? "POST" : "DELETE" });
+      if (!res.ok) {
+        setStatusError(bat ? "Không đánh dấu được Đã gửi nguồn." : "Không tắt được Đã gửi nguồn.");
+        return;
+      }
+      await refetch();
+    } catch {
+      setStatusError("Không kết nối được máy chủ. Vui lòng thử lại.");
+    } finally {
+      setNguonSaving(false);
+    }
+  }
+
   // Nếu còn document đang chờ OCR/AI xử lý (vd trang vừa được F5 lại giữa lúc đang xử
   // lý, hoặc nhân viên rời trang rồi quay lại), tự động poll lại định kỳ cho đến khi
   // xong — không bắt nhân viên phải tự F5 để biết kết quả.
@@ -227,7 +250,10 @@ export function CaseDetail({ caseId, initialData }: Props) {
   // Tải lại mỗi khi trạng thái / đơn vị đổi: hồ sơ vừa tới "Hoàn thành" thì banner phải tắt ngay.
   // Khoá dạng chuỗi: mảng đơn vị là object MỚI sau mỗi lần tải lại trang, dùng thẳng làm dependency
   // là gọi lại API sau mọi thao tác dù chẳng có gì đổi.
-  const khoaThongBao = data ? `${data.case.applicationStatus}|${JSON.stringify(data.case.experienceUnits ?? [])}` : "";
+  // Có cả công tắc "Đã gửi nguồn": bật là backend bỏ hồ sơ khỏi danh sách nhắc -> banner tắt ngay.
+  const khoaThongBao = data
+    ? `${data.case.applicationStatus}|${data.case.sentToSourceAt ?? ""}|${JSON.stringify(data.case.experienceUnits ?? [])}`
+    : "";
   useEffect(() => {
     let huy = false;
     fetch(`${API_URL}/notifications`)
@@ -278,6 +304,37 @@ export function CaseDetail({ caseId, initialData }: Props) {
     return () => clearInterval(interval);
   }, [hasProcessingDocs, refetch]);
 
+  // CHÉP nhóm "hồ sơ tiếng Anh" (file không cần dịch) sang Danh sách hồ sơ hoàn thành — hồ sơ thô giữ nguyên.
+  async function chepSangHoanThanh() {
+    if (
+      !confirm(
+        "Chép các file KHÔNG cần dịch (hộ chiếu, căn cước, ảnh thẻ, CV...) sang hồ sơ hoàn thành?\n\n" +
+          "• Hồ sơ thô giữ nguyên, không đổi gì.\n" +
+          "• File trùng tên đã có trong hồ sơ hoàn thành sẽ được thay bằng bản mới.",
+      )
+    )
+      return;
+    setDangChep(true);
+    try {
+      const r = await fetch(`${API_URL}/final/cases/${caseId}/copy-english`, { method: "POST" }).catch(() => null);
+      const kq = r ? await r.json().catch(() => null) : null;
+      if (!r || !r.ok) {
+        alert(typeof kq?.detail === "string" ? kq.detail : "Không chép được — thử lại sau.");
+        return;
+      }
+      if (
+        confirm(
+          `Đã chép ${kq.total} file sang hồ sơ hoàn thành` +
+            (kq.replaced ? ` (${kq.added} file mới, thay ${kq.replaced} file cũ)` : "") +
+            ".\n\nMở hồ sơ hoàn thành?",
+        )
+      )
+        router.push(`/ho-so-hoan-thanh/${caseId}`);
+    } finally {
+      setDangChep(false);
+    }
+  }
+
   if (notFound) return <p className="text-neutral-500 px-6 py-10">Không tìm thấy hồ sơ.</p>;
   if (!data) return <p className="text-neutral-400 px-6 py-10">Đang tải...</p>;
 
@@ -287,6 +344,18 @@ export function CaseDetail({ caseId, initialData }: Props) {
   // thiếu trang mà nhìn vào lại tưởng là đủ.
   const totalPages = c.documents.reduce((sum, d) => sum + (documentPageCount(d) ?? 0), 0);
   const unknownPageDocs = c.documents.filter((d) => documentPageCount(d) == null).length;
+  // "Hồ sơ dịch thuật: N trang" — bỏ các file thuộc mục KHÔNG phải dịch (hộ chiếu, căn cước, ảnh
+  // thẻ, khám sức khoẻ, tiếng Anh, CV, sổ tiết kiệm… — backend seed.KHONG_CAN_DICH, theo ô vàng
+  // của checklist 4th). File chưa khớp mục nào vẫn TÍNH (chưa biết loại thì coi như phải dịch).
+  const canDich = (d: (typeof c.documents)[number]) => d.matchedChecklistItem?.needsTranslation !== false;
+  const translationPages = c.documents.reduce((sum, d) => sum + (canDich(d) ? (documentPageCount(d) ?? 0) : 0), 0);
+  const englishPages = totalPages - translationPages;
+  const coFileDich = c.documents.some(canDich);
+  const coFileTiengAnh = c.documents.some((d) => !canDich(d));
+  const unmatchedPages = c.documents.reduce(
+    (sum, d) => sum + (d.matchedChecklistItem ? 0 : (documentPageCount(d) ?? 0)),
+    0,
+  );
   const isComplete = checklist.percent === 100;
   const applicationStatus = getApplicationStatus(c.applicationStatus);
   // Mục bắt buộc còn thiếu — liệt kê ngay đầu trang để nhân viên biết cần làm gì tiếp mà
@@ -377,7 +446,8 @@ export function CaseDetail({ caseId, initialData }: Props) {
             </span>
             <p className="mt-2 text-sm text-neutral-600">{applicationStatus.description}</p>
           </div>
-          <label className="min-w-56">
+          <div className="flex min-w-56 flex-col gap-3">
+          <label>
             <span className="mb-1.5 block text-xs font-semibold text-neutral-600">
               Cập nhật trạng thái
             </span>
@@ -404,6 +474,42 @@ export function CaseDetail({ caseId, initialData }: Props) {
               })}
             </select>
           </label>
+          {/* Công tắc "Đã gửi nguồn": bật thì danh sách hồ sơ cũng hiện nhãn "📤 Đã gửi nguồn". */}
+          <div
+            className={`flex items-center gap-3 rounded-xl border-2 px-3 py-2 transition-colors ${
+              c.sentToSourceAt ? "border-emerald-300 bg-emerald-50" : "border-neutral-200 bg-white"
+            }`}
+          >
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!c.sentToSourceAt}
+              aria-label="Đã gửi nguồn"
+              disabled={nguonSaving}
+              onClick={() => void doiGuiNguon(!c.sentToSourceAt)}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-emerald-200 disabled:opacity-50 ${
+                c.sentToSourceAt ? "bg-emerald-600" : "bg-neutral-300"
+              }`}
+            >
+              <span
+                aria-hidden
+                className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                  c.sentToSourceAt ? "translate-x-[22px]" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+            <div className="min-w-0">
+              <p className={`text-sm font-semibold ${c.sentToSourceAt ? "text-emerald-800" : "text-neutral-700"}`}>
+                {c.sentToSourceAt ? "📤 Đã gửi nguồn" : "Đã gửi nguồn"}
+              </p>
+              <p className="text-xs text-neutral-500">
+                {c.sentToSourceAt
+                  ? `${gioNgayVN(c.sentToSourceAt)}${c.sentToSourceBy ? ` · ${c.sentToSourceBy}` : ""}`
+                  : "Bật khi đã gửi hồ sơ cho nguồn"}
+              </p>
+            </div>
+          </div>
+          </div>
         </div>
 
         {FINAL_APPLICATION_STATUSES.has(c.applicationStatus) ? (
@@ -636,8 +742,6 @@ export function CaseDetail({ caseId, initialData }: Props) {
       {/* Cùng một danh sách mục còn thiếu, nhưng hồ sơ đã im lặng quá lâu thì đổi sang nền
           ĐẬM: bảng vàng nhạt nằm lẫn với các thẻ khác trên trang, nhân viên lướt qua nhiều
           lần thành quen mắt rồi không thấy nữa. */}
-      {/* Hồ sơ đã bấm "Hoàn tất": tới hạn là case_cleanup.py XOÁ HẲN (cả khách lẫn file), nên
-          phải cảnh báo ngay trên trang để ai cần file còn kịp tải về. */}
       {quaHanDonVi && (
         <div className="rounded-2xl p-4 border-2 border-red-300 bg-red-50">
           <p className="text-sm font-bold text-red-900">
@@ -646,22 +750,38 @@ export function CaseDetail({ caseId, initialData }: Props) {
             chưa làm xong để gửi nguồn.
           </p>
           <p className="mt-1 text-xs text-red-800">
-            Nhắc sau {quaHanDonVi.reminderDays} ngày kể từ lúc nhận đơn vị. Hết nhắc khi hồ sơ tới “Hoàn thành”.
+            Nhắc sau {quaHanDonVi.reminderDays} ngày kể từ lúc nhận đơn vị. Hết nhắc khi hồ sơ tới “Hoàn thành” hoặc bật “Đã gửi nguồn”.
           </p>
         </div>
       )}
 
+      {/* Tới hạn, case_cleanup CHỈ XOÁ FILE (purge_case_files) — hồ sơ khách vẫn giữ (13/10/2026). */}
       {c.autoDeleteAt && (
         <div className="rounded-2xl p-4 border-2 border-red-300 bg-red-50">
           <p className="text-sm font-bold text-red-900">
-            Hồ sơ đã đánh dấu hoàn tất — sẽ bị XOÁ VĨNH VIỄN ngày{" "}
-            {parseUtcDate(c.autoDeleteAt).toLocaleDateString("vi-VN")}, cả thông tin khách hàng lẫn
-            toàn bộ file. Không khôi phục được — tải file về trước nếu còn cần.
+            Hồ sơ đã đánh dấu hoàn tất — TOÀN BỘ FILE giấy tờ sẽ bị xoá vĩnh viễn ngày{" "}
+            {parseUtcDate(c.autoDeleteAt).toLocaleDateString("vi-VN")}. Thông tin hồ sơ khách vẫn được giữ lại.
+            File xoá rồi không khôi phục được — tải về trước nếu còn cần.
+          </p>
+        </div>
+      )}
+      {c.filesPurgedAt && (
+        <div className="rounded-2xl p-4 border-2 border-neutral-300 bg-neutral-100">
+          <p className="text-sm font-bold text-neutral-800">
+            🗂 Toàn bộ file giấy tờ của hồ sơ này đã bị xoá ngày{" "}
+            {parseUtcDate(c.filesPurgedAt).toLocaleDateString("vi-VN")} theo quy tắc tự xoá file 14 ngày sau khi bấm
+            “Hoàn tất”
+            {c.completedAt ? ` (hồ sơ bấm Hoàn tất ngày ${parseUtcDate(c.completedAt).toLocaleDateString("vi-VN")})` : ""}.
+          </p>
+          <p className="mt-1 text-xs text-neutral-600">
+            Thông tin hồ sơ (khách, nguồn, trạng thái, số dư…) vẫn được giữ. File đã xoá không khôi phục được — cần
+            thì upload lại.
           </p>
         </div>
       )}
 
-      {missingRequiredItems.length > 0 && (
+      {/* Hồ sơ đã xoá file theo quy tắc: "còn thiếu N mục" là đương nhiên — ẩn cho khỏi báo động giả. */}
+      {missingRequiredItems.length > 0 && !c.filesPurgedAt && (
         <div
           className={
             canNhacNho
@@ -726,6 +846,49 @@ export function CaseDetail({ caseId, initialData }: Props) {
                 {totalPages > 0 && ` · ${totalPages} trang`}
                 {unknownPageDocs > 0 && ` (${unknownPageDocs} file chưa đọc được số trang)`}
               </span>
+            )}
+            {totalPages > 0 && (
+              <span
+                className="ml-3 inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 align-middle text-sm font-semibold text-indigo-800"
+                title={
+                  "Số trang cần dịch: không tính hộ chiếu, căn cước, ảnh thẻ, giấy khám sức khoẻ, " +
+                  "chứng chỉ / xác nhận học tiếng Anh, CV, sổ tiết kiệm và xác nhận số dư (ô vàng trong checklist)." +
+                  (unmatchedPages > 0 ? ` Có tính ${unmatchedPages} trang của file chưa khớp mục nào.` : "")
+                }
+              >
+                📝 Hồ sơ dịch thuật: {translationPages} trang
+              </span>
+            )}
+            {/* Tải riêng 2 nhóm — backend lọc theo CÙNG quy tắc needsTranslation như con số trên. */}
+            {coFileDich && (
+              <a
+                href={`${API_URL}/cases/${caseId}/download-all?loai=dich`}
+                title={`Tải ZIP các file cần dịch (${translationPages} trang)`}
+                className="ml-2 inline-flex items-center rounded-full bg-indigo-600 px-2.5 py-0.5 align-middle text-xs font-semibold text-white hover:bg-indigo-700 transition-colors"
+              >
+                ⬇ Tải hồ sơ dịch thuật thô ({translationPages} trang)
+              </a>
+            )}
+            {coFileTiengAnh && (
+              <a
+                href={`${API_URL}/cases/${caseId}/download-all?loai=tieng-anh`}
+                title={`Tải ZIP các file không cần dịch (${englishPages} trang)`}
+                className="ml-2 inline-flex items-center rounded-full bg-emerald-600 px-2.5 py-0.5 align-middle text-xs font-semibold text-white hover:bg-emerald-700 transition-colors"
+              >
+                ⬇ Tải hồ sơ tiếng Anh ({englishPages} trang)
+              </a>
+            )}
+            {/* CHÉP (không chuyển) nhóm tiếng Anh sang "hồ sơ hoàn thành" — hồ sơ thô giữ nguyên. */}
+            {coFileTiengAnh && (
+              <button
+                type="button"
+                onClick={chepSangHoanThanh}
+                disabled={dangChep}
+                title="Chép các file không cần dịch sang Danh sách hồ sơ hoàn thành — hồ sơ thô giữ nguyên"
+                className="ml-2 inline-flex items-center rounded-full bg-teal-600 px-2.5 py-0.5 align-middle text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50 transition-colors"
+              >
+                {dangChep ? "Đang chép…" : "📋 Chép hồ sơ tiếng Anh sang hồ sơ hoàn thành"}
+              </button>
             )}
           </h2>
           {c.documents.length > 0 && (

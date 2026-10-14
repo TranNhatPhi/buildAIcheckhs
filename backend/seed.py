@@ -22,6 +22,7 @@ load_dotenv("../.env")
 from sqlalchemy import select, text
 
 from completeness import relink_marital_variants
+from filename_rules import NHOM_SO_0
 from db import SessionLocal, engine
 from case_status import LEGACY_STATUS_MAP
 from models import Base, Case, ChecklistItem
@@ -43,6 +44,11 @@ GROUP_DEPENDENT_PERSONAL = "Giấy tờ cá nhân (người phụ thuộc)"
 # BỘ 1 — LOW_SKILL (checklist "LOW SKILLED – SINGLE" / "LOW SKILLED – MARRIED")
 # ============================================================================
 LOW_SKILL_ITEMS = [
+    # --- 0. Phiếu thông tin khách hàng (Docs 13/10/2026) — mục SỐ 0, đứng trước Passport, BẮT BUỘC,
+    # áp cho cả độc thân lẫn kết hôn. numberGroup=NHOM_SO_0: đánh số "0" và KHÔNG đẩy số các mục sau
+    # (Passport vẫn là 1) — xem filename_rules._checklist_numbers / lib/format.ts buildChecklistNumbers.
+    dict(id="phieu-tt-khach-hang", order=0, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
+         nameVi="Phiếu TT khách hàng", note="Phiếu thông tin khách hàng", numberGroup=NHOM_SO_0),
     # --- I. Giấy tờ cá nhân ---
     dict(id="passport", order=1, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
          nameVi="Passport",
@@ -223,6 +229,11 @@ for _d in LOW_SKILL_ITEMS:
 # BỘ 2 — HIGH_SKILL (checklist "HIGH SKILLED – SINGLE" / "HIGH SKILLED – MARRIED")
 # ============================================================================
 HIGH_SKILL_APPLICANT_ITEMS = [
+    # --- 0. Phiếu thông tin khách hàng (Docs 13/10/2026) — mục SỐ 0, đứng trước Passport, BẮT BUỘC,
+    # áp cho cả độc thân lẫn kết hôn. numberGroup=NHOM_SO_0: đánh số "0" và KHÔNG đẩy số các mục sau
+    # (Passport vẫn là 1) — xem filename_rules._checklist_numbers / lib/format.ts buildChecklistNumbers.
+    dict(id="hs-phieu-tt-khach-hang", order=0, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
+         nameVi="Phiếu TT khách hàng", note="Phiếu thông tin khách hàng", numberGroup=NHOM_SO_0),
     # --- I. Giấy tờ cá nhân ---
     dict(id="hs-passport", order=1, section=SECTION_APPLICANT, group=GROUP_PERSONAL,
          nameVi="Passport",
@@ -445,6 +456,39 @@ for _d in HIGH_SKILL_ITEMS:
 
 CHECKLIST_ITEMS = LOW_SKILL_ITEMS + HIGH_SKILL_ITEMS
 
+# Mục KHÔNG cần dịch sang tiếng Anh — không tính vào "Hồ sơ dịch thuật: N trang" ở trang hồ sơ.
+# Lấy từ các ô TÔ VÀNG trong bộ checklist 4th/CHECKLIST - {LOW,HIGH}SKILLED - {SINGLE,MARRIED}
+# Edit lần 2.docx (12/10/2026): hộ chiếu, căn cước (của bất kỳ ai), ảnh thẻ, khám sức khoẻ, chứng
+# chỉ / xác nhận học tiếng Anh, CV, sổ tiết kiệm + xác nhận số dư. Mọi mục khác (kể cả mục mới
+# thêm sau này) mặc định CẦN dịch.
+# Riêng "Căn cước công dân" của Con 1 bản HIGHSKILLED-MARRIED không tô vàng trong file gốc — coi là
+# sót (Con 2, Con 3 và mọi căn cước khác đều tô) nên vẫn để KHÔNG dịch; bỏ dòng hs-child1-cccd nếu sai.
+KHONG_CAN_DICH = {
+    # Phiếu thông tin khách hàng — giấy nội bộ, không nộp
+    "phieu-tt-khach-hang", "hs-phieu-tt-khach-hang",
+    # Hộ chiếu
+    "passport", "hs-passport", "hs-spouse-passport",
+    "hs-child1-passport", "hs-child2-passport", "hs-child3-passport",
+    # Căn cước công dân
+    "cccd", "hs-cccd", "hs-spouse-cccd", "cccd-vo-chong",
+    "cccd-cha-vo-chong", "cccd-me-vo-chong", "cccd-bo-doc-than", "cccd-me-doc-than",
+    "hs-child1-cccd", "hs-child2-cccd", "hs-child3-cccd",
+    # Ảnh thẻ
+    "hinh-the-trang", "hs-anh-the-phong-trang", "hs-spouse-hinh-the-trang",
+    "hs-child1-hinh-the-trang", "hs-child2-hinh-the-trang", "hs-child3-hinh-the-trang",
+    # Giấy khám sức khoẻ
+    "giay-kham-suc-khoe", "hs-giay-kham-suc-khoe", "hs-spouse-kham-suc-khoe",
+    "hs-child1-kham-suc-khoe", "hs-child2-kham-suc-khoe", "hs-child3-kham-suc-khoe",
+    # Tiếng Anh
+    "chung-chi-tieng-anh", "hs-chung-chi-tieng-anh", "hs-spouse-chung-chi-tieng-anh",
+    "giay-xac-nhan-hoc-tieng-anh", "hs-giay-xac-nhan-hoc-tieng-anh",
+    # Resume / CV
+    "resume-cv", "hs-resume-cv",
+    # Sổ tiết kiệm + xác nhận số dư
+    "so-tiet-kiem", "hs-so-tiet-kiem", "hs-spouse-so-tiet-kiem",
+    "xac-nhan-so-du-tiet-kiem", "hs-xac-nhan-so-du-tiet-kiem", "hs-spouse-xac-nhan-so-du",
+}
+
 
 # Cột thêm vào bảng ĐÃ CÓ SẴN, kèm câu lệnh tạo. `Base.metadata.create_all()` chỉ tạo BẢNG
 # còn thiếu — nó KHÔNG bao giờ thêm CỘT còn thiếu vào bảng đã tồn tại, nên nếu chỉ khai thêm
@@ -514,6 +558,20 @@ ADDED_COLUMNS = [
     ("ContractTemplate", "kind", "VARCHAR(16) NOT NULL DEFAULT 'HDLD'"),
     # Lần nộp hồ sơ (xem models.Case.submissionRound). Hồ sơ cũ đều là lần đầu -> DEFAULT 1.
     ("Case", "submissionRound", "INT NOT NULL DEFAULT 1"),
+    # Công tắc "Đã gửi nguồn" (models.Case.sentToSourceAt). Hồ sơ cũ = chưa đánh dấu -> NULL.
+    ("Case", "sentToSourceAt", "DATETIME NULL"),
+    ("Case", "sentToSourceBy", "VARCHAR(191) NULL"),
+    # Công tắc "Đã sẵn sàng nộp" (models.Case.readyToSubmitAt) — chỉ bật/tắt bằng tay.
+    ("Case", "readyToSubmitAt", "DATETIME NULL"),
+    # Ngày lăn tay (models.Case.biometricsDate) — hồ sơ cũ chưa có lịch -> NULL.
+    ("Case", "biometricsDate", "DATE NULL"),
+    # Ngày nộp cho Chính phủ (models.Case.submittedDate) — hồ sơ cũ chưa ghi -> NULL.
+    ("Case", "submittedDate", "DATE NULL"),
+    # Mục checklist có phải dịch không (xem KHONG_CAN_DICH) — mặc định CÓ.
+    ("ChecklistItem", "needsTranslation", "TINYINT(1) NOT NULL DEFAULT 1"),
+    ("Case", "readyToSubmitBy", "VARCHAR(191) NULL"),
+    # Định dạng file hồ sơ hoàn thành (models.FinalDocument.mimeType) — file có từ trước đều là PDF.
+    ("FinalDocument", "mimeType", "VARCHAR(191) NOT NULL DEFAULT 'application/pdf'"),
 ]
 
 
@@ -564,6 +622,8 @@ def main():
             data.setdefault("quantityRule", "FIXED_1")
             data.setdefault("eitherWithId", None)
             data.setdefault("numberGroup", None)
+            # Tính lại mỗi lần chạy từ KHONG_CAN_DICH — danh sách ở trên là nguồn duy nhất.
+            data["needsTranslation"] = data["id"] not in KHONG_CAN_DICH
 
             existing = db.get(ChecklistItem, data["id"])
             if existing:
@@ -578,6 +638,10 @@ def main():
         # có ondelete="SET NULL" nên an toàn khi xoá — document nào từng khớp mục bị xoá sẽ
         # tự chuyển về "chưa khớp", không lỗi.
         current_ids = {data["id"] for data in CHECKLIST_ITEMS}
+        # Gõ sai id trong KHONG_CAN_DICH thì mục đó âm thầm bị tính là "cần dịch" — báo ra log.
+        sai_id = KHONG_CAN_DICH - current_ids
+        if sai_id:
+            print(f"CANH BAO: KHONG_CAN_DICH co id khong ton tai: {sorted(sai_id)}")
         stale = db.scalars(select(ChecklistItem).where(ChecklistItem.id.notin_(current_ids))).all()
         for item in stale:
             db.delete(item)

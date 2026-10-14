@@ -42,8 +42,24 @@
 #
 # Vì vậy đây là HTTP thuần, trình duyệt vẫn báo "Không bảo mật". Muốn có ổ khoá xanh thì phải
 # cho máy này truy cập được từ Internet (vd Cloudflare Tunnel) — xem ghi chú trong AGENTS.md.
+#
+# 12/10/2026: thêm /api giống hệt khối candoc.info — giao diện gọi API bằng đường dẫn TƯƠNG ĐỐI
+# "/api" (NEXT_PUBLIC_API_URL trong docker-compose.yml), nên mở bằng http://192.168.1.250 là
+# chạy ĐẦY ĐỦ mà không cần tên miền. Đường dự phòng khi tên miền hỏng: ngày 10/10 Nhân Hòa khoá
+# candoc.info (verification hold) -> DNS trả 127.0.0.1, cả văn phòng mất app dù máy chủ vẫn chạy.
 :80 {
-	reverse_proxy frontend:3000
+	handle_path /api/* {
+		reverse_proxy backend:8001 backend2:8001 backend3:8001 {
+			lb_policy round_robin
+			health_uri /health
+			health_interval 10s
+			health_timeout 5s
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
 
 	log {
 		output stdout

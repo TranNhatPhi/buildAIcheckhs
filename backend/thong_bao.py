@@ -22,7 +22,7 @@ from schemas import parse_experience_units
 
 NHAC_DON_VI_KN_NGAY = int(os.getenv("EXPERIENCE_UNIT_REMINDER_DAYS", "7"))
 NHAC_IM_LANG_NGAY = 7
-CHUA_GUI_NGUON = ("PENDING", "COLLECTING_DOCUMENTS", "REVIEWING_DOCUMENTS")
+CHUA_GUI_NGUON = ("PENDING", "COLLECTING_DOCUMENTS")
 
 
 def moc_cap_nhat(c: Case):
@@ -38,6 +38,10 @@ def ngay_chua_cap_nhat(c: Case, tom_tat) -> int | None:
     `tom_tat` = kết quả compute_checklist_summary của chính hồ sơ (nơi gọi đã có sẵn).
     """
     if c.deletedAt is not None or c.applicationStatus not in CHUA_GUI_NGUON:
+        return None
+    # Đã bật "Đã gửi nguồn" (08/10/2026, Docs yêu cầu): hồ sơ không còn bị bỏ quên -> hết thẻ vàng ở
+    # danh sách, hết dòng ở chuông và thẻ "7 ngày chưa cập nhật hồ sơ" của admin.
+    if c.sentToSourceAt is not None:
         return None
     moc = moc_cap_nhat(c)
     if moc is None:
@@ -56,8 +60,15 @@ def ho_so_qua_han(db: Session) -> dict:
     hom_nay = datetime.now(timezone(timedelta(hours=7))).date()
     items = db.scalars(select(ChecklistItem)).all()
     don_vi_kn, chua_cap_nhat = [], []
+    # Hồ sơ đã bật "Đã gửi nguồn" thì hết mọi cảnh báo ở đây — cả "đơn vị XNKN quá N ngày" (khung
+    # đỏ trong trang hồ sơ, chuông Docs + admin) lẫn "7 ngày chưa cập nhật" (Docs yêu cầu 12/10/2026):
+    # cảnh báo nói "chưa làm xong để gửi nguồn" mà nhân viên đã đánh dấu gửi rồi thì chỉ là nhiễu.
     for c in db.scalars(
-        select(Case).where(Case.deletedAt.is_(None), Case.applicationStatus.in_(CHUA_GUI_NGUON))
+        select(Case).where(
+            Case.deletedAt.is_(None),
+            Case.applicationStatus.in_(CHUA_GUI_NGUON),
+            Case.sentToSourceAt.is_(None),
+        )
     ):
         tom_tat = None
 

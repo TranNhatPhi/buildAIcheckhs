@@ -260,6 +260,15 @@ export function DocumentList({ documents, applicableItems, onChanged }: Props) {
                     {pageCount} trang
                   </span>
                 )}
+                {/* Mục không phải dịch (ô vàng trong checklist) — không tính vào "Hồ sơ dịch thuật". */}
+                {doc.matchedChecklistItem?.needsTranslation === false && (
+                  <span
+                    className="text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full whitespace-nowrap"
+                    title="Giấy tờ loại này không phải dịch — không tính vào số trang dịch thuật"
+                  >
+                    Không cần dịch
+                  </span>
+                )}
               </div>
               <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLOR[doc.status]}`}>
                 {STATUS_LABEL[doc.status]}

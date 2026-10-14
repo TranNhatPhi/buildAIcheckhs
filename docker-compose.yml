@@ -240,6 +240,24 @@ services:
       seed:
         condition: service_completed_successfully
 
+  # Sao lưu CSDL mỗi ngày (ops/backup-db.sh) -> ./backups/canada_checklist-<ngày>_<giờ>.sql.gz trên ổ
+  # máy chủ, giữ 30 ngày. Thêm 13/10/2026 sau khi tiến trình tự xoá xoá hẳn 2 hồ sơ mà không có bản sao
+  # lưu. Mỗi giờ kiểm tra "hôm nay đã sao lưu chưa" (máy tắt mỗi tối nên không hẹn giờ cố định ban đêm).
+  # CHỈ sao lưu MySQL (thông tin hồ sơ) — file giấy tờ trên MinIO KHÔNG nằm trong bản này.
+  db-backup:
+    image: mysql:8.4
+    restart: unless-stopped
+    entrypoint: ["sh", "/backup-db.sh"]
+    environment:
+      MYSQL_PWD: CanadaChecklistRoot2026!
+      BACKUP_RETENTION_DAYS: "30"
+    volumes:
+      - ./backups:/backups
+      - ./ops/backup-db.sh:/backup-db.sh:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+
   # BA replica backend giống hệt nhau, đứng sau load balancer "lb" bên dưới. Nhân bản được
   # vì backend KHÔNG giữ trạng thái trong bộ nhớ: mọi thứ lâu dài nằm ở MySQL/MinIO, không có
   # phiên đăng nhập hay hàng đợi trong RAM (đã soát: chỉ còn vài biến đếm để chống log trùng).
@@ -322,7 +340,14 @@ services:
         # tới được từ cả ba nơi kể trên: container này và mọi máy trong văn phòng đều phân giải
         # candoc.info ra 192.168.1.200 (đã kiểm tra từ trong container: HTTP 200).
         # Đường cũ 192.168.1.200:8001 VẪN MỞ, chỉ là giao diện không dùng nữa.
-        NEXT_PUBLIC_API_URL: https://candoc.info/api
+        #
+        # CẬP NHẬT 12/10/2026 — đổi sang đường dẫn TƯƠNG ĐỐI "/api": trình duyệt gọi API trên CHÍNH
+        # địa chỉ đang mở trang. Caddy chuyển /api tới backend ở cả https://candoc.info lẫn cổng 80
+        # (http://192.168.1.250) — xem Caddyfile.local. Lý do: 10/10 tên miền bị Nhân Hòa khoá, gọi
+        # cố định https://candoc.info/api thì mở trang bằng IP vẫn hỏng hết mọi nút bấm. Cổng 3000
+        # (Next.js trực tiếp, không qua Caddy) KHÔNG có /api — dùng http://192.168.1.250 thay thế.
+        # Code phía server KHÔNG dùng biến này (gọi SERVER_API_URL bên dưới) nên tương đối là đủ.
+        NEXT_PUBLIC_API_URL: /api
     environment:
       # Riêng cho server component (lib/serverApi.ts): gọi thẳng bộ cân tải trong mạng Docker,
       # KHÔNG qua DNS router + HTTPS như trình duyệt. Router chập chờn DNS là trang chủ / trang

@@ -12,7 +12,7 @@ import {
   APPLICATION_STATUS_HEX_COLOR,
   getApplicationStatus,
 } from "@/lib/application-status";
-import { API_URL, formatExperience, parseUtcDate } from "@/lib/format";
+import { API_URL, formatExperience, gioNgayVN, ngayThangVN, normalizeSearchText, parseUtcDate } from "@/lib/format";
 import { useHydrated } from "@/lib/useHydrated";
 import type { ApplicationStatus, CaseListItemDTO, TagDefinition } from "@/lib/client-types";
 
@@ -40,15 +40,6 @@ type SortOption = "PERCENT_DESC" | "NEWEST" | "OLDEST" | "NEEDS_ATTENTION" | "NA
 
 const VIETNAMESE_COLLATOR = new Intl.Collator("vi", { sensitivity: "base" });
 
-function normalizeSearchText(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d")
-    .replace(/Đ/g, "D")
-    .toLowerCase();
-}
-
 export function CaseList({ initialCases }: Props) {
   const [cases, setCases] = useState(initialCases);
   const hydrated = useHydrated();
@@ -73,6 +64,7 @@ export function CaseList({ initialCases }: Props) {
   const [editingCase, setEditingCase] = useState<CaseListItemDTO | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [hoanTatId, setHoanTatId] = useState<string | null>(null);
+  const [sanSangId, setSanSangId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [checklistStatusFilter, setChecklistStatusFilter] = useState<ChecklistStatusFilter>("ALL");
   const [applicationStatusFilter, setApplicationStatusFilter] =
@@ -250,14 +242,40 @@ export function CaseList({ initialCases }: Props) {
     });
   }
 
+  // Công tắc "Đã sẵn sàng nộp" trên thẻ — chỉ bật/tắt BẰNG TAY, KHÔNG còn là điều kiện bấm "Hoàn tất"
+  // (Docs 13/10/2026: Hoàn tất luôn bấm được, bấm là hồ sơ lên 100%); bấm Hoàn tất không tự bật công tắc.
+  async function doiSanSang(c: CaseListItemDTO, bat: boolean) {
+    setSanSangId(c.id);
+    try {
+      const res = await fetch(`${API_URL}/cases/${c.id}/ready-to-submit`, {
+        method: bat ? "POST" : "DELETE",
+      }).catch(() => null);
+      if (!res || !res.ok) {
+        const chiTiet = res ? await res.json().catch(() => null) : null;
+        alert(chiTiet?.detail ?? "Không đổi được “Đã sẵn sàng nộp” — thử lại sau.");
+        return;
+      }
+      const kq = await res.json();
+      setCases((prev) =>
+        prev.map((x) =>
+          x.id === c.id ? { ...x, readyToSubmitAt: kq.readyToSubmitAt, readyToSubmitBy: kq.readyToSubmitBy } : x,
+        ),
+      );
+    } finally {
+      setSanSangId(null);
+    }
+  }
+
   async function doiHoanTat(c: CaseListItemDTO, bat: boolean) {
     if (
       bat &&
       !confirm(
         `Đánh dấu hồ sơ "${c.clientName}" đã hoàn tất?\n\n` +
-          `• Tiến độ hiển thị thành 100%\n` +
-          `• Sau ${SO_NGAY_TU_XOA} ngày, hồ sơ bị XOÁ VĨNH VIỄN — cả thông tin khách hàng lẫn toàn bộ file\n` +
-          `• KHÔNG khôi phục được. Tải file về trước nếu còn cần.`
+          (c.percent < 100
+            ? `• Hồ sơ đang ${c.percent}% — bấm Hoàn tất sẽ tính là 100% (đủ giấy tờ)\n`
+            : `• Tiến độ hiển thị thành 100%\n`) +
+          `• Sau ${SO_NGAY_TU_XOA} ngày, TOÀN BỘ FILE giấy tờ bị xoá vĩnh viễn — thông tin hồ sơ khách vẫn giữ lại\n` +
+          `• File xoá rồi KHÔNG khôi phục được. Tải file về trước nếu còn cần.`
       )
     )
       return;
@@ -585,6 +603,24 @@ export function CaseList({ initialCases }: Props) {
                         >
                           {applicationStatus.label}
                         </span>
+                        {/* File đã bị tự xoá (14 ngày sau Hoàn tất) — hồ sơ còn, file không. */}
+                        {c.filesPurgedAt && (
+                          <span
+                            className="rounded-full border border-neutral-300 bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold text-neutral-600"
+                            title="Toàn bộ file giấy tờ đã bị xoá theo quy tắc 14 ngày sau khi bấm Hoàn tất — thông tin hồ sơ vẫn giữ"
+                          >
+                            🗂 Đã xoá file {ngayThangVN(c.filesPurgedAt)}
+                          </span>
+                        )}
+                        {/* Công tắc "Đã gửi nguồn" bật ở trang hồ sơ. */}
+                        {c.sentToSourceAt && (
+                          <span
+                            className="rounded-full border border-emerald-600 bg-emerald-600 px-2 py-0.5 text-[11px] font-semibold text-white"
+                            title={`Đã gửi nguồn lúc ${gioNgayVN(c.sentToSourceAt)}${c.sentToSourceBy ? ` · ${c.sentToSourceBy}` : ""}`}
+                          >
+                            📤 Đã gửi nguồn {ngayThangVN(c.sentToSourceAt)}
+                          </span>
+                        )}
                         {chuaCapNhat.has(c.id) && (
                           <span className="rounded-full border border-black/20 bg-white px-2 py-0.5 text-[11px] font-semibold text-black">
                             ⏰ {chuaCapNhat.get(c.id)} ngày chưa cập nhật
@@ -656,13 +692,45 @@ export function CaseList({ initialCases }: Props) {
                     >
                       Sửa
                     </button>
+                    {/* Công tắc "Đã sẵn sàng nộp" — chỉ đánh dấu, bật/tắt bằng tay. */}
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!!c.readyToSubmitAt}
+                      onClick={() => doiSanSang(c, !c.readyToSubmitAt)}
+                      disabled={sanSangId === c.id}
+                      title={
+                        c.readyToSubmitAt
+                          ? `Bật lúc ${gioNgayVN(c.readyToSubmitAt)}${c.readyToSubmitBy ? ` · ${c.readyToSubmitBy}` : ""} — bấm để tắt`
+                          : "Bật khi hồ sơ đã sẵn sàng nộp"
+                      }
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed ${
+                        c.readyToSubmitAt
+                          ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                          : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+                      } ${sanSangId === c.id ? "opacity-50" : ""}`}
+                    >
+                      <span
+                        aria-hidden
+                        className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+                          c.readyToSubmitAt ? "bg-emerald-600" : "bg-neutral-300"
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-3 w-3 rounded-full bg-white shadow transition-transform ${
+                            c.readyToSubmitAt ? "translate-x-3.5" : "translate-x-0.5"
+                          }`}
+                        />
+                      </span>
+                      Đã sẵn sàng nộp
+                    </button>
                     {c.completedAt ? (
                       <button
                         onClick={() => doiHoanTat(c, false)}
                         disabled={hoanTatId === c.id}
                         title={
                           c.autoDeleteAt
-                            ? `Hồ sơ sẽ bị xoá vĩnh viễn ngày ${ngayVN(c.autoDeleteAt)} — bấm để huỷ`
+                            ? `File giấy tờ sẽ bị xoá ngày ${ngayVN(c.autoDeleteAt)} (hồ sơ vẫn giữ) — bấm để huỷ`
                             : "Bấm để bỏ đánh dấu hoàn tất"
                         }
                         className="text-xs font-semibold px-3 py-1.5 rounded-full bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-50 transition-colors"
@@ -670,15 +738,16 @@ export function CaseList({ initialCases }: Props) {
                         {hoanTatId === c.id
                           ? "Đang lưu..."
                           : c.autoDeleteAt
-                            ? `✓ Xoá ${ngayVN(c.autoDeleteAt)}`
+                            ? `✓ Xoá file ${ngayVN(c.autoDeleteAt)}`
                             : "✓ Hoàn tất"}
                       </button>
                     ) : (
                       <button
                         onClick={() => doiHoanTat(c, true)}
+                        // Luôn bấm được (Docs 13/10/2026) — bấm là hồ sơ lên 100%.
                         disabled={hoanTatId === c.id}
-                        title={`Đặt tiến độ thành 100% và hẹn XOÁ VĨNH VIỄN hồ sơ sau ${SO_NGAY_TU_XOA} ngày`}
-                        className="text-xs font-semibold px-3 py-1.5 rounded-full bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-50 transition-colors"
+                        title={`Đặt tiến độ thành 100% và hẹn xoá FILE giấy tờ sau ${SO_NGAY_TU_XOA} ngày (hồ sơ vẫn giữ)`}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-full bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-50 transition-colors"
                       >
                         {hoanTatId === c.id ? "Đang lưu..." : "Hoàn tất"}
                       </button>

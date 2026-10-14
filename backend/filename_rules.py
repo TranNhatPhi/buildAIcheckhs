@@ -37,6 +37,8 @@ from models import ChecklistItem
 #
 # Mục "ID Card" nhận là CẢ căn cước lẫn chứng minh nhân dân — tiếng Anh không phân biệt hai loại.
 _KINDS: list[tuple[frozenset[str], tuple[str, ...]]] = [
+    (frozenset({"phieu_tt_kh"}), ("phieu thong tin khach hang", "phieu tt khach hang", "phieu tt kh",
+                                  "thong tin khach hang")),
     (frozenset({"so_du"}), ("xac nhan so du so tiet kiem", "xac nhan so du", "so du")),
     (frozenset({"bang_diem"}), ("bang diem", "transcript")),
     (frozenset({"xac_nhan_hoc_tieng_anh"}), ("xac nhan hoc tieng anh", "hoc tieng anh")),
@@ -106,6 +108,10 @@ def detect_kinds(text: str) -> frozenset[str]:
     return frozenset(found)
 
 
+# numberGroup đặc biệt: mục mang số "0" (Phiếu TT khách hàng) và KHÔNG đẩy số các mục sau.
+NHOM_SO_0 = "so-0"
+
+
 def _checklist_numbers(items: list[ChecklistItem]) -> list[str]:
     """Đánh số y hệt buildChecklistNumbers ở lib/format.ts — hai bên PHẢI ra cùng kết quả,
     lệch là số trong tên file trỏ sai mục so với số nhân viên thấy trên màn hình."""
@@ -113,8 +119,12 @@ def _checklist_numbers(items: list[ChecklistItem]) -> list[str]:
     major = 0
     i = 0
     while i < len(items):
-        major += 1
         group = getattr(items[i], "numberGroup", None)
+        if group == NHOM_SO_0:
+            numbers.append("0")
+            i += 1
+            continue
+        major += 1
         if not group:
             numbers.append(str(major))
             i += 1
@@ -163,8 +173,9 @@ def match_by_filename(filename: str, applicable_items: list[ChecklistItem]) -> F
         number_note = (f'số {number} trong tên file là mục "{candidate.nameVi}", không phải loại giấy '
                        f"tờ ghi trong tên file (có thể tên file đánh số theo bản checklist khác)")
     elif number:
+        so_lon = [int(n) for n in by_number if "." not in n] or [0]
         number_note = (f"số {number} trong tên file không trỏ vào mục nào — hồ sơ này có "
-                       f"{len(items)} mục (1-{len(items)})")
+                       f"các mục số {min(so_lon)}-{max(so_lon)}")
     else:
         number_note = "tên file không có số thứ tự mục ở đầu"
 

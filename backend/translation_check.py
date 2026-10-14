@@ -3,8 +3,9 @@
 và nói rõ được vì sao báo lỗi.
 
 Quy tắc rút ra từ bộ hồ sơ dịch thuật thật trong hosodichthuat/ (13 bản dịch hồ sơ "Hồ Sỹ Trọng"):
-  - Họ tên người trong bản dịch viết HOA, BỎ DẤU: "Hồ Sỹ Trọng" -> "HO SY TRONG". Cả 13 bản đều
-    theo quy ước này, và KHÔNG bản nào còn sót chữ tiếng Việt có dấu.
+  - Họ tên người trong bản dịch BỎ DẤU: "Hồ Sỹ Trọng" -> "HO SY TRONG". Viết HOA hay kiểu thường
+    ("Ho Sy Trong") đều được. Từ 07/10/2026 (Docs yêu cầu) KHÔNG còn báo "Họ tên chưa viết HOA" và
+    "Còn chữ tiếng Việt có dấu" (PDF công chứng kèm cả phần tiếng Việt -> báo oan).
   - Lỗi đáng giá nhất là CÙNG MỘT NGƯỜI mà mỗi bản ghi một kiểu — chính bộ mẫu đó có thật: tên
     bố ghi "HO XUAN TINH" (CT07, LLTP), "HO SY TINH" (giấy khai sinh), "HO SI TINH" (học bạ);
     tên đương đơn ghi "HO SI TRONG" riêng ở học bạ trong khi 12 bản còn lại là "HO SY TRONG".
@@ -94,9 +95,6 @@ _PLACE_NAMES = {
 # dừng trước "SEX" (x không làm âm cuối được), "HO SY TRONG DATE OF" dừng trước "DATE".
 _SYLLABLE = re.compile(r"^(NGH|NG|NH|CH|KH|PH|TH|TR|GI|GH|QU|[BCDGHKLMNPRSTVX])?[AEIOUY]{1,3}(NG|NH|CH|[CMNPT])?$")
 
-_VIETNAMESE_CHARS = re.compile(
-    r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]", re.IGNORECASE
-)
 
 
 # Vai trò của người đứng sau nhãn, đọc từ chính nhãn trong bản dịch. Có vai trò thì nhân viên
@@ -192,8 +190,7 @@ def _case_style(token: str) -> str | None:
 
 @dataclass
 class NameHit:
-    name: str          # đã đưa về chữ HOA để so sánh
-    is_upper: bool     # có được VIẾT HOA sẵn trong bản dịch không
+    name: str          # đã đưa về chữ HOA để so sánh (viết hoa hay thường trong bản dịch đều được)
     role: str | None   # bố / mẹ / chủ hộ... đọc từ nhãn đứng trước tên; None = không rõ
 
 
@@ -228,7 +225,7 @@ def find_names(text: str, extra_surnames: set[str]) -> list[NameHit]:
                             # Nhãn = chữ trước cụm này trên cùng dòng, cộng phần chữ trong cụm
                             # đứng trước tên (vd "Student s full name HO SY TRONG").
                             context = line[: chunk.start()] + " " + " ".join(tokens[:i])
-                            hits.append(NameHit(name, style == "upper", _role_from_context(context)))
+                            hits.append(NameHit(name, _role_from_context(context)))
                         i = j
                         continue
                 i += 1
@@ -353,7 +350,6 @@ class FileReport:
     owner_name: str | None = None      # chủ giấy tờ, đọc từ tên file theo quy ước "<số>. <Họ tên> - <loại>"
     owner_form: str | None = None
     names: list[str] = field(default_factory=list)       # mọi tên, đã đưa về chữ HOA
-    upper_names: set[str] = field(default_factory=set)   # tên được VIẾT HOA sẵn trong bản dịch
     roles: dict[str, set[str]] = field(default_factory=dict)  # tên -> vai trò (bố, mẹ, chủ hộ...)
     id_numbers: list[str] = field(default_factory=list)
     chars: int = 0
@@ -396,7 +392,6 @@ def check_translation_set(applicant_name: str, files: list[FileReport]) -> list[
     for f in readable:
         found = find_names(f.text, extra_surnames)
         f.names = [h.name for h in found]
-        f.upper_names = {h.name for h in found if h.is_upper}
         f.roles = {}
         # Chủ hộ trong giấy này thực ra là bố/mẹ (hay vợ/chồng, con) của đương sự thì ghi thẳng
         # như vậy, để so tên với các giấy khác và để nhân viên đọc báo cáo hiểu ngay là ai.
@@ -466,35 +461,25 @@ def check_translation_set(applicant_name: str, files: list[FileReport]) -> list[
             + them + " Đối chiếu với bản gốc (CCCD/khai sinh) để sửa cho đúng.",
             sorted(set().union(*(where[n] for n in g)))))
 
-    # 3. Còn chữ tiếng Việt có dấu (chưa dịch hết / quên bỏ dấu).
-    for f in readable:
-        words = sorted({w for w in re.findall(r"\S+", f.text) if _VIETNAMESE_CHARS.search(w)})
-        if words:
-            shown = ", ".join(f'"{w}"' for w in words[:10]) + (f" và {len(words) - 10} từ khác" if len(words) > 10 else "")
-            findings.append(Finding("ERROR", "UNTRANSLATED_VIETNAMESE", "Còn chữ tiếng Việt có dấu",
-                                    f"Bản dịch còn {len(words)} từ tiếng Việt có dấu: {shown}.", [f.filename]))
+    # 3. (ĐÃ BỎ 07/10/2026 theo yêu cầu Docs) "Còn chữ tiếng Việt có dấu": file PDF dịch thuật
+    # công chứng kèm cả phần tiếng Việt (bản gốc, lời chứng) nên quy tắc này báo oan hàng trăm từ.
 
-    # 4. Tên chủ giấy tờ (theo tên file) phải có trong bản dịch, viết HOA không dấu. Chỉ cần
-    # viết HOA ở ÍT NHẤT MỘT chỗ: tên của chính đương sự dưới dòng "(Signed)" viết kiểu Title
-    # Case là đúng quy ước bộ mẫu (vd "Ho Sy Trong" ở chữ ký trên giấy đăng ký kết hôn).
+    # 4. Tên chủ giấy tờ (theo tên file) — bản dịch CÓ ghi mà ghi KHÁC (lệch tên đệm / gõ nhầm)
+    # thì báo lỗi. ĐÃ BỎ 07/10/2026 theo yêu cầu Docs, vì báo oan quá nhiều:
+    #   - "Họ tên chưa viết HOA": viết hoa tên không bắt buộc ("Nguyen Hong Son" là đạt).
+    #   - "Không thấy tên chủ giấy tờ": có giấy không nhắc tên chủ (vd giấy xác nhận đổi tên HTX),
+    #     PDF scan đọc chữ không ra tên, PDF công chứng có tên ở phần tiếng Việt có dấu.
     for f in readable:
-        if not f.owner_form or f.owner_form in f.upper_names:
+        if not f.owner_form or f.owner_form in f.names:
             continue
         upper_text = " ".join(re.sub(r"[^A-Za-z ]+", " ", f.text).split())
-        if f.owner_form in f.names or re.search(rf"\b{re.escape(f.owner_form)}\b", upper_text.upper()):
-            findings.append(Finding("WARNING", "OWNER_NAME_NOT_UPPERCASE", "Họ tên chưa viết HOA",
-                                    f'"{f.owner_name}" có trong bản dịch nhưng không viết HOA như quy ước '
-                                    f'("{f.owner_form}").', [f.filename]))
-        elif not any(variant_kind(f.owner_form, n) for n in f.names):
-            findings.append(Finding("WARNING", "OWNER_NAME_MISSING", "Không thấy tên chủ giấy tờ",
-                                    f'Tên file cho biết đây là giấy tờ của "{f.owner_name}" nhưng bản dịch không có '
-                                    f'"{f.owner_form}".', [f.filename]))
-        else:
-            variants = sorted({n for n in f.names if variant_kind(f.owner_form, n)})
-            if f.owner_form != expected:  # tên đương đơn đã báo ở quy tắc 1
-                findings.append(Finding("ERROR", "OWNER_NAME_VARIANT", "Tên chủ giấy tờ bị ghi khác",
-                                        f'Bản dịch ghi {", ".join(chr(34) + v + chr(34) for v in variants)} — tên theo '
-                                        f'tên file là "{f.owner_form}".', [f.filename]))
+        if re.search(rf"\b{re.escape(f.owner_form)}\b", upper_text.upper()):
+            continue  # có tên, chỉ là kiểu chữ find_names không nhận (vd "Nguyen HONG Son")
+        variants = sorted({n for n in f.names if variant_kind(f.owner_form, n)})
+        if variants and f.owner_form != expected:  # tên đương đơn đã báo ở quy tắc 1
+            findings.append(Finding("ERROR", "OWNER_NAME_VARIANT", "Tên chủ giấy tờ bị ghi khác",
+                                    f'Bản dịch ghi {", ".join(chr(34) + v + chr(34) for v in variants)} — tên theo '
+                                    f'tên file là "{f.owner_form}".', [f.filename]))
 
     # 5. Số định danh gần giống nhau giữa các bản (lệch 1-2 chữ số) — nhiều khả năng gõ nhầm.
     id_where: dict[str, set[str]] = {}

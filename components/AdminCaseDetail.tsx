@@ -123,10 +123,33 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
           </div>
         )}
 
+        {c.filesPurgedAt && (
+          <div className="rounded bg-neutral-100 border border-neutral-300 px-4 py-3 text-sm text-neutral-700">
+            🗂 <b>Toàn bộ file giấy tờ đã bị xoá ngày {new Date(c.filesPurgedAt + (c.filesPurgedAt.endsWith("Z") ? "" : "Z")).toLocaleDateString("vi-VN")}</b>{" "}
+            theo quy tắc tự xoá file 14 ngày sau khi bấm “Hoàn tất”
+            {c.completedAt
+              ? ` (Hoàn tất ngày ${new Date(c.completedAt + (c.completedAt.endsWith("Z") ? "" : "Z")).toLocaleDateString("vi-VN")})`
+              : ""}
+            . Thông tin hồ sơ vẫn giữ nguyên.
+          </div>
+        )}
+
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-2">
-            File đã nộp ({c.documents.length})
-          </p>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              File đã nộp ({c.documents.length})
+            </p>
+            {/* Cùng API "Tải tất cả (ZIP)" của trang Docs — tên file trong ZIP giữ nguyên như đã nộp. */}
+            {c.documents.length > 0 && (
+              <a
+                href={`${API_URL}/cases/${c.id}/download-all`}
+                className="text-xs font-semibold px-3 py-1.5 rounded text-white transition-opacity hover:opacity-90"
+                style={{ backgroundColor: EL.primary }}
+              >
+                ⬇ Tải tất cả file (ZIP)
+              </a>
+            )}
+          </div>
           {c.documents.length === 0 ? (
             <p className="text-neutral-500 text-sm">Chưa nộp file nào.</p>
           ) : (

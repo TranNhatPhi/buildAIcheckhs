@@ -8,19 +8,16 @@ export interface ApplicationStatusDefinition {
 
 // Thứ tự phản ánh luồng xử lý — khớp CASE_STATUS_DEFINITIONS ở backend/case_status.py.
 // 4 bước đầu là phần nhân viên (trang checklist), 4 bước sau là phần admin (trang quản trị).
-// Giữ MÃ cũ dù đổi tên hiển thị (SUBMITTED trước tên "Đã nộp", nay "Đang xử lý"): mã nằm trong
+// Giữ MÃ cũ dù đổi tên hiển thị (SUBMITTED: "Đã nộp" -> "Đang xử lý" -> 12/10/2026 "CP đang xử lý",
+// CP = Chính phủ đang xét): mã nằm trong
 // DB và nhật ký email.
 export const APPLICATION_STATUSES: readonly ApplicationStatusDefinition[] = [
   { value: "PENDING", label: "Chờ tiếp nhận", description: "Hồ sơ mới, chưa bắt đầu xử lý" },
   {
     value: "COLLECTING_DOCUMENTS",
     label: "Đang thu thập giấy tờ",
-    description: "Đang nhận tài liệu từ khách hàng",
-  },
-  {
-    value: "REVIEWING_DOCUMENTS",
-    label: "Đang kiểm tra hồ sơ",
-    description: "Đang kiểm tra tính đầy đủ và hợp lệ",
+    // Đã gộp "Đang kiểm tra hồ sơ" vào trạng thái này (13/10/2026).
+    description: "Đang nhận và kiểm tra giấy tờ của khách hàng",
   },
   {
     value: "COMPLETED",
@@ -28,7 +25,7 @@ export const APPLICATION_STATUSES: readonly ApplicationStatusDefinition[] = [
     description: "Đủ 100% giấy tờ bắt buộc (tự chuyển) — bàn giao cho admin",
   },
   { value: "READY_TO_SUBMIT", label: "Sẵn sàng nộp", description: "Admin đã nhận hồ sơ, chuẩn bị nộp" },
-  { value: "SUBMITTED", label: "Đang xử lý", description: "Đã nộp, đang chờ cơ quan xét duyệt trả kết quả" },
+  { value: "SUBMITTED", label: "CP đang xử lý", description: "Đã nộp, Chính phủ đang xét duyệt — chờ trả kết quả" },
   { value: "APPROVED", label: "Được chấp thuận", description: "Hồ sơ được chấp thuận" },
   { value: "REJECTED", label: "Không thành công", description: "Hồ sơ không được chấp thuận" },
   {
@@ -43,7 +40,6 @@ export const FINAL_APPLICATION_STATUSES = new Set<ApplicationStatus>(["APPROVED"
 export const APPLICATION_STATUS_BADGE_CLASS: Record<ApplicationStatus, string> = {
   PENDING: "border-neutral-200 bg-neutral-100 text-neutral-700",
   COLLECTING_DOCUMENTS: "border-amber-200 bg-amber-100 text-amber-800",
-  REVIEWING_DOCUMENTS: "border-indigo-200 bg-indigo-100 text-indigo-800",
   COMPLETED: "border-teal-200 bg-teal-100 text-teal-800",
   READY_TO_SUBMIT: "border-sky-200 bg-sky-100 text-sky-800",
   SUBMITTED: "border-blue-200 bg-blue-100 text-blue-800",
@@ -57,7 +53,6 @@ export const APPLICATION_STATUS_BADGE_CLASS: Record<ApplicationStatus, string> =
 export const APPLICATION_STATUS_HEX_COLOR: Record<ApplicationStatus, string> = {
   PENDING: "#6B7280",
   COLLECTING_DOCUMENTS: "#D97706",
-  REVIEWING_DOCUMENTS: "#4F46E5",
   COMPLETED: "#0D9488",
   READY_TO_SUBMIT: "#0284C7",
   SUBMITTED: "#2563EB",
@@ -75,7 +70,7 @@ export function getApplicationStatus(value: ApplicationStatus): ApplicationStatu
 // Chia quyền theo GIAI ĐOẠN — khớp STAFF_STATUSES/ADMIN_STATUSES ở backend/case_status.py.
 // "Hoàn thành" là điểm bàn giao: nhân viên đưa hồ sơ tới đó, admin nhận từ đó.
 export const STAFF_STATUSES: readonly ApplicationStatus[] = [
-  "PENDING", "COLLECTING_DOCUMENTS", "REVIEWING_DOCUMENTS", "COMPLETED",
+  "PENDING", "COLLECTING_DOCUMENTS", "COMPLETED",
 ];
 export const ADMIN_STATUSES: readonly ApplicationStatus[] = [
   "READY_TO_SUBMIT", "SUBMITTED", "APPROVED", "REJECTED", "LIQUIDATED",
@@ -86,6 +81,9 @@ export const ADMIN_STATUSES: readonly ApplicationStatus[] = [
 export const RESUBMIT_FROM_STATUSES: readonly ApplicationStatus[] = ["SUBMITTED", "REJECTED"];
 // Chỉ được nộp lại MỘT lần — khớp MAX_SUBMISSION_ROUND ở backend. Không có lần nộp thứ 3.
 export const MAX_SUBMISSION_ROUND = 2;
+// Tiến độ <= mốc này là "Chờ tiếp nhận", trên mốc dưới 100% là "Đang thu thập giấy tờ", 100% là
+// "Hoàn thành" — tự chuyển ở backend (case_auto_status). Khớp NGUONG_CHO_TIEP_NHAN ở case_status.py.
+export const NGUONG_CHO_TIEP_NHAN = 20;
 
 /** Nhân viên còn đổi được trạng thái không — hồ sơ đã sang phần admin thì khoá. */
 export function staffCanEditStatus(hienTai: ApplicationStatus): boolean {
@@ -132,8 +130,9 @@ export function statusChangeBlockedReason(
   } else if (!ADMIN_STATUSES.includes(den)) {
     return "nhân viên cập nhật";
   }
-  if (den === "PENDING" && tienDo > 0) return `đã có giấy tờ, đang ${tienDo}%`;
-  if ((den === "COLLECTING_DOCUMENTS" || den === "REVIEWING_DOCUMENTS") && tienDo <= 0) return "chưa có giấy tờ (0%)";
+  if (den === "PENDING" && tienDo > NGUONG_CHO_TIEP_NHAN) return `chỉ khi ≤${NGUONG_CHO_TIEP_NHAN}%, đang ${tienDo}%`;
+  if (den === "COLLECTING_DOCUMENTS" && tienDo <= NGUONG_CHO_TIEP_NHAN) return `cần trên ${NGUONG_CHO_TIEP_NHAN}%, đang ${tienDo}%`;
+  if (den === "COLLECTING_DOCUMENTS" && tienDo >= 100) return "đã đủ 100%";
   if (den === "COMPLETED" && tienDo < 100) return `cần đủ 100%, đang ${tienDo}%`;
   if (ADMIN_STATUSES.includes(den) && !ADMIN_STATUSES.includes(hienTai)) {
     if (hienTai !== "COMPLETED") return "phải Hoàn thành trước";

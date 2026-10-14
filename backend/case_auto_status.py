@@ -1,12 +1,12 @@
-"""Tự chuyển trạng thái phần nhân viên theo tiến độ giấy tờ.
+"""Tự chuyển trạng thái phần nhân viên theo tiến độ giấy tờ — HOÀN TOÀN theo % (13/10/2026, admin yêu cầu):
 
-- 0%                -> "Chờ tiếp nhận" (chưa có giấy tờ bắt buộc nào).
-- trên 0%, dưới 100% -> "Đang thu thập giấy tờ" khi đang "Chờ tiếp nhận" (hoặc tụt từ "Hoàn thành");
-  "Đang thu thập" / "Đang kiểm tra hồ sơ" thì GIỮ NGUYÊN — "Đang kiểm tra" là bước nhân viên tự chọn.
-- Đủ 100% giấy tờ bắt buộc  -> "Hoàn thành" (từ bất kỳ bước nào của nhân viên).
-- Đang "Hoàn thành" mà tụt dưới 100% (xoá file, gỡ file khỏi mục, đổi hôn nhân làm checklist dài
-  ra...) -> lùi về "Đang thu thập giấy tờ". Giữ đúng quy tắc "Hoàn thành chỉ khi 100%" — không thì
-  một hồ sơ thiếu giấy vẫn nằm ở "Hoàn thành" và admin nhận sang "Sẵn sàng nộp" được.
+- tiến độ <= NGUONG_CHO_TIEP_NHAN (20%)  -> "Chờ tiếp nhận"
+- trên 20%, dưới 100%                    -> "Đang thu thập giấy tờ"
+- đủ 100% giấy tờ bắt buộc               -> "Hoàn thành"
+
+Đi CẢ HAI chiều: tụt % (xoá file, gỡ file khỏi mục, đổi hôn nhân làm checklist dài ra...) thì lùi
+trạng thái theo — giữ đúng "Hoàn thành chỉ khi 100%", không thì hồ sơ thiếu giấy vẫn nằm ở "Hoàn
+thành" và admin nhận sang "Sẵn sàng nộp" được.
 
 Hồ sơ đã sang phần admin (từ "Sẵn sàng nộp" trở đi) thì KHÔNG đụng tới: lúc đó trạng thái phản
 ánh việc nộp/xét duyệt, không còn phản ánh giấy tờ — "Đang xử lý" mà tự nhảy về "Hoàn thành" chỉ
@@ -22,7 +22,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from case_status import ADMIN_STATUSES
+from case_status import ADMIN_STATUSES, NGUONG_CHO_TIEP_NHAN
 from completeness import compute_checklist_summary
 from models import Case, ChecklistItem, now_utc
 
@@ -36,13 +36,12 @@ def trang_thai_theo_tien_do(hien_tai: str, tien_do: int) -> str | None:
     if hien_tai in ADMIN_STATUSES:
         return None
     if tien_do >= 100:
-        return None if hien_tai == "COMPLETED" else "COMPLETED"
-    if tien_do <= 0:
-        return None if hien_tai == "PENDING" else "PENDING"
-    # 0% < tiến độ < 100%
-    if hien_tai in ("PENDING", "COMPLETED"):
-        return TRANG_THAI_KHI_TUT
-    return None
+        moi = "COMPLETED"
+    elif tien_do <= NGUONG_CHO_TIEP_NHAN:
+        moi = "PENDING"
+    else:
+        moi = TRANG_THAI_KHI_TUT
+    return None if moi == hien_tai else moi
 
 
 def dong_bo_hoan_thanh(db: Session, case: Case | None, items: list[ChecklistItem] | None = None) -> bool:

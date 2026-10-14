@@ -25,7 +25,6 @@ ALLOWED_TAGS: dict[str, str] = {
 ApplicationStatus = Literal[
     "PENDING",
     "COLLECTING_DOCUMENTS",
-    "REVIEWING_DOCUMENTS",
     "COMPLETED",
     "READY_TO_SUBMIT",
     "SUBMITTED",
@@ -173,6 +172,8 @@ class ChecklistItemDTO(BaseModel):
     quantityRule: str
     skillLevel: str
     numberGroup: str | None = None
+    # False = giấy tờ mục này không phải dịch (seed.KHONG_CAN_DICH) — không tính vào số trang dịch.
+    needsTranslation: bool = True
 
     class Config:
         from_attributes = True
@@ -315,6 +316,16 @@ class CaseDTO(BaseModel):
     statusReminderIntervalDays: int = 14
     submissionRound: int = 1
     lastDocumentAt: datetime | None = None
+    # Công tắc "Đã gửi nguồn": lúc bật + người bật; None = chưa gửi (models.Case.sentToSourceAt).
+    sentToSourceAt: datetime | None = None
+    sentToSourceBy: str | None = None
+    # Công tắc "Đã sẵn sàng nộp" (models.Case.readyToSubmitAt) — phải bật mới bấm "Hoàn tất".
+    readyToSubmitAt: datetime | None = None
+    readyToSubmitBy: str | None = None
+    # Ngày lăn tay (sinh trắc học) — admin chọn ở bảng hồ sơ trang tổng quan; None = chưa có lịch.
+    biometricsDate: date | None = None
+    # Ngày nộp cho Chính phủ — admin chọn ở trang "CP đang xử lý"; None = chưa ghi.
+    submittedDate: date | None = None
     # Số ngày chưa cập nhật nếu thuộc diện nhắc "7 ngày chưa cập nhật" (thong_bao.ngay_chua_cap_nhat),
     # None nếu không. Chỉ có ở 2 endpoint danh sách (GET /cases, GET /admin/cases).
     idleDays: int | None = None

@@ -1,13 +1,13 @@
-"""Dọn định kỳ: XOÁ VĨNH VIỄN hồ sơ đã hoàn tất quá hạn, và bản dịch tạm quá 7 ngày.
+"""Dọn định kỳ: XOÁ FILE của hồ sơ đã hoàn tất quá hạn (giữ hồ sơ khách), và bản dịch tạm quá 7 ngày.
 
 Nhân viên bấm "Hoàn tất" -> Case.autoDeleteAt = hôm nay + CASE_AUTO_DELETE_DAYS (14 ngày). Tới
-hạn, tiến trình này XOÁ HẲN hồ sơ: toàn bộ file trên MinIO (file gốc + ảnh từng trang), các dòng
-Document, và chính hồ sơ khách hàng — qua case_delete.hard_delete_case, dùng chung với nút "Xoá
-vĩnh viễn" của admin.
+hạn, tiến trình này XOÁ TOÀN BỘ FILE giấy tờ (file gốc + ảnh từng trang trên MinIO, các dòng
+Document) nhưng GIỮ LẠI hồ sơ khách — case_delete.purge_case_files.
 
-KHÔNG KHÔI PHỤC ĐƯỢC. Đã đổi hai lần theo yêu cầu nghiệp vụ (25/09/2026): trước là xoá MỀM cả
-hồ sơ, rồi thành chỉ xoá file giữ khách, rồi thành xoá hẳn như bây giờ. Hộp xác nhận khi bấm
-"Hoàn tất" và khung cảnh báo trên trang hồ sơ phải nói rõ điều này.
+File xoá rồi KHÔNG KHÔI PHỤC ĐƯỢC. Lịch sử quy tắc: 25/09/2026 đổi hai lần (xoá mềm cả hồ sơ ->
+chỉ xoá file -> xoá hẳn cả hồ sơ); 13/10/2026 hai hồ sơ (Võ Thị Diễm Hương, Nguyễn Hoàng Long) bị
+xoá HẲN cả thông tin khách, Docs yêu cầu đổi lại: "xoá là xoá file thôi, profile vẫn giữ". Hộp xác
+nhận khi bấm "Hoàn tất" và khung cảnh báo trên trang hồ sơ phải nói đúng điều này.
 
 Một hồ sơ lỗi không chặn các hồ sơ khác; hồ sơ đó vẫn còn nguyên (MinIO xoá trước, DB sau — xem
 case_delete.py) nên vòng quét sau thử lại được.
@@ -33,7 +33,7 @@ load_dotenv("../.env")
 
 import storage  # noqa: E402
 from case_auto_status import dong_bo_hoan_thanh, trang_thai_theo_tien_do  # noqa: E402
-from case_delete import hard_delete_case  # noqa: E402
+from case_delete import purge_case_files  # noqa: E402
 from case_status import CASE_AUTO_DELETE_DAYS  # noqa: E402
 from db import SessionLocal  # noqa: E402
 from completeness import compute_checklist_summary  # noqa: E402
@@ -71,22 +71,22 @@ def run_once(*, dry_run: bool = False) -> int:
             )
         ).all()
         if not den_han:
-            logger.info("Không có hồ sơ nào tới hạn xoá vĩnh viễn.")
+            logger.info("Không có hồ sơ nào tới hạn xoá file.")
             return 0
 
         for case in den_han:
             ten, ma, so_tai_lieu = case.clientName, case.id, len(case.documents)
             if dry_run:
-                logger.info("DRY RUN — sẽ XOÁ VĨNH VIỄN hồ sơ '%s' (%s) cùng %s tài liệu.",
-                            ten, ma, so_tai_lieu)
+                logger.info("DRY RUN — sẽ XOÁ FILE (%s tài liệu) của hồ sơ '%s' (%s), giữ hồ sơ.",
+                            so_tai_lieu, ten, ma)
                 continue
             try:
-                so_file = hard_delete_case(db, case)
+                so_file = purge_case_files(db, case)
             except Exception:  # noqa: BLE001
                 db.rollback()
-                logger.exception("Không xoá được hồ sơ '%s' (%s); vòng sau thử lại.", ten, ma)
+                logger.exception("Không xoá được file của hồ sơ '%s' (%s); vòng sau thử lại.", ten, ma)
                 continue
-            logger.info("Đã XOÁ VĨNH VIỄN hồ sơ '%s' (%s): %s tài liệu, %s file trên MinIO.",
+            logger.info("Đã XOÁ FILE của hồ sơ '%s' (%s): %s tài liệu, %s file trên MinIO — GIỮ hồ sơ khách.",
                         ten, ma, so_tai_lieu, so_file)
         return len(den_han)
     except Exception:
@@ -143,6 +143,34 @@ def don_ban_dich(*, dry_run: bool = False) -> int:
             logger.exception("Không xoá được %s", key)
     logger.info("Đã xoá %s/%s file bản dịch quá %s ngày.",
                 da_xoa, len(qua_han), TRANSLATION_CHECK_RETENTION_DAYS)
+    return da_xoa
+
+
+def don_tach_file(*, dry_run: bool = False) -> int:
+    """Xoá HẲN file tạm của trang "Tách file" (tach-file/<job>/) quá tach_file.RETENTION_HOURS (24 giờ).
+    Cùng lý do xoá cứng với don_ban_dich: file tạm chứa giấy tờ tuỳ thân, không bảng DB nào trỏ tới —
+    nhân viên tải ZIP xong là hết việc, file thật nằm trong hồ sơ sau khi upload."""
+    import tach_file
+
+    nguong = now_utc() - timedelta(hours=tach_file.RETENTION_HOURS)
+    try:
+        tat_ca = storage.list_objects_with_time(tach_file.PREFIX + "/")
+    except Exception:
+        logger.exception("Không liệt kê được file tách tạm trên MinIO; sẽ thử lại vòng sau.")
+        return 0
+    qua_han = [k for k, t in tat_ca if t.replace(tzinfo=None) < nguong]
+    if not qua_han or dry_run:
+        if qua_han:
+            logger.info("DRY RUN — sẽ xoá %s file tách tạm quá hạn.", len(qua_han))
+        return len(qua_han)
+    da_xoa = 0
+    for key in qua_han:
+        try:
+            storage.delete_document(key)
+            da_xoa += 1
+        except Exception:  # noqa: BLE001
+            logger.exception("Không xoá được %s", key)
+    logger.info("Đã xoá %s/%s file tách tạm quá %s giờ.", da_xoa, len(qua_han), tach_file.RETENTION_HOURS)
     return da_xoa
 
 
@@ -259,6 +287,7 @@ def main() -> None:
     if args.once:
         run_once(dry_run=args.dry_run)
         don_ban_dich(dry_run=args.dry_run)
+        don_tach_file(dry_run=args.dry_run)
         don_tai_lieu_ket(dry_run=args.dry_run)
         dong_bo_trang_thai(dry_run=args.dry_run)
         don_nhat_ky(dry_run=args.dry_run)
@@ -274,6 +303,7 @@ def main() -> None:
         try:
             run_once(dry_run=args.dry_run)
             don_ban_dich(dry_run=args.dry_run)
+            don_tach_file(dry_run=args.dry_run)
             don_tai_lieu_ket(dry_run=args.dry_run)
             dong_bo_trang_thai(dry_run=args.dry_run)
             don_nhat_ky(dry_run=args.dry_run)

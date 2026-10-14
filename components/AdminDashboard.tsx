@@ -21,7 +21,7 @@ import { CHUA_NHAP_NGUON, nhomTheoNguon } from "@/lib/nguon";
 
 // Giá trị giả trong ô chọn trạng thái cho thao tác "Nộp lại lần N" — không phải ApplicationStatus.
 const NOP_LAI = "__NOP_LAI__";
-import { EL, STATUS_LABEL, STATUS_COLOR, Tag, AdminSidebar, NutNhomTheoNguon, DongTieuDeNhom } from "@/components/adminUi";
+import { EL, STATUS_LABEL, STATUS_COLOR, Tag, AdminSidebar, NutNhomTheoNguon, DongTieuDeNhom, baoSidebarDemLai } from "@/components/adminUi";
 import { ChuongThongBao } from "@/components/ChuongThongBao";
 import { BO_LOC_HO_SO, type KhoaLoc } from "@/lib/adminCaseFilters";
 import type {
@@ -98,6 +98,7 @@ export function AdminDashboard() {
       tong: song.length,
       daNop: dem("daNop"),
       hoanThanh: dem("hoanThanh"),
+      sanSangNop: dem("sanSangNop"),
       dangXuLy: dem("dangXuLy"),
       dau: dem("dau"),
       rot: dem("rot"),
@@ -108,14 +109,42 @@ export function AdminDashboard() {
       chuaCapNhat: dem("chuaCapNhat"),
       // Cùng cách gộp tên nguồn với biểu đồ "Hồ sơ theo nguồn" (lib/nguon.ts).
       nguon: nhomTheoNguon(song).filter((g) => !g.chuaNhap).length,
-      // Thẻ giấy tờ sắp hết hạn đếm SỐ GIẤY TỜ, không phải số hồ sơ.
-      sapHetHan: song.reduce((t, c) => t + c.expiringSoonDocCount, 0),
+      canReview: dem("canReview"),
+      // Tổng số GIẤY TỜ cần review (thẻ đếm số hồ sơ) — chỉ để ghi trong chú thích của thẻ.
+      soGiayCanReview: song.reduce((t, c) => t + c.needsReviewCount, 0),
+      lanTay: dem("lanTay"),
+      // Ngày lăn tay gần nhất từ hôm nay — chú thích của thẻ "Ngày lăn tay".
+      lanTaySapToi: dem("lanTaySapToi"),
+      lanTayGanNhat: song.filter(BO_LOC_HO_SO.lanTaySapToi.dat).map((c) => c.biometricsDate as string).sort()[0] ?? null,
     };
   }, [cases]);
 
   // Admin đổi trạng thái ngay tại bảng tổng quan (vd nhận hồ sơ "Hoàn thành" sang "Sẵn sàng nộp"). Trước
   // đây chỉ trang nhân viên đổi được, admin phải mở trang khác.
   const [dangDoiTrangThai, setDangDoiTrangThai] = useState<string | null>(null);
+  const [dangLuuNgayLanTay, setDangLuuNgayLanTay] = useState<string | null>(null);
+
+  // Ngày lăn tay — ô chọn ngày ở cột "Ngày lăn tay". Đổi là lưu ngay; xoá trắng ô = bỏ ngày.
+  async function doiNgayLanTay(c: CaseListItemDTO, giaTri: string) {
+    const moi = giaTri || null;
+    if (moi === (c.biometricsDate ?? null)) return;
+    const cu = c.biometricsDate ?? null;
+    setCases((prev) => prev.map((x) => (x.id === c.id ? { ...x, biometricsDate: moi } : x)));
+    setDangLuuNgayLanTay(c.id);
+    try {
+      const res = await adminFetch(`/admin/cases/${c.id}/biometrics-date`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ biometricsDate: moi }),
+      }).catch(() => null);
+      if (!res || !res.ok) {
+        setCases((prev) => prev.map((x) => (x.id === c.id ? { ...x, biometricsDate: cu } : x)));
+        alert("Không lưu được ngày lăn tay — thử lại sau.");
+      }
+    } finally {
+      setDangLuuNgayLanTay(null);
+    }
+  }
   const [thongBaoEmail, setThongBaoEmail] = useState<string | null>(null);
 
   async function doiTrangThai(c: CaseListItemDTO, trangThai: ApplicationStatus) {
@@ -140,6 +169,7 @@ export function AdminDashboard() {
           ? `Đã chuyển "${c.clientName}" sang "${getApplicationStatus(trangThai).label}" — đã gửi email báo.`
           : null
       );
+      baoSidebarDemLai();
       await load();
     } finally {
       setDangDoiTrangThai(null);
@@ -168,6 +198,7 @@ export function AdminDashboard() {
         return;
       }
       setThongBaoEmail(null);
+      baoSidebarDemLai();
       await load();
     } finally {
       setDangDoiTrangThai(null);
@@ -442,11 +473,18 @@ export function AdminDashboard() {
           <Tag color={c.percent === 100 ? EL.success : EL.primary}>{c.percent}%</Tag>
         </td>
         <td className="px-4 py-3">
-          {c.needsReviewCount > 0 ? (
-            <Tag color={EL.warning}>{c.needsReviewCount}</Tag>
-          ) : (
-            <span className="text-xs text-neutral-300">—</span>
-          )}
+          {/* Ngày lăn tay (sinh trắc học) — admin tự chọn; thay cột "Cần review" (12/10/2026). */}
+          <input
+            type="date"
+            value={c.biometricsDate ?? ""}
+            disabled={isDeleted || dangLuuNgayLanTay === c.id}
+            onChange={(e) => doiNgayLanTay(c, e.target.value)}
+            aria-label={`Ngày lăn tay của ${c.clientName}`}
+            title="Chọn ngày lăn tay — xoá trắng ô để bỏ ngày"
+            className={`rounded border px-2 py-1 text-xs outline-none focus:border-blue-400 disabled:opacity-50 ${
+              c.biometricsDate ? "border-blue-300 bg-blue-50 font-semibold text-blue-800" : "border-neutral-200 bg-white text-neutral-500"
+            }`}
+          />
         </td>
         <td className="px-4 py-3 text-neutral-500 text-xs whitespace-nowrap">
           {parseUtcDate(c.createdAt).toLocaleDateString("vi-VN")}
@@ -533,20 +571,22 @@ export function AdminDashboard() {
             />
           ) : (
             <>
-              {/* 12 thẻ, 2 hàng x 6: ép hết vào một hàng thì nhãn bị cắt cụt ("Đến hạn nhắc 14
-                  ngày" thành "Đến hạn ..."), đọc không ra nghĩa. */}
+              {/* 14 thẻ: màn rộng (2xl) 2 hàng x 7, màn vừa 6 cột. Ép hết vào một hàng thì nhãn bị cắt
+                  cụt ("Đến hạn nhắc 14 ngày" thành "Đến hạn ..."), đọc không ra nghĩa. */}
               {stats && (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 2xl:grid-cols-7 gap-4 mb-6">
                   <StatPanel icon="🗂️" label="Tổng hồ sơ" href="/admin/thong-ke" value={soLieu.tong} color={EL.primary}
                     hint="Hồ sơ đang hoạt động (không tính hồ sơ đã xoá)" />
                   <StatPanel icon="🤝" label="Số nguồn" href="/admin/thong-ke?nhom=nguon" value={soLieu.nguon} color={EL.primary}
                     hint="Số nguồn / đối tác khác nhau đang có hồ sơ — bấm để xem bảng nhóm theo nguồn" />
                   <StatPanel icon="📨" label="Hồ sơ đã nộp" href="/admin/thong-ke?loc=daNop" value={soLieu.daNop} color={EL.primary}
-                    hint='Đã nộp đi: "Đang xử lý" + "Được chấp thuận" + "Không thành công" + "Thanh lý hồ sơ"' />
+                    hint='Đã nộp đi: "CP đang xử lý" + "Được chấp thuận" + "Không thành công" + "Thanh lý hồ sơ"' />
                   <StatPanel icon="✅" label="Hồ sơ hoàn thành" href="/admin/thong-ke?loc=hoanThanh" value={soLieu.hoanThanh} color={EL.success}
-                    hint='Trạng thái "Hoàn thành" (đủ 100% giấy tờ, chờ admin nhận)' />
-                  <StatPanel icon="🔄" label="Hồ sơ đang xử lý" href="/admin/thong-ke?loc=dangXuLy" value={soLieu.dangXuLy} color={EL.warning}
-                    hint='Trạng thái "Đang xử lý" — đã nộp, đang chờ kết quả' />
+                    hint='Hồ sơ đang ở trạng thái "Hoàn thành"' />
+                  <StatPanel icon="☑️" label="Đã sẵn sàng nộp" href="/admin/thong-ke?loc=sanSangNop" value={soLieu.sanSangNop} color={EL.success}
+                    hint='Hồ sơ đang ở trạng thái "Sẵn sàng nộp"' />
+                  <StatPanel icon="🔄" label="Hồ sơ CP đang xử lý" href="/admin/thong-ke?loc=dangXuLy" value={soLieu.dangXuLy} color={EL.warning}
+                    hint='Trạng thái "CP đang xử lý" — đã nộp, Chính phủ đang xét, chờ kết quả' />
                   <StatPanel icon="🎉" label="Hồ sơ thành công (đậu)" href="/admin/thong-ke?loc=dau" value={soLieu.dau} color={EL.success}
                     hint='Trạng thái "Được chấp thuận"' />
                   <StatPanel icon="❌" label="Hồ sơ rớt" href="/admin/thong-ke?loc=rot" value={soLieu.rot}
@@ -564,8 +604,19 @@ export function AdminDashboard() {
                   <StatPanel icon="🗃️" label="Hồ sơ thanh lý" href="/admin/thong-ke?loc=thanhLy" value={soLieu.thanhLy}
                     color={soLieu.thanhLy > 0 ? "#475569" : EL.info}
                     hint='Trạng thái "Thanh lý hồ sơ" — hồ sơ đã khép lại sau khi không thành công' />
-                  <StatPanel icon="🕒" label="Giấy tờ sắp hết hạn" href="/admin/thong-ke?loc=sapHetHan" value={soLieu.sapHetHan}
-                    color={soLieu.sapHetHan > 0 ? EL.warning : EL.info} hint="Số giấy tờ sắp hết hạn hiệu lực" />
+                  {/* Thay thẻ "Giấy tờ sắp hết hạn" (12/10/2026) — bộ lọc đó vẫn còn ở trang Thống kê. */}
+                  <StatPanel icon="🔍" label="Cần review" href="/admin/thong-ke?loc=canReview" value={soLieu.canReview}
+                    color={soLieu.canReview > 0 ? EL.warning : EL.info}
+                    hint={`Hồ sơ còn giấy tờ AI chưa chắc, cần xem lại tay — tổng ${soLieu.soGiayCanReview} giấy tờ`} />
+                  <StatPanel icon="🖐️" label="Ngày lăn tay" href="/admin/thong-ke?loc=lanTay" value={soLieu.lanTay}
+                    color={soLieu.lanTay > 0 ? EL.primary : EL.info}
+                    hint={
+                      "Hồ sơ đã có ngày lăn tay (cột Ngày lăn tay ở bảng dưới)" +
+                      ` — ${soLieu.lanTaySapToi} lịch từ hôm nay trở đi` +
+                      (soLieu.lanTayGanNhat
+                        ? `, gần nhất ${soLieu.lanTayGanNhat.split("-").reverse().join("/")}`
+                        : "")
+                    } />
                 </div>
               )}
               {thongBaoEmail && (
@@ -576,10 +627,9 @@ export function AdminDashboard() {
 
               {(cases.length > 0 || documents.length > 0) && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-                  <CaseCompletionChart cases={cases} />
+                  {/* Bỏ "Tiến độ hồ sơ" và "Nhãn hồ sơ" (admin yêu cầu 13/10/2026). */}
                   <CaseSourceChart cases={cases} />
                   {stats && <CaseStatusChart counts={stats.casesByStatus} />}
-                  {stats && <CaseTagChart counts={stats.casesByTag} />}
                 </div>
               )}
 
@@ -602,7 +652,7 @@ export function AdminDashboard() {
                           <th className="px-4 py-3">Nguồn</th>
                           <th className="px-4 py-3">Trạng thái</th>
                           <th className="px-4 py-3">Hoàn thành</th>
-                          <th className="px-4 py-3">Cần review</th>
+                          <th className="px-4 py-3 whitespace-nowrap">Ngày lăn tay</th>
                           <th className="px-4 py-3 whitespace-nowrap">Ngày nhận HS</th>
                           <th className="px-4 py-3 text-right">Hành động</th>
                         </tr>
@@ -900,11 +950,8 @@ function DocumentsTable({ documents }: { documents: AdminDocumentDTO[] }) {
   );
 }
 
-// So sánh độ lớn (% hoàn thành) giữa các hồ sơ — 1 hue duy nhất (EL.primary) đúng quy tắc
-// "compare magnitude → sequential", không tô màu theo từng case (đó là việc của identity/
-// categorical, không phải việc của biểu đồ này).
-// Số dòng mặc định của các biểu đồ thanh ngang ở trang tổng quan — "Tiến độ hồ sơ" và "Hồ sơ
-// theo nguồn" dùng CHUNG để hai panel cạnh nhau cao bằng nhau.
+// Số dòng mặc định của biểu đồ thanh ngang "Hồ sơ theo nguồn" ở trang tổng quan ("Tiến độ hồ sơ"
+// từng dùng chung — đã bỏ 13/10/2026 theo yêu cầu admin, cùng với "Nhãn hồ sơ").
 const SO_DONG_BIEU_DO = 8;
 
 // Nút "▾ Xem thêm N … / ▴ Thu gọn" ở chân các biểu đồ có giới hạn SO_DONG_BIEU_DO dòng.
@@ -927,53 +974,6 @@ function NutXemThem({ moRong, soAn, donVi, onToggle }: {
     </button>
   );
 }
-
-function CaseCompletionChart({ cases }: { cases: CaseListItemDTO[] }) {
-  const [moRong, setMoRong] = useState(false);
-  const tatCa = cases
-    .filter((c) => !c.deletedAt)
-    .sort((a, b) => b.percent - a.percent || a.clientName.localeCompare(b.clientName, "vi"));
-  const rows = moRong ? tatCa : tatCa.slice(0, SO_DONG_BIEU_DO);
-
-  return (
-    <div className="bg-white rounded shadow-sm p-4">
-      <p className="text-sm font-semibold text-neutral-700 mb-4">Tiến độ hồ sơ (% hoàn thành)</p>
-      {rows.length === 0 ? (
-        <p className="text-sm text-neutral-400">Chưa có hồ sơ đang hoạt động.</p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {rows.map((c) => (
-            <div key={c.id} className="flex items-center gap-3" title={`${c.clientName}: ${c.percent}%`}>
-              <span className="w-28 shrink-0 text-xs text-neutral-600 truncate">{c.clientName}</span>
-              <div className="flex-1 h-5 rounded-full bg-neutral-100 overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{ width: `${c.percent}%`, backgroundColor: EL.primary }}
-                />
-              </div>
-              <span className="w-10 shrink-0 text-xs font-semibold text-neutral-600 text-right">
-                {c.percent}%
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {tatCa.length > SO_DONG_BIEU_DO && (
-        <NutXemThem
-          moRong={moRong}
-          soAn={tatCa.length - SO_DONG_BIEU_DO}
-          donVi="hồ sơ"
-          onToggle={() => setMoRong((v) => !v)}
-        />
-      )}
-    </div>
-  );
-}
-
-// Số hồ sơ theo NGUỒN (ô "Nguồn / đối tác" của hồ sơ, vd "Ms. Thanh"). Chỉ hồ sơ đang hoạt
-// động. Cách gộp tên gõ lệch nằm ở lib/nguon.ts — dùng chung với "Nhóm theo nguồn" ở trang thống kê.
-// Một màu duy nhất: đây là MỘT chuỗi số liệu (đếm), tên nguồn đã nằm ngay cạnh thanh, tô mỗi
-// nguồn một màu chỉ thêm nhiễu.
 
 function CaseSourceChart({ cases }: { cases: CaseListItemDTO[] }) {
   const [moRong, setMoRong] = useState(false);
@@ -1064,7 +1064,7 @@ function EmailLogTable({ logs }: { logs: EmailLogDTO[] }) {
         <p className="text-4xl mb-3">✉️</p>
         <p className="text-sm font-semibold text-neutral-700">Chưa có email nào được gửi.</p>
         <p className="text-xs text-neutral-400 mt-1.5">
-          Nhật ký sẽ tự ghi khi hồ sơ chuyển sang “Đang xử lý”, khi tới
+          Nhật ký sẽ tự ghi khi hồ sơ chuyển sang “CP đang xử lý”, khi tới
           chu kỳ nhắc 14 ngày, hoặc khi chạy lệnh gửi email kiểm tra.
         </p>
       </div>
@@ -1244,45 +1244,6 @@ function CaseStatusChart({ counts }: { counts: Record<string, number> }) {
                     width: `${(r.count / max) * 100}%`,
                     backgroundColor: APPLICATION_STATUS_HEX_COLOR[r.value],
                   }}
-                />
-              </div>
-              <span className="w-10 shrink-0 text-xs font-semibold text-neutral-600 text-right">
-                {r.count}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Nhãn hồ sơ (GẤP, VIP...). Một hồ sơ có thể mang nhiều nhãn nên tổng các cột ở đây LỚN HƠN
-// số hồ sơ — cố ý, vì câu hỏi cần trả lời là "đang có bao nhiêu việc gấp", không phải chia
-// hồ sơ thành các nhóm rời nhau.
-function CaseTagChart({ counts }: { counts: Record<string, number> }) {
-  // `?? {}`: lúc rolling deploy, backend bản cũ chưa trả field này thì Object.entries(undefined)
-  // sẽ ném lỗi và làm trắng cả trang admin.
-  const rows = Object.entries(counts ?? {})
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
-  const max = Math.max(1, ...rows.map((r) => r.count));
-
-  return (
-    <div className="bg-white rounded shadow-sm p-4">
-      <p className="text-sm font-semibold text-neutral-700 mb-1">Nhãn hồ sơ</p>
-      <p className="text-xs text-neutral-400 mb-4">Một hồ sơ có thể mang nhiều nhãn.</p>
-      {rows.length === 0 ? (
-        <p className="text-sm text-neutral-400">Chưa hồ sơ nào được gắn nhãn.</p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {rows.map((r) => (
-            <div key={r.name} className="flex items-center gap-3" title={`${r.name}: ${r.count}`}>
-              <span className="w-28 shrink-0 text-xs text-neutral-600 truncate">{r.name}</span>
-              <div className="flex-1 h-5 rounded-full bg-neutral-100 overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{ width: `${(r.count / max) * 100}%`, backgroundColor: TAG_HEX[r.name] ?? EL.info }}
                 />
               </div>
               <span className="w-10 shrink-0 text-xs font-semibold text-neutral-600 text-right">

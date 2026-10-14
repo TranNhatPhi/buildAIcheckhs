@@ -98,7 +98,7 @@ export function NewCaseForm() {
     >
       {/* Dải pastel đầu form — thay cho tiêu đề chữ trơn, để form có điểm bắt đầu rõ ràng. */}
       <div className="bg-gradient-to-r from-violet-100 via-sky-100 to-rose-100 px-7 py-5">
-        <p className="text-lg font-bold text-neutral-800">Tạo hồ sơ mới</p>
+        <p className="text-lg font-bold text-neutral-800">Tạo hồ sơ thô mới</p>
         <p className="mt-0.5 text-sm text-neutral-600">
           Điền thông tin khách hàng để hệ thống dựng đúng checklist tương ứng.
         </p>

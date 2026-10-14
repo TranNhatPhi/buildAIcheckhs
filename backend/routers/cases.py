@@ -614,7 +614,9 @@ def _dedupe_filename(name: str, used_names: set[str]) -> str:
 
 
 @router.get("/{case_id}/download-all")
-def download_all_documents(case_id: str, ids: Optional[str] = None, db: Session = Depends(get_db)):
+def download_all_documents(
+    case_id: str, ids: Optional[str] = None, loai: Optional[str] = None, db: Session = Depends(get_db)
+):
     """Gộp file gốc (PDF/ảnh) của hồ sơ thành 1 file ZIP để nhân viên tải về một lần.
 
     `ids` = danh sách id tài liệu, ngăn nhau bằng dấu phẩy -> CHỈ nén những file đó. Thiếu
@@ -624,7 +626,14 @@ def download_all_documents(case_id: str, ids: Optional[str] = None, db: Session 
     Khi có chọn lọc thì KHÔNG kèm bản phân tích AI: nhân viên tick vài tờ giấy cụ thể (vd gửi
     bổ sung cho lãnh sự) mà file zip lại có thêm bản phân tích nội bộ là đưa nhầm tài liệu
     ra ngoài.
+
+    `loai` (13/10/2026, Docs yêu cầu) = "dich" -> chỉ file PHẢI dịch; "tieng-anh" -> phần còn lại
+    (hộ chiếu, căn cước, ảnh thẻ, chứng chỉ tiếng Anh…). CÙNG quy tắc với nhãn "Hồ sơ dịch thuật:
+    N trang" ở trang hồ sơ (ChecklistItem.needsTranslation; file chưa khớp mục nào coi như phải
+    dịch) — hai gói cộng lại đúng bằng toàn bộ file. Cũng không kèm bản phân tích AI.
     """
+    if loai not in (None, "dich", "tieng-anh"):
+        raise HTTPException(status_code=422, detail="loai chỉ nhận 'dich' hoặc 'tieng-anh'")
     case = db.get(Case, case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
@@ -633,6 +642,14 @@ def download_all_documents(case_id: str, ids: Optional[str] = None, db: Session 
     tai_lieu = [d for d in case.documents if chon is None or d.id in chon]
     if chon is not None and not tai_lieu:
         raise HTTPException(status_code=404, detail="Không tìm thấy file nào trong số đã chọn")
+    if loai is not None:
+        def can_dich(d) -> bool:
+            return d.matchedChecklistItem is None or d.matchedChecklistItem.needsTranslation is not False
+        tai_lieu = [d for d in tai_lieu if can_dich(d) == (loai == "dich")]
+        if not tai_lieu:
+            raise HTTPException(status_code=404, detail="Hồ sơ không có file nào thuộc nhóm này")
+        # Từ đây xử lý như tải có chọn lọc: không kèm bản phân tích AI nội bộ.
+        chon = {d.id for d in tai_lieu}
 
     buffer = io.BytesIO()
     used_names: set[str] = set()
@@ -678,12 +695,22 @@ def download_all_documents(case_id: str, ids: Optional[str] = None, db: Session 
     # không hợp lệ nếu nhét thẳng vào filename= thường (đã xác nhận: UnicodeEncodeError khi
     # test thật). Dùng filename= ASCII an toàn làm fallback + filename*=UTF-8'' theo đúng
     # chuẩn RFC 5987/6266 để trình duyệt hiện đúng tên tiếng Việt lúc tải về.
-    hau_to = f" ({len(tai_lieu)} file da chon)" if chon is not None else ""
+    if loai == "dich":
+        hau_to = " - Ho so dich thuat"
+    elif loai == "tieng-anh":
+        hau_to = " - Ho so tieng Anh"
+    else:
+        hau_to = f" ({len(tai_lieu)} file da chon)" if chon is not None else ""
     ascii_fallback = re.sub(r'[^\x20-\x7e]|["\\]', "_", case.clientName).strip() or "ho-so"
     utf8_name = urllib.parse.quote(f"{case.clientName}{hau_to}.zip", safe="")
     activity.ghi(
         "ZIP_DOWNLOAD", case=case,
-        detail=f"{len(tai_lieu)} file đã chọn" if chon is not None else f"Tất cả {len(tai_lieu)} file",
+        detail=(
+            f"Hồ sơ dịch thuật: {len(tai_lieu)} file" if loai == "dich"
+            else f"Hồ sơ tiếng Anh: {len(tai_lieu)} file" if loai == "tieng-anh"
+            else f"{len(tai_lieu)} file đã chọn" if chon is not None
+            else f"Tất cả {len(tai_lieu)} file"
+        ),
     )
     return Response(
         content=buffer.getvalue(),
@@ -915,6 +942,22 @@ class ResubmitDTO(BaseModel):
     deletedFiles: int
 
 
+class SentToSourceDTO(BaseModel):
+    """Kết quả bật/tắt công tắc "Đã gửi nguồn". Optional (không phải `| None`) — Python 3.9."""
+
+    id: str
+    sentToSourceAt: Optional[datetime]
+    sentToSourceBy: Optional[str]
+
+
+class ReadyToSubmitDTO(BaseModel):
+    """Kết quả bật/tắt công tắc "Đã sẵn sàng nộp"."""
+
+    id: str
+    readyToSubmitAt: Optional[datetime]
+    readyToSubmitBy: Optional[str]
+
+
 @router.post("/{case_id}/resubmit", response_model=ResubmitDTO, dependencies=[Depends(require_admin)])
 def resubmit_case(case_id: str, db: Session = Depends(get_db)):
     """Admin chọn "Nộp lại lần N": làm lại hồ sơ từ đầu cho lần nộp kế tiếp.
@@ -934,7 +977,7 @@ def resubmit_case(case_id: str, db: Session = Depends(get_db)):
     if case.applicationStatus not in RESUBMIT_FROM_STATUSES:
         raise HTTPException(
             status_code=400,
-            detail="Chỉ hồ sơ 'Đang xử lý' hoặc 'Không thành công' mới chọn nộp lại được.",
+            detail="Chỉ hồ sơ 'CP đang xử lý' hoặc 'Không thành công' mới chọn nộp lại được.",
         )
     if (case.submissionRound or 1) >= MAX_SUBMISSION_ROUND:
         raise HTTPException(
@@ -952,6 +995,10 @@ def resubmit_case(case_id: str, db: Session = Depends(get_db)):
     case.lastStatusReminderAt = None
     case.completedAt = None
     case.autoDeleteAt = None
+    case.sentToSourceAt = None  # lần nộp mới làm lại từ đầu — chưa gửi nguồn, chưa sẵn sàng nộp
+    case.sentToSourceBy = None
+    case.readyToSubmitAt = None
+    case.readyToSubmitBy = None
     case.savingsAiVnd = None
     case.savingsAiNote = None
     case.savingsManualVnd = None
@@ -993,6 +1040,8 @@ def mark_case_complete(case_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
     if case.deletedAt is not None:
         raise HTTPException(status_code=400, detail="Hồ sơ đã bị xoá — khôi phục trước rồi mới đánh dấu hoàn tất.")
+    # Hoàn tất bấm được ở MỌI mức tiến độ (Docs 13/10/2026) — bấm là hồ sơ lên 100% (force_complete).
+    # "Đã sẵn sàng nộp" KHÔNG còn là điều kiện, và bấm Hoàn tất cũng KHÔNG tự bật công tắc đó.
 
     now = now_utc()
     case.completedAt = now
@@ -1022,3 +1071,66 @@ def unmark_case_complete(case_id: str, db: Session = Depends(get_db)):
         id=case_id, completedAt=None, autoDeleteAt=None, autoDeleteDays=CASE_AUTO_DELETE_DAYS,
         applicationStatus=case.applicationStatus,
     )
+
+
+def _ho_so_dang_hoat_dong(db: Session, case_id: str) -> Case:
+    case = db.get(Case, case_id)
+    if not case or case.deletedAt is not None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    return case
+
+
+@router.post("/{case_id}/sent-to-source", response_model=SentToSourceDTO)
+def mark_sent_to_source(case_id: str, db: Session = Depends(get_db)):
+    """Bật công tắc "Đã gửi nguồn" ở trang hồ sơ — chỉ ĐÁNH DẤU để cả danh sách thấy hồ sơ đã gửi
+    cho nguồn: không đổi trạng thái, không tắt chuông nhắc. Bật lại khi đang bật thì GIỮ mốc cũ
+    (lần bấm thứ hai không được xoá mất ngày gửi thật)."""
+    case = _ho_so_dang_hoat_dong(db, case_id)
+    if case.sentToSourceAt is None:
+        nguoi = activity.nguoi_hien_tai()
+        case.sentToSourceAt = now_utc()
+        case.sentToSourceBy = nguoi.name if nguoi else None
+        db.commit()
+        activity.ghi("SOURCE_SENT", case=case)
+    return SentToSourceDTO(id=case.id, sentToSourceAt=case.sentToSourceAt, sentToSourceBy=case.sentToSourceBy)
+
+
+@router.delete("/{case_id}/sent-to-source", response_model=SentToSourceDTO)
+def unmark_sent_to_source(case_id: str, db: Session = Depends(get_db)):
+    """Tắt công tắc "Đã gửi nguồn" (bấm nhầm, hoặc nguồn trả hồ sơ về)."""
+    case = _ho_so_dang_hoat_dong(db, case_id)
+    if case.sentToSourceAt is not None:
+        truoc = case.sentToSourceAt
+        case.sentToSourceAt = None
+        case.sentToSourceBy = None
+        db.commit()
+        gio_vn = truoc + timedelta(hours=7)  # DB lưu giờ UTC
+        activity.ghi("SOURCE_UNSENT", case=case, detail=f"Trước đó đánh dấu gửi lúc {gio_vn:%H:%M %d/%m/%Y}")
+    return SentToSourceDTO(id=case.id, sentToSourceAt=None, sentToSourceBy=None)
+
+
+@router.post("/{case_id}/ready-to-submit", response_model=ReadyToSubmitDTO)
+def mark_ready_to_submit(case_id: str, db: Session = Depends(get_db)):
+    """Bật công tắc "Đã sẵn sàng nộp" trên thẻ hồ sơ ở danh sách — điều kiện để bấm "Hoàn tất".
+    Không đổi trạng thái (READY_TO_SUBMIT là việc của admin). Bật lại khi đang bật thì giữ mốc cũ."""
+    case = _ho_so_dang_hoat_dong(db, case_id)
+    if case.readyToSubmitAt is None:
+        nguoi = activity.nguoi_hien_tai()
+        case.readyToSubmitAt = now_utc()
+        case.readyToSubmitBy = nguoi.name if nguoi else None
+        db.commit()
+        activity.ghi("READY_ON", case=case)
+    return ReadyToSubmitDTO(id=case.id, readyToSubmitAt=case.readyToSubmitAt, readyToSubmitBy=case.readyToSubmitBy)
+
+
+@router.delete("/{case_id}/ready-to-submit", response_model=ReadyToSubmitDTO)
+def unmark_ready_to_submit(case_id: str, db: Session = Depends(get_db)):
+    """Tắt "Đã sẵn sàng nộp" — tắt được bất cứ lúc nào, kể cả hồ sơ đang Hoàn tất: công tắc chỉ là
+    dấu nhân viên bật/tắt BẰNG TAY, không gắn với Hoàn tất (12/10/2026)."""
+    case = _ho_so_dang_hoat_dong(db, case_id)
+    if case.readyToSubmitAt is not None:
+        case.readyToSubmitAt = None
+        case.readyToSubmitBy = None
+        db.commit()
+        activity.ghi("READY_OFF", case=case)
+    return ReadyToSubmitDTO(id=case.id, readyToSubmitAt=None, readyToSubmitBy=None)

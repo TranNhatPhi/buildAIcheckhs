@@ -6,9 +6,12 @@ import { StaffIdentity } from "@/components/StaffIdentity";
 import { ChuongThongBao } from "@/components/ChuongThongBao";
 
 const LINKS = [
-  { href: "/", label: "Danh sách hồ sơ", icon: "📋" },
-  { href: "/cases/new", label: "Tạo hồ sơ mới", icon: "➕" },
+  { href: "/", label: "Danh sách hồ sơ Thô", icon: "📋" },
+  { href: "/ho-so-hoan-thanh", label: "Danh sách hồ sơ hoàn thành", icon: "✅" },
+  { href: "/cases/new", label: "Tạo hồ sơ thô mới", icon: "➕" },
   { href: "/translation-check", label: "Kiểm tra dịch thuật", icon: "🌐" },
+  { href: "/tach-file", label: "Tách file PDF / Word gốc", icon: "✂️" },
+  { href: "/tach-ban-dich", label: "Tách hồ sơ dịch thuật PDF / Excel", icon: "📑" },
   { href: "/mau-hop-dong", label: "Mẫu hợp đồng lao động", icon: "📄" },
   { href: "/mau-xac-nhan-kinh-nghiem", label: "Mẫu thư xác nhận kinh nghiệm", icon: "📝" },
   { href: "/mau-phieu-luong", label: "Mẫu phiếu lương", icon: "💵" },
@@ -22,7 +25,11 @@ export function Sidebar() {
   if (pathname.startsWith("/admin")) return null;
 
   return (
-    <aside className="w-60 shrink-0 h-screen sticky top-0 flex flex-col bg-white border-r border-neutral-200">
+    // `sticky` tạo lớp xếp chồng riêng: bảng thông báo của chuông (z-50) chỉ cao TRONG sidebar, còn
+    // cả sidebar bị vẽ dưới nội dung trang đứng sau nó (vd khối 3D sticky ở đầu Danh sách hồ sơ) ->
+    // bảng bị che. Chỉ nâng sidebar lên z-40 LÚC BẢNG ĐANG MỞ: nâng thường trực thì sidebar sẽ đè
+    // lên các hộp thoại z-50 nằm trong lớp xếp chồng con của trang (ảnh giấy tờ, sửa hồ sơ...).
+    <aside className="w-60 shrink-0 h-screen sticky top-0 flex flex-col bg-white border-r border-neutral-200 has-[[data-chuong-mo]]:z-40">
       <div className="flex items-center gap-1 pr-3 h-16 border-b border-neutral-200 shrink-0">
       <Link href="/" className="flex flex-1 items-center gap-2.5 pl-5 h-full min-w-0">
         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white text-sm shadow-sm">

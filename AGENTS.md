@@ -92,9 +92,13 @@ không xoá mềm như hồ sơ: đây là file tạm để soát một lượt,
 dùng lifecycle rule của MinIO vì nó tính theo NGÀY và hết hạn lúc nửa đêm UTC, tức "1 ngày"
 thực tế là 24-48 giờ.
 KHÔNG lưu gì vào DB, KHÔNG dùng AI — toàn bộ là quy tắc trong `backend/translation_check.py`,
-rút ra từ bộ bản dịch thật trong `hosodichthuat/`: họ tên viết HOA bỏ dấu, cùng một người phải
-cùng một tên ở mọi bản (bộ mẫu có tên bố ghi 3 kiểu), không còn chữ tiếng Việt có dấu, số giấy
-tờ không lệch 1-2 chữ số, ngày tháng có thật.
+rút ra từ bộ bản dịch thật trong `hosodichthuat/`: họ tên bỏ dấu (viết HOA hay thường đều được —
+đã bỏ cảnh báo "Họ tên chưa viết HOA" 07/10/2026 theo yêu cầu Docs), cùng một người phải
+cùng một tên ở mọi bản (bộ mẫu có tên bố ghi 3 kiểu), số giấy tờ không lệch 1-2 chữ số, ngày
+tháng có thật. ĐÃ BỎ (07/10/2026, Docs yêu cầu, vì báo oan): "Còn chữ tiếng Việt có dấu" (PDF
+dịch thuật công chứng kèm cả phần tiếng Việt — bản gốc, lời chứng) và "Không thấy tên chủ giấy tờ"
+(có giấy không nhắc tên chủ, PDF scan đọc không ra tên). Tên chủ giấy tờ chỉ còn báo khi bản dịch
+CÓ ghi mà ghi KHÁC tên theo tên file.
 
 Tên được đọc THEO TỪNG DÒNG để lấy cả chữ đứng trước nó (Father, Householder, Mother...) — nhờ
 vậy báo lỗi nói rõ tên đó là của ai thay vì chỉ liệt kê tên trơn, và mức độ mới quyết được:
@@ -151,30 +155,179 @@ dịch với nhau.
 - **Đừng ghi nội dung dự án vào `CLAUDE.md`** — `next dev` ghi đè toàn bộ file đó. Viết vào
   chính `AGENTS.md` này, phía dưới marker `END:nextjs-agent-rules`.
 
-## Đánh dấu hồ sơ hoàn tất & xoá vĩnh viễn
+## Sao lưu CSDL (dịch vụ `db-backup`, 13/10/2026)
+
+`ops/backup-db.sh` chạy trong container `mysql:8.4`: mỗi giờ kiểm tra hôm nay (giờ VN) đã có bản sao lưu
+chưa, chưa thì `mysqldump` -> `./backups/canada_checklist-YYYY-MM-DD_HHMM.sql.gz` trên ổ máy chủ, giữ 30
+ngày (BACKUP_RETENTION_DAYS). Chỉ giữ file có dòng "-- Dump completed" (sh không có pipefail). Không hẹn
+giờ ban đêm vì máy chủ tắt mỗi tối. `backups` nằm trong `.dockerignore` (frontend build từ thư mục gốc).
+CHỈ có MySQL — file giấy tờ trên MinIO KHÔNG được sao lưu ở đây.
+
+Khôi phục TOÀN BỘ (ghi đè dữ liệu hiện tại — dừng backend trước):
+    gzip -cd backups/<file>.sql.gz | docker compose exec -T mysql mysql -uroot -p<ROOT_PW> canada_checklist
+Lấy lại MỘT hồ sơ: khôi phục vào CSDL tạm (`CREATE DATABASE thu_khoi_phuc` rồi nạp file vào đó), chép
+dòng `Case` (+ `Document` nếu file MinIO còn) sang canada_checklist bằng INSERT ... SELECT, rồi DROP CSDL
+tạm. Đã thử khôi phục vào CSDL tạm 13/10/2026: mọi bảng khớp số dòng, tiếng Việt nguyên vẹn.
+
+## Đánh dấu hồ sơ hoàn tất & tự xoá FILE
 
 Trang **Danh sách hồ sơ** có nút **"Hoàn tất"** trên từng thẻ: `Case.completedAt = now`,
-`Case.autoDeleteAt = now + CASE_AUTO_DELETE_DAYS` (**14 ngày**, `backend/case_status.py`). Tới
-hạn, `case-cleanup` **XOÁ VĨNH VIỄN cả hồ sơ** — thông tin khách hàng, các dòng Document và toàn bộ
-file trên MinIO. **Không khôi phục được.** Hộp xác nhận khi bấm và khung đỏ trên trang hồ sơ đều
-phải nói rõ điều này.
+`Case.autoDeleteAt = now + CASE_AUTO_DELETE_DAYS` (**14 ngày**, `backend/case_status.py`). Tới hạn,
+`case-cleanup` **CHỈ XOÁ FILE** (`case_delete.purge_case_files`): mọi file trên MinIO (gốc + ảnh từng
+trang) và các dòng Document; **GIỮ hồ sơ khách**, ghi `filesPurgedAt` (trang hồ sơ hiện "File đã xoá
+ngày …"), bỏ `autoDeleteAt`. File xoá rồi không khôi phục được.
 
-- **Đã đổi hai lần trong một ngày (25/09/2026) theo yêu cầu nghiệp vụ:** xoá mềm cả hồ sơ → chỉ
-  xoá file giữ khách → xoá hẳn như bây giờ. Cột `Case.filesPurgedAt` là di tích của bước giữa,
-  hiện không được ghi nữa — để lại cho khỏi phải di chuyển schema.
-- **Một hàm xoá cứng duy nhất: `case_delete.hard_delete_case`**, dùng chung cho tiến trình này
-  VÀ nút "Xoá vĩnh viễn" trong trang admin. Hai nơi tự viết riêng là có ngày xoá khác nhau.
-- **Xoá theo cả thư mục `<case_id>/` trên MinIO** (`storage.delete_prefix`). Nút admin bản cũ đi
-  theo `storedPath` nên chỉ xoá file gốc, để sót toàn bộ ảnh từng trang (`<doc_id>-pages/...`) —
-  chính là ảnh chụp CCCD/khai sinh, nặng gấp hàng chục lần file gốc (trang 17 MB, gốc 399 KB).
-- **MinIO trước, DB sau.** Ngược lại mà MinIO hỏng thì hồ sơ đã mất khỏi DB, không còn gì để biết
-  thư mục nào cần dọn. Theo thứ tự này, lỗi thì hồ sơ còn nguyên, vòng sau xoá lại được.
-- **Nhật ký email không bị xoá theo** (chỉ lưu caseId dạng chữ, không khoá ràng buộc) — vẫn tra
-  lại được đã gửi gì cho hồ sơ đã xoá.
-- **Thùng rác (nút "Xoá" của nhân viên) vẫn là xoá mềm, giữ mãi** tới khi admin bấm tay "Xoá
-  vĩnh viễn" — chưa có tự động dọn thùng rác.
+- **Lịch sử quy tắc:** 25/09/2026 đổi hai lần (xoá mềm cả hồ sơ -> chỉ xoá file -> xoá HẲN cả hồ sơ).
+  **13/10/2026** tiến trình xoá hẳn 2 hồ sơ (Võ Thị Diễm Hương, Nguyễn Hoàng Long — cả thông tin khách,
+  không có bản sao lưu nên mất luôn); Docs yêu cầu: "xoá là xoá file thôi, profile vẫn giữ" -> quay
+  về chỉ xoá file. Đổi lại quy tắc này PHẢI hỏi người dùng và nói rõ hồ sơ nào sắp bị ảnh hưởng.
+- `case_delete.hard_delete_case` (xoá hẳn cả hồ sơ) giờ CHỈ còn nút "Xoá vĩnh viễn" của admin trong
+  thùng rác. Xoá theo CẢ thư mục `<case_id>/` (ảnh từng trang không có cột nào trỏ tới). MinIO trước,
+  DB sau.
+- **Nhật ký email không bị xoá theo** (chỉ lưu caseId dạng chữ).
+- **Thùng rác (nút "Xoá" của nhân viên) vẫn là xoá mềm, giữ mãi** tới khi admin bấm tay "Xoá vĩnh viễn".
 - **`completedAt` chỉ đổi con số phần trăm**, không đổi sự thật từng mục (`force_complete`).
-- Hồ sơ đã hẹn TRƯỚC khi đổi 15→14 ngày giữ nguyên hạn cũ (hạn lưu cứng trong `autoDeleteAt`).
+
+## Công tắc "Đã gửi nguồn" (08/10/2026)
+
+Trang hồ sơ có công tắc dưới ô "Cập nhật trạng thái": `POST /cases/{id}/sent-to-source` (bật) /
+`DELETE` (tắt). Lưu `Case.sentToSourceAt` + `sentToSourceBy` (tên cookie `docs_staff`); bật lại khi
+đang bật giữ mốc cũ. Danh sách hồ sơ hiện nhãn xanh "📤 Đã gửi nguồn dd/mm". Có trong mọi DTO hồ sơ
+qua `case_status_fields`. Không đổi trạng thái. Bật thì hồ sơ RA KHỎI diện "7 ngày chưa cập
+nhật" (`thong_bao.ngay_chua_cap_nhat` trả None): hết thẻ vàng ở danh sách, hết dòng ở chuông, không
+tính vào thẻ admin. Từ 12/10/2026 cũng hết nhắc "đơn vị XNKN quá 7 ngày" (DON_VI_KN — khung đỏ
+trong trang hồ sơ + chuông): `thong_bao.ho_so_qua_han` lọc bỏ hồ sơ có `sentToSourceAt`.
+"Nộp lại lần N" xoá dấu này. Lịch sử: SOURCE_SENT / SOURCE_UNSENT.
+
+## Trang "Tách file PDF / Word gốc" (`/tach-file`, 13/10/2026)
+
+Một file scan gộp nhiều giấy tờ -> từng file, tên theo quy ước `"<số mục>. <Họ tên> - <loại>.pdf"`.
+Logic `backend/tach_file.py`, API `routers/split_tool.py`, giao diện `components/TachFile.tsx`.
+- PHẢI chọn hồ sơ: số mục = vị trí trong checklist ÁP DỤNG cho hồ sơ (dùng chung
+  `filename_rules._checklist_numbers`). Nhãn ngắn (Passport, ID Card, CT07, GKS, Photo, LLTP số 2)
+  hoặc tên mục bỏ "(nếu có)" — mỗi nhãn được KIỂM TRA TRỎ NGƯỢC bằng `filename_rules.match_by_filename`
+  (`tach_file.nhan_file`), nên upload file đã tách vào hồ sơ là vào đúng mục (đã thử 186/186 mục).
+- Nhận PDF / Word / ảnh / **ZIP** (`chuan_bi_pdf` -> `FileGhep`): ZIP giải nén, mọi PDF/Word/ảnh xếp theo
+  tên (số tự nhiên: "2." trước "10."), ghép thành 1 PDF; file loại khác/hỏng bỏ qua và báo lại. Trang đầu
+  mỗi file gốc được ghi "(BẮT ĐẦU FILE GỐC: tên)" trong prompt — gợi ý ranh giới + loại giấy.
+- Chữ từng trang: lớp chữ PDF nếu có, trang scan mới OCR (gom thành 1 PDF phụ -> `ocr.extract_text`,
+  tách lại theo dòng "--- Trang N ---").
+- Chia trang: DEEPSEEK trực tiếp (Docs yêu cầu, không qua chuỗi Gemini), JSON `segments`; kết quả ép về
+  đoạn liên tiếp phủ đủ trang (`chuan_hoa_doan`). DeepSeek lỗi thì mỗi trang 1 dòng "chưa xác định" —
+  không chặn. Nhân viên sửa trang/mục trên giao diện; ZIP tách theo bảng GỬI LÊN, không theo AI.
+- OCR trang scan PHẢI `try_harder=True` (CCCD chèn trang A4 đọc mặc định ra RỖNG) và lớp chữ PDF chỉ
+  được tin khi phần lớn là từ thật (`lop_chu_dung_duoc` — máy scan hay chèn lớp chữ rác). Đo trên file
+  gộp 50 trang thật (Hồ Sỹ Hội): thiếu 2 điều này AI gán sai 9/50 trang; có đủ + các quy tắc gộp trong prompt
+  (phiếu lương nhiều tháng = 1 file, biên lai IOM theo giấy khám, sổ đỏ đứng tên bố mẹ vẫn là mục QSDĐ)
+  -> 50/50 trang đúng mục, ~70 giây.
+- BƯỚC DUYỆT: mỗi file có nút "✓ Duyệt" (chỉ duyệt được khi đã chọn mục; sửa trang/mục là mất duyệt).
+  "Đưa N file đã duyệt vào hồ sơ": lấy từng file qua `POST /split-tool/{job}/file` (tên ở header
+  X-File-Name, cùng hàm đặt tên với ZIP) rồi upload qua ĐÚNG `POST /cases/{id}/documents` — chống trùng,
+  OCR, xếp mục theo tên file, ghi lịch sử như upload tay. File trùng tên file đã có trong hồ sơ sẽ THAY
+  bản cũ (quy tắc upload sẵn có) — giao diện đánh dấu trước "Trùng tên — sẽ thay bản cũ".
+- Đồng bộ trong request (có thể vài phút). File tạm `tach-file/<job>/` xoá sau 24 giờ
+  (`case_cleanup.don_tach_file`). Lịch sử: SPLIT_FILE / SPLIT_ZIP.
+
+## Trang "Tách hồ sơ dịch thuật PDF / Excel" (`/tach-ban-dich`, 13/10/2026)
+
+CÙNG code với trang Tách file gốc — `<TachFile banDich />`, API `POST /split-tool` với `loai=dich`
+(lưu vào meta.json của lượt, nên `/file` và `/zip` tự biết). Khác biệt:
+- Nhận thêm Excel (.xls/.xlsx, LibreOffice -> PDF); trang gốc vẫn từ chối Excel (cả trong ZIP).
+- Tên file thêm đuôi `" - translated"` như bộ mẫu `hosodichthuat/`: "4. Hồ Sỹ Trọng - CT07 - translated.pdf".
+- Prompt thêm `tach_file.QUY_TAC_BAN_DICH` (trang lời chứng / công chứng / bản sao tiếng Việt đi kèm
+  thuộc CÙNG bản dịch) và AI chỉ thấy các mục CẦN dịch (`needsTranslation`); ô chọn mục vẫn đủ.
+- Có bước DUYỆT như trang gốc, nhưng "Đưa N file đã duyệt vào HỒ SƠ HOÀN THÀNH" (`POST
+  /split-tool/{job}/to-final`) — KHÔNG vào giấy tờ hồ sơ thô (bản dịch sẽ khớp cùng mục với bản gốc và bị
+  cộng vào tiến độ / "Hồ sơ dịch thuật: N trang"). Vẫn tải ZIP được ("<Họ tên> - tach ban dich.zip").
+
+## Tab "Danh sách hồ sơ hoàn thành" (`/ho-so-hoan-thanh`, 13/10/2026)
+
+KHO RIÊNG các bản dịch đã duyệt: bảng `FinalDocument` (tạo bằng create_all trong seed), file ở MinIO
+`<caseId>/hoan-thanh/<id>.pdf`, API `routers/final_docs.py` (`/final/cases`, `/final/cases/{id}`, `/zip`,
+`/final/files/{id}` xem/tải/xoá). Trùng tên file trong cùng hồ sơ -> THAY bản cũ. Danh sách chỉ gồm hồ sơ có
+≥1 file; trang chi tiết xếp file theo số mục checklist. Nằm TRONG thư mục hồ sơ nên xoá vĩnh viễn hồ sơ và
+tự xoá FILE 14 ngày sau "Hoàn tất" (`purge_case_files`, xoá cả dòng FinalDocument) cũng dọn luôn — trang
+chi tiết báo trước ngày xoá. Lịch sử: FINAL_ADD / FINAL_DELETE / FINAL_ZIP.
+CHECKLIST (13/10/2026): `final_docs._checklist` chạy ĐÚNG `compute_checklist_summary` của hồ sơ thô với file
+hoàn thành giả làm giấy tờ (cùng mục, thứ tự, luật "1 trong 2"); dùng lại `ChecklistSection` (thêm prop
+`nhanMo` / `phuLuc`: mục không cần dịch hiện mờ "Không cần dịch", dưới mục liệt kê file). Tiến độ ("Bản dịch
+x/y mục") CHỈ tính mục BẮT BUỘC CẦN DỊCH — hộ chiếu, căn cước... không bao giờ có bản dịch.
+NGUỒN THỨ HAI (13/10/2026): nút "📋 Chép hồ sơ tiếng Anh sang hồ sơ hoàn thành" ở trang hồ sơ thô (cạnh
+"Tải hồ sơ tiếng Anh") -> `POST /final/cases/{id}/copy-english`: CHÉP (không chuyển) mọi file thuộc mục
+`needsTranslation = False` — hồ sơ thô KHÔNG đổi gì. Giữ nguyên định dạng (ảnh thẻ vẫn .jpg — cột
+`FinalDocument.mimeType`, key MinIO theo đuôi file gốc; mọi chỗ đọc file dùng `storedPath`). Trùng tên ->
+thay, nên bấm lại không nhân đôi. Lịch sử FINAL_COPY.
+
+Trang tổng quan admin ĐÃ BỎ biểu đồ "Tiến độ hồ sơ (% hoàn thành)" và "Nhãn hồ sơ" (admin yêu cầu
+13/10/2026) — còn "Hồ sơ theo nguồn" và "Hồ sơ theo trạng thái". API vẫn trả `casesByTag`.
+- CẤU TRÚC MỘT BỘ (Docs 13/10/2026): trang DỊCH (tiếng Anh) → trang CÔNG CHỨNG ("Tôi, … cam đoan đã
+  dịch chính xác…") → BẢN GỐC tiếng Việt; LLTP số 2 và phiếu lương KHÔNG cần trang công chứng
+  (`can_cong_chung`, regex theo tên mục -> `needsNotary` trong items DTO). `loai_trang` đoán loại từng trang
+  bằng tỉ lệ chữ có dấu/từ (dịch ≤0,08, công chứng ~0,53, gốc ≥0,62 -> ngưỡng 0,25; xét "dịch" TRƯỚC từ khoá vì
+  bản dịch thư XNKN có "hereby certify"), gắn nhãn vào prompt, rồi `theo_cau_truc` sửa kết quả AI: BẮT BUỘC
+  cắt ở trang dịch đứng sau công chứng/gốc, BỎ chỗ cắt ở trang công chứng/gốc. Chỉ áp khi file bắt đầu bằng
+  trang dịch VÀ có trang công chứng/gốc (`co_cau_truc`) — bộ chỉ toàn bản dịch Word thì để AI chia. AI lỗi vẫn
+  chia theo cấu trúc (chỉ thiếu mục). Giao diện KHÔNG hiện thành phần Dịch / Công chứng / Bản gốc và
+  KHÔNG có nút "Tách trang đầu" / "Gộp với file dưới" (Docs bỏ 13/10/2026 — sửa bằng ô trang từ–đến);
+  API vẫn trả pageKinds / structured nếu sau này cần. Đo 9 bộ thật của Phan Huy Di Đan (`docs/test`, gộp
+  1 PDF 49 trang scan, OCR ~100 giây): loại trang 49/49, ranh giới + mục 9/9.
+- Lịch sử SPLIT_FILE / SPLIT_ZIP có tiền tố "[Bản dịch]".
+- Đo thật với bộ bản dịch Hồ Sỹ Trọng (13 file Word gộp thành 1 PDF 34 trang, không gợi ý tên file):
+  13/13 ranh giới + mục đúng, ~6 giây (bản dịch có lớp chữ, không phải OCR).
+
+## Mục "0. Phiếu TT khách hàng" (13/10/2026)
+
+Đứng ĐẦU cả 4 bộ checklist (LOW/HIGH × độc thân/kết hôn): `phieu-tt-khach-hang` (LOW) và
+`hs-phieu-tt-khach-hang` (HIGH), order=0, BẮT BUỘC (Docs chọn — 26 hồ sơ tụt 3–5%, 2 hồ sơ đang 100%
+lùi về "Đang thu thập"), không cần dịch. Số "0" nhờ numberGroup đặc biệt `NHOM_SO_0 = "so-0"`
+(filename_rules + lib/format.ts — hai hàm đánh số PHẢI giống nhau): mục mang số 0 và KHÔNG đẩy số mục
+sau, nên file cũ "1. … - Passport" vẫn trỏ đúng. Tên file "0. <Họ tên> - Phiếu TT khách hàng" tự vào mục
+(loại `phieu_tt_kh` trong `_KINDS`). 4 file `docs/CHECKLIST - *.md` đã thêm dòng 0.
+
+## Trang "CP đang xử lý" (`/admin/cpprocessing`, 12/10/2026)
+
+Tab riêng ở sidebar admin (`components/AdminCpProcessing.tsx`). Liệt kê hồ sơ trạng thái SUBMITTED
+("CP đang xử lý"), không tính hồ sơ đã xoá; nộp lâu nhất lên đầu. Cột: STT | Ngày tiếp nhận (createdAt) |
+Tên KH | Ngày nộp | Ngày lăn tay | KQ.
+- **Ngày nộp** = `Case.submittedDate` (DATE), admin tự chọn — `PATCH /admin/cases/{id}/submitted-date`.
+- **Ngày lăn tay** = CHUNG cột `biometricsDate` với bảng tổng quan. Hai API ngày dùng chung
+  `admin._dat_ngay` (lịch sử SUBMIT_DATE_SET / BIOMETRICS_SET).
+- **KQ** (hỏi xác nhận) gọi đúng API sẵn có: Đậu -> PATCH trạng thái APPROVED, Rớt -> REJECTED,
+  Nộp lại -> `POST /cases/{id}/resubmit` (xoá file, về Chờ tiếp nhận; khoá nếu đã nộp lần 2). Có KQ
+  là hồ sơ rời khỏi danh sách — trang chỉ là danh sách việc đang chờ, không phải lịch sử.
+- **Số cạnh tab** ở sidebar = `GET /admin/sidebar-counts` (1 câu COUNT, KHÔNG dùng /admin/stats vì
+  nặng). Sidebar đếm lúc mở trang + khi có `baoSidebarDemLai()` (adminUi.tsx) — gọi hàm này sau MỌI
+  thao tác đổi trạng thái ở trang admin, không thì số đứng yên tới lần mở trang sau.
+
+## Cột "Ngày lăn tay" ở bảng hồ sơ trang tổng quan admin (12/10/2026)
+
+Thay cột "Cần review". Ô chọn ngày (input type=date) — đổi là lưu ngay, xoá trắng = bỏ ngày:
+`PATCH /admin/cases/{id}/biometrics-date` {biometricsDate: "YYYY-MM-DD" | null} (cần mật khẩu admin).
+Lưu `Case.biometricsDate` (DATE), có trong mọi DTO hồ sơ qua `case_status_fields`. Lịch sử: BIOMETRICS_SET.
+
+## Đếm "Hồ sơ dịch thuật: N trang" (12/10/2026)
+
+Trang hồ sơ, cạnh "File đã upload · X trang": tổng trang của file thuộc mục CẦN dịch. Cờ
+`ChecklistItem.needsTranslation` do `seed.KHONG_CAN_DICH` đặt mỗi lần seed chạy (sửa danh sách đó,
+không sửa DB) — lấy từ ô TÔ VÀNG trong `4th/CHECKLIST - * Edit lần 2.docx`: hộ chiếu, căn cước (mọi
+người), ảnh thẻ, khám sức khoẻ, chứng chỉ / xác nhận học tiếng Anh, CV, sổ tiết kiệm + xác nhận số
+dư. File chưa khớp mục nào vẫn tính (chưa biết loại = coi như phải dịch). Từng file thuộc mục không
+dịch có nhãn "Không cần dịch" (DocumentList). Seed in CANH BAO nếu KHONG_CAN_DICH có id sai.
+
+Nút tải riêng 2 nhóm (13/10/2026): "⬇ Tải hồ sơ dịch thuật thô (N trang)" / "⬇ Tải hồ sơ tiếng Anh (N trang)" =
+`GET /cases/{id}/download-all?loai=dich|tieng-anh` — backend lọc theo CÙNG quy tắc trên, hai gói
+cộng lại đúng bằng toàn bộ file; không kèm bản phân tích AI; ghi Theo dõi Docs ZIP_DOWNLOAD.
+
+## Công tắc "Đã sẵn sàng nộp" (12/10/2026)
+
+Trên THẺ hồ sơ ở danh sách Docs (cạnh nút "Hoàn tất"): `POST/DELETE /cases/{id}/ready-to-submit`,
+lưu `Case.readyToSubmitAt` + `readyToSubmitBy`. CHỈ bật/tắt BẰNG TAY — bấm Hoàn tất KHÔNG tự bật,
+seed KHÔNG tự bật cho hồ sơ đã hoàn tất, tắt được cả khi đang Hoàn tất (Docs yêu cầu). KHÔNG còn là
+điều kiện bấm Hoàn tất (13/10/2026, Docs yêu cầu): nút "Hoàn tất" LUÔN bấm được ở mọi mức %, bấm là
+hồ sơ lên 100% (force_complete) -> tự sang "Hoàn thành"; hộp xác nhận nói rõ "đang N% — sẽ tính là
+100%" khi chưa đủ. KHÔNG phải trạng thái admin
+READY_TO_SUBMIT ("Sẵn sàng nộp") — không đổi applicationStatus. "Nộp lại lần N" xoá dấu. Thẻ admin
+"Đã sẵn sàng nộp" KHÔNG đếm công tắc này nữa (13/10/2026) — đếm trạng thái READY_TO_SUBMIT. Lịch sử: READY_ON / READY_OFF.
 
 ## Trạng thái hồ sơ và quy tắc chuyển
 
@@ -185,10 +338,10 @@ khai ở cả `backend/case_status.py` lẫn `lib/application-status.ts`):
 |---|---|---|
 | Nhân viên (trang checklist) | `PENDING` | Chờ tiếp nhận |
 | | `COLLECTING_DOCUMENTS` | Đang thu thập giấy tờ |
-| | `REVIEWING_DOCUMENTS` | Đang kiểm tra hồ sơ |
+| | ~~`REVIEWING_DOCUMENTS`~~ | ĐÃ GỘP vào "Đang thu thập giấy tờ" 13/10/2026 (LEGACY_STATUS_MAP, seed tự chuyển) |
 | | `COMPLETED` | Hoàn thành (tự chuyển khi đủ 100%) |
 | Admin (trang quản trị) | `READY_TO_SUBMIT` | Sẵn sàng nộp |
-| | `SUBMITTED` | Đang xử lý (trước tên "Đã nộp" — đã nộp, chờ kết quả; gửi email ngay) |
+| | `SUBMITTED` | CP đang xử lý (CP = Chính phủ; trước tên "Đã nộp", rồi "Đang xử lý" — đổi 12/10/2026; đã nộp, chờ kết quả; gửi email ngay) |
 | | `APPROVED` | Được chấp thuận |
 | | `REJECTED` | Không thành công |
 | | `LIQUIDATED` | Thanh lý hồ sơ — CHỈ vào từ "Không thành công"; đã thanh lý chỉ trả về được "Không thành công". Có thẻ riêng "Hồ sơ thanh lý" ở tổng quan (thay chỗ thẻ "Giấy tờ đã hết hạn"); thẻ "Rớt" không đếm trùng |
@@ -204,7 +357,7 @@ chỉ để làm mờ lựa chọn trên các ô chọn trạng thái — sửa 
 - **Hoàn thành** chỉ khi đủ **100%** giấy tờ bắt buộc.
 - **Nhân viên** chỉ đổi trong phần của mình và chỉ khi hồ sơ CÒN ở đó; hồ sơ đã sang phần admin
   thì ô trạng thái bị khoá.
-- **Admin**: cửa vào duy nhất là Hoàn thành → **Sẵn sàng nộp** (không nhảy thẳng "Đang xử lý").
+- **Admin**: cửa vào duy nhất là Hoàn thành → **Sẵn sàng nộp** (không nhảy thẳng "CP đang xử lý").
   Admin được **trả về "Hoàn thành"** hồ sơ đã ở phần admin — lối thoát khi nhận nhầm, không có thì
   hồ sơ kẹt vì không bên nào đổi được. Admin không tự đánh dấu Hoàn thành cho hồ sơ còn ở phần NV.
 - Nhận diện admin: `admin_auth.is_admin` — header `X-Admin-Password` đúng thì là admin, thiếu/SAI
@@ -217,7 +370,7 @@ chỉ để làm mờ lựa chọn trên các ô chọn trạng thái — sửa 
 ### "Nộp lại lần N" (`POST /cases/{id}/resubmit`, cần admin)
 
 Không phải trạng thái mà là THAO TÁC — trong ô chọn của admin là option giả `__NOP_LAI__`. Chỉ từ
-"Đang xử lý" / "Không thành công" (`RESUBMIT_FROM_STATUSES`), và **chỉ một lần**:
+"CP đang xử lý" / "Không thành công" (`RESUBMIT_FROM_STATUSES`), và **chỉ một lần**:
 `MAX_SUBMISSION_ROUND = 2` (backend + `lib/application-status.ts`) — không có lần nộp thứ 3,
 hồ sơ đã ở lần 2 thì ô chọn không còn lựa chọn này và API trả 400. Làm:
 - **XOÁ VĨNH VIỄN** mọi file (DB + MinIO `<case_id>/`, kể cả ảnh trang) → 0%;
@@ -229,11 +382,11 @@ hồ sơ đã ở lần 2 thì ô chọn không còn lựa chọn này và API t
 
 ### Tự chuyển "Hoàn thành" theo tiến độ (`case_auto_status.py`)
 
-- **0%** → Chờ tiếp nhận; **trên 0%** mà đang Chờ tiếp nhận (hoặc tụt từ Hoàn thành) → **Đang thu
-  thập giấy tờ**; "Đang thu thập" / "Đang kiểm tra" giữ nguyên; **100%** → **Hoàn thành**. Hồ sơ ở
-  phần admin (Sẵn sàng nộp trở đi) KHÔNG bị đụng.
-- Chọn tay trái quy tắc bị chặn ở `ly_do_khong_chuyen_duoc` (+ bản sao giao diện): "Chờ tiếp nhận"
-  khi > 0%, "Đang thu thập" / "Đang kiểm tra" khi 0% — không thì lượt quét mỗi giờ lại đổi về.
+- HOÀN TOÀN theo % (13/10/2026): **≤ 20%** (`NGUONG_CHO_TIEP_NHAN`) → Chờ tiếp nhận; **> 20%, < 100%** →
+  Đang thu thập giấy tờ; **100%** → Hoàn thành. Đi cả hai chiều (tụt % thì lùi theo). Hồ sơ ở phần
+  admin (Sẵn sàng nộp trở đi) KHÔNG bị đụng.
+- Chọn tay trái quy tắc bị chặn ở `ly_do_khong_chuyen_duoc` (+ bản sao giao diện, cùng mốc 20% ở
+  lib/application-status.ts) — không thì lượt quét mỗi giờ lại đổi về.
 - `dong_bo_hoan_thanh(db, case)` gọi sau commit ở mọi endpoint đổi tiến độ: upload, xoá 1 file /
   xoá tất cả, gán tay, phân tích lại (cả nhánh lỗi), sửa hồ sơ, Hoàn tất / bỏ Hoàn tất, khôi phục.
   Thêm endpoint mới làm đổi tiến độ thì gọi nó.
@@ -242,9 +395,10 @@ hồ sơ đã ở lần 2 thì ô chọn không còn lựa chọn này và API t
 
 ### Thẻ thống kê (`lib/adminCaseFilters.ts`)
 
-"Hồ sơ đã nộp" = Đang xử lý + Được chấp thuận + Không thành công; "Hồ sơ đang xử lý" = trạng thái
-"Đang xử lý" (thẻ và ô chọn trùng tên phải đếm cùng một thứ); "Hồ sơ hoàn thành" = trạng thái
-"Hoàn thành", không theo % giấy tờ.
+"Hồ sơ đã nộp" = CP đang xử lý + Được chấp thuận + Không thành công; "Hồ sơ CP đang xử lý" = trạng thái
+"CP đang xử lý" (thẻ và ô chọn trùng tên phải đếm cùng một thứ); "Hồ sơ hoàn thành" = trạng thái
+"Hoàn thành", "Đã sẵn sàng nộp" = trạng thái "Sẵn sàng nộp" — ĐÚNG trạng thái, bấm thẻ chỉ ra hồ sơ ở trạng
+thái đó (admin yêu cầu 13/10/2026; 12/10 từng đếm "mọi hồ sơ 100%" và "công tắc Đã sẵn sàng nộp").
 
 ## Trang thống kê hồ sơ của admin (`/admin/thong-ke`)
 
@@ -312,6 +466,15 @@ Máy dev (`192.168.1.200`) là hệ thống CHÍNH của văn phòng từ 25/09/
   với token thật trước khi restart.
 - **Đường cũ vẫn mở:** `http://192.168.1.200` (IP trần, không HTTPS) và
   `http://192.168.1.200:3000`, `:8001`. `http://candoc.info` tự chuyển sang `https://`.
+- **ĐƯỜNG DỰ PHÒNG khi tên miền hỏng: `http://192.168.1.250`** (cổng 80, không HTTPS) — chạy ĐẦY ĐỦ
+  từ 12/10/2026: giao diện gọi API bằng đường dẫn tương đối `/api` (NEXT_PUBLIC_API_URL) và khối
+  `:80` của Caddyfile.local cũng chuyển `/api` tới backend. Cổng `:3000` (Next.js trực tiếp) KHÔNG
+  có `/api` — chỉ xem được trang, bấm nút là hỏng; đừng hướng dẫn ai dùng `:3000`.
+- **Sự cố 10/10/2026 — tên miền bị nhà đăng ký Nhân Hòa khoá (verification hold):** nameserver bị
+  đổi sang `ns1/ns2.verification-hold.suspended-domain.com` vì chưa xác minh email chủ thể trong 15
+  ngày sau khi đăng ký (24/09). DNS trả `127.0.0.1` / SERVFAIL nên cả văn phòng mất app, chỉ máy chủ
+  vẫn vào được. Kiểm tra nhanh: `nslookup -type=NS candoc.info a0.info.afilias-nst.info` hoặc RDAP.
+  Sửa: xác minh với Nhân Hòa + nhờ trả nameserver về `lou.ns.cloudflare.com`, `ruth.ns.cloudflare.com`.
 - **IIS phải giữ Disabled** — Windows cài sẵn IIS giữ cổng 80, bật lại là `lb` chết, mất cả API.
 - **Đổi IP máy dev** phải sửa bản ghi A trên Cloudflare. Nên đặt IP cố định bằng DHCP
   reservation trên router.

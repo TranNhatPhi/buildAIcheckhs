@@ -1,12 +1,17 @@
+import type { ReactNode } from "react";
 import { buildChecklistNumbers } from "@/lib/format";
 import type { ChecklistItemStatusDTO } from "@/lib/client-types";
 
-interface Props {
-  items: ChecklistItemStatusDTO[];
+interface Props<T extends ChecklistItemStatusDTO> {
+  items: T[];
+  // Checklist của "hồ sơ hoàn thành" (components/HoSoHoanThanh.tsx): mục không cần dịch hiện mờ kèm
+  // nhãn, và dưới mỗi mục liệt kê file hoàn thành. Hồ sơ thô không truyền hai prop này.
+  nhanMo?: (s: T) => string | null;
+  phuLuc?: (s: T) => ReactNode;
 }
 
-function groupBy(items: ChecklistItemStatusDTO[]) {
-  const map = new Map<string, ChecklistItemStatusDTO[]>();
+function groupBy<T extends ChecklistItemStatusDTO>(items: T[]) {
+  const map = new Map<string, T[]>();
   for (const s of items) {
     const key = `${s.item.section}::${s.item.group}`;
     if (!map.has(key)) map.set(key, []);
@@ -15,7 +20,7 @@ function groupBy(items: ChecklistItemStatusDTO[]) {
   return map;
 }
 
-export function ChecklistSection({ items }: Props) {
+export function ChecklistSection<T extends ChecklistItemStatusDTO>({ items, nhanMo, phuLuc }: Props<T>) {
   const grouped = groupBy(items);
   // Số thứ tự theo đúng checklist gốc khách gửi, gồm cả các mục dùng số con kiểu 18.1/18.2
   // — xem buildChecklistNumbers. Dùng chung một hàm với CaseDetail/CaseSummary/AdminCaseDetail
@@ -32,13 +37,17 @@ export function ChecklistSection({ items }: Props) {
               {section} — {group}
             </h3>
             <ul className="flex flex-col gap-2.5">
-              {statuses.map((s) => (
+              {statuses.map((s) => {
+                const mo = !s.complete ? nhanMo?.(s) ?? null : null;
+                return (
                 <li
                   key={s.item.id}
                   className={`flex items-start gap-3 rounded-2xl border-2 px-4 py-3 transition-colors ${
                     s.complete
                       ? "bg-green-50 border-green-200"
-                      : "bg-white border-neutral-200"
+                      : mo
+                        ? "bg-neutral-50 border-neutral-100 opacity-60"
+                        : "bg-white border-neutral-200"
                   }`}
                 >
                   <span
@@ -61,6 +70,11 @@ export function ChecklistSection({ items }: Props) {
                           Tuỳ chọn
                         </span>
                       )}
+                      {mo && (
+                        <span className="text-[11px] font-medium bg-neutral-200 text-neutral-600 px-2 py-0.5 rounded-full">
+                          {mo}
+                        </span>
+                      )}
                       {s.requiredCount > 1 && (
                         <span className="text-[11px] font-medium bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
                           {s.fulfilledCount}/{s.requiredCount} đã có
@@ -73,9 +87,11 @@ export function ChecklistSection({ items }: Props) {
                         🔍 <span className="font-medium">Kiểm tra:</span> {s.item.verificationNote}
                       </p>
                     )}
+                    {phuLuc?.(s)}
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </div>
         );

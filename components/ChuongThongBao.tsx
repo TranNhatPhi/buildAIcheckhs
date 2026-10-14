@@ -235,6 +235,8 @@ export function ChuongThongBao({ vaiTro = "admin" }: { vaiTro?: "admin" | "docs"
 
       {mo && (
         <div
+          // Sidebar Docs nâng cả khung lên trên nội dung trang khi có thuộc tính này (xem Sidebar.tsx).
+          data-chuong-mo=""
           className={`absolute top-full z-50 mt-2 w-[420px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-xl ${
             vaiTro === "admin" ? "right-0" : "left-0"
           }`}
@@ -242,7 +244,7 @@ export function ChuongThongBao({ vaiTro = "admin" }: { vaiTro?: "admin" | "docs"
           <div className="border-b border-neutral-100 px-4 py-3">
             <p className="text-sm font-semibold text-neutral-800">Thông báo</p>
             <p className="mt-0.5 text-xs text-neutral-500">
-              Hồ sơ chưa làm xong để gửi nguồn (chưa tới “Hoàn thành”) cần chú ý.
+              Hồ sơ chưa làm xong để gửi nguồn (chưa tới “Hoàn thành”, chưa bật “Đã gửi nguồn”) cần chú ý.
             </p>
           </div>
           <div className="max-h-[460px] overflow-y-auto">

@@ -95,6 +95,23 @@ class Case(Base):
     # Lần nộp: 1 = lần đầu. Admin chọn "Nộp lại lần N" (POST /cases/{id}/resubmit) thì tăng lên,
     # xoá hết file và đưa hồ sơ về "Chờ tiếp nhận" để nhân viên làm lại từ đầu.
     submissionRound = Column(Integer, nullable=False, default=1, server_default="1")
+    # Công tắc "Đã gửi nguồn" ở trang hồ sơ: lúc nhân viên bật + tên người bật (cookie docs_staff).
+    # NULL = chưa gửi. Lưu MỐC THỜI GIAN thay vì cờ true/false để biết gửi lúc nào, ai gửi. Chỉ là
+    # đánh dấu hiển thị — không đổi trạng thái, không ảnh hưởng chuông nhắc. "Nộp lại" thì xoá.
+    sentToSourceAt = Column(DateTime, nullable=True)
+    sentToSourceBy = Column(String(191), nullable=True)
+    # Công tắc "Đã sẵn sàng nộp" trên thẻ hồ sơ ở danh sách (12/10/2026): hồ sơ CHƯA đủ 100% phải
+    # BẬT thì nút "Hoàn tất" mới bấm được (POST /cases/{id}/complete từ chối); đủ 100% thì không cần.
+    # KHÔNG phải trạng thái admin READY_TO_SUBMIT — chỉ là dấu nhân viên bật/tắt BẰNG TAY, không đổi
+    # applicationStatus; bấm Hoàn tất KHÔNG tự bật nó. "Nộp lại" thì xoá.
+    readyToSubmitAt = Column(DateTime, nullable=True)
+    readyToSubmitBy = Column(String(191), nullable=True)
+    # Ngày lăn tay (sinh trắc học) của khách — admin tự chọn ở bảng hồ sơ trang tổng quan
+    # (PATCH /admin/cases/{id}/biometrics-date). Chỉ là NGÀY (không giờ). NULL = chưa có lịch.
+    biometricsDate = Column(Date, nullable=True)
+    # Ngày nộp hồ sơ cho Chính phủ — admin tự chọn ở trang "CP đang xử lý" (/admin/cpprocessing,
+    # PATCH /admin/cases/{id}/submitted-date). Chỉ là NGÀY. NULL = chưa ghi.
+    submittedDate = Column(Date, nullable=True)
     applicationStatusUpdatedAt = Column(DateTime, nullable=True, default=now_utc)
     lastStatusReminderAt = Column(DateTime, nullable=True)
 
@@ -131,6 +148,9 @@ class Case(Base):
     tags = Column(Text, nullable=True)
 
     documents = relationship("Document", back_populates="case", cascade="all, delete-orphan")
+    # File của tab "Danh sách hồ sơ hoàn thành" (routers/final_docs.py) — KHO RIÊNG, không tính vào
+    # tiến độ / số trang dịch thuật như Document.
+    finalDocuments = relationship("FinalDocument", back_populates="case", cascade="all, delete-orphan")
 
 
 class ChecklistItem(Base):
@@ -149,6 +169,10 @@ class ChecklistItem(Base):
     # `note` vốn hướng dẫn thu thập giấy tờ gì) — tổng hợp từ kinh nghiệm thực tế xử lý hồ sơ.
     verificationNote = Column(Text, nullable=True)
     isOptional = Column(Boolean, nullable=False, default=False)
+    # Giấy tờ thuộc mục này có phải DỊCH sang tiếng Anh không — dùng để đếm "Hồ sơ dịch thuật: N
+    # trang" ở trang hồ sơ. Do seed.py đặt theo seed.KHONG_CAN_DICH (các ô tô vàng trong bộ
+    # checklist 4th/*.docx, 12/10/2026), không sửa tay trong DB — chạy seed là bị ghi đè.
+    needsTranslation = Column(Boolean, nullable=False, default=True, server_default="1")
     # "ALWAYS" | "SPOUSE" | "SINGLE" | "CHILD_1/2/3" | "SPOUSE_CHILD_1/2/3" — xem
     # is_item_applicable (completeness.py) để biết ý nghĩa từng giá trị.
     appliesTo = Column(String(191), nullable=False)
@@ -357,3 +381,23 @@ class ContractTemplate(Base):
 # của SQLAlchemy 1.x, bản 2.0 đã bỏ. Đo trên chính venv của repo (2.0.52): gán được nhưng
 # `"bind" in MetaData.__dict__` là False — tức chỉ tạo ra một thuộc tính không ai đọc, không
 # nối engine với gì cả. Đừng thêm lại.
+
+
+class FinalDocument(Base):
+    """Một file trong "hồ sơ hoàn thành" (13/10/2026): bản dịch đã duyệt ở trang "Tách hồ sơ dịch
+    thuật". File ở MinIO "<caseId>/hoan-thanh/<id>.pdf" (routers/final_docs.key_file)."""
+    __tablename__ = "FinalDocument"
+
+    id = Column(String(191), primary_key=True, default=new_id)
+    caseId = Column(String(191), ForeignKey("Case.id", ondelete="CASCADE"), nullable=False, index=True)
+    fileName = Column(String(255), nullable=False)
+    storedPath = Column(String(191), nullable=False)
+    checklistItemId = Column(String(191), ForeignKey("ChecklistItem.id", ondelete="SET NULL"), nullable=True)
+    fileSizeBytes = Column(Integer, nullable=False, default=0)
+    pageCount = Column(Integer, nullable=True)
+    # Bản dịch luôn là PDF; file CHÉP từ hồ sơ thô ("hồ sơ tiếng Anh") giữ nguyên định dạng (ảnh thẻ...).
+    mimeType = Column(String(191), nullable=False, default="application/pdf")
+    uploadedAt = Column(DateTime, nullable=False, default=now_utc)
+    uploadedBy = Column(String(191), nullable=True)
+
+    case = relationship("Case", back_populates="finalDocuments")

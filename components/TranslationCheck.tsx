@@ -77,10 +77,9 @@ function toTranslationForm(name: string): string {
 
 /** Các quy tắc đang áp dụng — hiện cho nhân viên biết app kiểm tra gì (và KHÔNG kiểm tra gì). */
 const RULES = [
-  "Tên đương đơn phải ghi đúng dạng viết HOA, bỏ dấu ở mọi bản dịch — bắt lệch tên đệm (HO SY / HO SI) và gõ nhầm 1 chữ.",
+  "Tên đương đơn phải ghi đúng và bỏ dấu ở mọi bản dịch (viết HOA hay chữ thường đều được) — bắt lệch tên đệm (HO SY / HO SI) và gõ nhầm 1 chữ.",
   "Cùng một người (bố, mẹ, vợ/chồng, con...) phải ghi cùng một tên ở mọi bản dịch.",
-  "Không còn chữ tiếng Việt có dấu trong bản dịch.",
-  "Tên chủ giấy tờ (đọc từ tên file \"<số>. <Họ tên> - <loại>\") phải có trong bản dịch, viết HOA.",
+  "Bản dịch có ghi tên chủ giấy tờ (đọc từ tên file \"<số>. <Họ tên> - <loại>\") thì phải ghi đúng tên đó (không bắt buộc viết HOA).",
   "Số giấy tờ (CCCD 12 số / CMND 9 số) không được lệch 1–2 chữ số giữa các bản.",
   "Ngày tháng phải là ngày có thật (không có 31/02, tháng 13...).",
 ];

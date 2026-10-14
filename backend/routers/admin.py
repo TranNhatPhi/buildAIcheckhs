@@ -1,6 +1,9 @@
 import json
+from datetime import date
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -167,6 +170,53 @@ def permanently_delete_case(case_id: str, db: Session = Depends(get_db)):
     hard_delete_case(db, case)
     activity.ghi("CASE_PURGE", case_id=case_id, client_name=ten_khach)
     return {"ok": True}
+
+
+@router.get("/sidebar-counts")
+def sidebar_counts(db: Session = Depends(get_db)):
+    """Số đếm nhỏ cạnh tab ở sidebar admin (vd "CP đang xử lý 3"). Sidebar gọi MỖI lần mở một trang
+    admin nên chỉ dùng câu COUNT — không qua /admin/stats (duyệt hạn giấy tờ của mọi file, nặng)."""
+    cp = db.scalar(
+        select(func.count()).select_from(Case).where(
+            Case.deletedAt.is_(None), Case.applicationStatus == "SUBMITTED"
+        )
+    )
+    return {"cpProcessing": cp or 0}
+
+
+class NgayLanTayRequest(BaseModel):
+    # Optional[...] chứ không phải "date | None": container chạy Python 3.9. None = xoá ngày.
+    biometricsDate: Optional[date] = None
+
+
+class NgayNopRequest(BaseModel):
+    submittedDate: Optional[date] = None
+
+
+def _dat_ngay(db: Session, case_id: str, cot: str, moi: Optional[date], ma_thao_tac: str) -> dict:
+    """Đặt / đổi / xoá một cột NGÀY của hồ sơ (ô chọn ngày ở trang admin) + ghi lịch sử nếu đổi."""
+    case = db.get(Case, case_id)
+    if not case or case.deletedAt is not None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    cu = getattr(case, cot)
+    if moi != cu:
+        setattr(case, cot, moi)
+        db.commit()
+        hien = lambda d: d.strftime("%d/%m/%Y") if d else "(trống)"  # noqa: E731
+        activity.ghi(ma_thao_tac, case=case, detail=f"{hien(cu)} → {hien(moi)}")
+    return {"id": case.id, cot: getattr(case, cot)}
+
+
+@router.patch("/cases/{case_id}/biometrics-date")
+def set_biometrics_date(case_id: str, body: NgayLanTayRequest, db: Session = Depends(get_db)):
+    """Ngày lăn tay (sinh trắc học) — bảng hồ sơ trang tổng quan + trang "CP đang xử lý"."""
+    return _dat_ngay(db, case_id, "biometricsDate", body.biometricsDate, "BIOMETRICS_SET")
+
+
+@router.patch("/cases/{case_id}/submitted-date")
+def set_submitted_date(case_id: str, body: NgayNopRequest, db: Session = Depends(get_db)):
+    """Ngày nộp hồ sơ cho Chính phủ — trang "CP đang xử lý" (/admin/cpprocessing)."""
+    return _dat_ngay(db, case_id, "submittedDate", body.submittedDate, "SUBMIT_DATE_SET")
 
 
 @router.get("/email-logs", response_model=list[EmailLogDTO])

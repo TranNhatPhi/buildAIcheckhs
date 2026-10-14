@@ -16,13 +16,13 @@ CASE_STATUS_DEFINITIONS = (
     # --- Phần nhân viên (trang checklist) ---
     {"value": "PENDING", "label": "Chờ tiếp nhận", "color": "#6B7280"},
     {"value": "COLLECTING_DOCUMENTS", "label": "Đang thu thập giấy tờ", "color": "#D97706"},
-    {"value": "REVIEWING_DOCUMENTS", "label": "Đang kiểm tra hồ sơ", "color": "#4F46E5"},
+    # "Đang kiểm tra hồ sơ" (REVIEWING_DOCUMENTS) đã GỘP vào đây 13/10/2026 — xem LEGACY_STATUS_MAP.
     # Đủ 100% giấy tờ bắt buộc — tự chuyển (case_auto_status) và là CỬA DUY NHẤT sang phần admin.
     {"value": "COMPLETED", "label": "Hoàn thành", "color": "#0D9488"},
     # --- Phần admin (trang quản trị) ---
     {"value": "READY_TO_SUBMIT", "label": "Sẵn sàng nộp", "color": "#0284C7"},
     # Trước đây tên "Đã nộp": đã nộp lên, đang chờ cơ quan xét duyệt trả kết quả.
-    {"value": "SUBMITTED", "label": "Đang xử lý", "color": "#2563EB"},
+    {"value": "SUBMITTED", "label": "CP đang xử lý", "color": "#2563EB"},  # CP = Chính phủ (12/10/2026)
     {"value": "APPROVED", "label": "Được chấp thuận", "color": "#059669"},
     {"value": "REJECTED", "label": "Không thành công", "color": "#DC2626"},
     # Khép hồ sơ sau khi không thành công (không nộp lại nữa). CHỈ vào được từ "Không thành công".
@@ -35,14 +35,20 @@ LEGACY_STATUS_MAP = {
     "UNDER_REVIEW": "SUBMITTED",
     "ADDITIONAL_DOCUMENTS_REQUIRED": "SUBMITTED",
     "AWAITING_DECISION": "SUBMITTED",
+    # 13/10/2026: gộp "Đang kiểm tra hồ sơ" vào "Đang thu thập giấy tờ" (admin yêu cầu).
+    "REVIEWING_DOCUMENTS": "COLLECTING_DOCUMENTS",
 }
 
 FINAL_CASE_STATUSES = frozenset({"APPROVED", "REJECTED", "LIQUIDATED"})
 
+# Tiến độ <= mốc này -> "Chờ tiếp nhận"; trên mốc, dưới 100% -> "Đang thu thập giấy tờ"; 100% ->
+# "Hoàn thành" (case_auto_status). Khớp NGUONG_CHO_TIEP_NHAN ở lib/application-status.ts.
+NGUONG_CHO_TIEP_NHAN = 20
+
 
 # Chia quyền đổi trạng thái theo GIAI ĐOẠN: nhân viên lo từ lúc nhận tới khi đủ giấy tờ, admin
 # lo từ lúc nộp trở đi. "Hoàn thành" là điểm bàn giao giữa hai bên.
-STAFF_STATUSES = ("PENDING", "COLLECTING_DOCUMENTS", "REVIEWING_DOCUMENTS", "COMPLETED")
+STAFF_STATUSES = ("PENDING", "COLLECTING_DOCUMENTS", "COMPLETED")
 ADMIN_STATUSES = ("READY_TO_SUBMIT", "SUBMITTED", "APPROVED", "REJECTED", "LIQUIDATED")
 
 # "Nộp lại lần N" không phải trạng thái lưu trong DB mà là một THAO TÁC (POST /cases/{id}/resubmit):
@@ -87,10 +93,13 @@ def ly_do_khong_chuyen_duoc(den: str, hien_tai: str, tien_do: int, la_admin: boo
         return "Trang quản trị chỉ cập nhật từ 'Sẵn sàng nộp' trở đi (hoặc trả hồ sơ về 'Hoàn thành')."
     # Khớp quy tắc tự chuyển (case_auto_status.trang_thai_theo_tien_do): chọn tay trái quy tắc thì
     # lượt quét mỗi giờ lại đổi về — chặn ngay từ đầu cho khỏi "tự nhảy" khó hiểu.
-    if den == "PENDING" and tien_do > 0:
-        return f"Hồ sơ đã có giấy tờ ({tien_do}%) — 'Chờ tiếp nhận' chỉ dành cho hồ sơ 0%."
-    if den in ("COLLECTING_DOCUMENTS", "REVIEWING_DOCUMENTS") and tien_do <= 0:
-        return "Hồ sơ chưa có giấy tờ bắt buộc nào (0%) — vẫn ở 'Chờ tiếp nhận', upload giấy tờ là tự chuyển."
+    if den == "PENDING" and tien_do > NGUONG_CHO_TIEP_NHAN:
+        return f"Hồ sơ đang {tien_do}% — 'Chờ tiếp nhận' chỉ dành cho hồ sơ từ {NGUONG_CHO_TIEP_NHAN}% trở xuống."
+    if den == "COLLECTING_DOCUMENTS" and tien_do <= NGUONG_CHO_TIEP_NHAN:
+        return (f"Hồ sơ mới {tien_do}% — từ {NGUONG_CHO_TIEP_NHAN}% trở xuống là 'Chờ tiếp nhận', "
+                "trên mức đó tự chuyển 'Đang thu thập giấy tờ'.")
+    if den == "COLLECTING_DOCUMENTS" and tien_do >= 100:
+        return "Hồ sơ đã đủ 100% — tự ở 'Hoàn thành'."
     if den == "COMPLETED" and tien_do < 100:
         return f"Chưa đủ 100% giấy tờ bắt buộc (đang {tien_do}%) — chưa chuyển sang 'Hoàn thành' được."
     if den in ADMIN_STATUSES and hien_tai not in ADMIN_STATUSES:
@@ -150,4 +159,11 @@ def case_status_fields(case) -> dict:
         # với nhắc "7 ngày chưa cập nhật" (thong_bao.py), không phải updatedAt: sửa ghi chú hay lượt
         # tự đồng bộ trạng thái cũng chạm updatedAt mà hồ sơ chẳng tiến thêm bước nào.
         "lastDocumentAt": max((d.uploadedAt for d in case.documents if d.uploadedAt), default=None),
+        # Công tắc "Đã gửi nguồn" — đặt ở đây để MỌI DTO hồ sơ (danh sách, trang hồ sơ, admin) đều có.
+        "sentToSourceAt": case.sentToSourceAt,
+        "sentToSourceBy": case.sentToSourceBy,
+        "readyToSubmitAt": case.readyToSubmitAt,
+        "readyToSubmitBy": case.readyToSubmitBy,
+        "biometricsDate": case.biometricsDate,
+        "submittedDate": case.submittedDate,
     }

@@ -1,3 +1,5 @@
+// "/api" (tương đối — cùng địa chỉ với trang, Caddy chuyển tới backend) trong bản chạy thật; xem
+// docker-compose.yml. CHỈ dùng trong trình duyệt — code server dùng SERVER_API_URL (lib/serverApi.ts).
 export const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
 // Backend trả datetime dạng ISO KHÔNG có hậu tố "Z"/offset (Python isoformat() của datetime
@@ -6,6 +8,36 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 // 7 tiếng ở VN) làm mọi phép tính "đã trôi qua bao lâu" sai hoàn toàn.
 export function parseUtcDate(iso: string): Date {
   return new Date(/[Zz]|[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`);
+}
+
+// Ghim múi giờ VN: server (UTC) và trình duyệt cho ra CÙNG một chuỗi -> render ngay ở server
+// được, không lệch khi hydrate (khác toLocaleString() thường, phải chờ useHydrated).
+const GIO_NGAY_VN = new Intl.DateTimeFormat("vi-VN", {
+  hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit", year: "numeric",
+  timeZone: "Asia/Ho_Chi_Minh",
+});
+const NGAY_THANG_VN = new Intl.DateTimeFormat("vi-VN", {
+  day: "2-digit", month: "2-digit", timeZone: "Asia/Ho_Chi_Minh",
+});
+
+/** Chuẩn hoá để tìm kiếm không phân biệt dấu / hoa thường: "Phan Huy Đan" -> "phan huy dan". */
+export function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+}
+
+/** "14:05 08/10/2026" theo giờ Việt Nam. */
+export function gioNgayVN(iso: string): string {
+  return GIO_NGAY_VN.format(parseUtcDate(iso));
+}
+
+/** "08/10" theo giờ Việt Nam — cho nhãn ngắn ở danh sách. */
+export function ngayThangVN(iso: string): string {
+  return NGAY_THANG_VN.format(parseUtcDate(iso));
 }
 
 // Số trang của 1 tài liệu để hiển thị. Ảnh rời luôn là 1 trang, nên suy thẳng từ mimeType
@@ -153,6 +185,10 @@ export function splitExperience(months: number | null | undefined): {
  *
  * `items` phải theo đúng thứ tự backend đã sắp (compute_checklist_summary).
  */
+// numberGroup đặc biệt (backend filename_rules.NHOM_SO_0): mục số "0." — Phiếu TT khách hàng —
+// KHÔNG đẩy số các mục sau (Passport vẫn là 1).
+const NHOM_SO_0 = "so-0";
+
 export function buildChecklistNumbers(
   items: { item: { id: string; numberGroup: string | null } }[],
 ): Map<string, string> {
@@ -160,8 +196,13 @@ export function buildChecklistNumbers(
   let major = 0;
   let i = 0;
   while (i < items.length) {
-    major++;
     const group = items[i].item.numberGroup;
+    if (group === NHOM_SO_0) {
+      numbers.set(items[i].item.id, "0.");
+      i++;
+      continue;
+    }
+    major++;
     if (!group) {
       numbers.set(items[i].item.id, `${major}.`);
       i++;

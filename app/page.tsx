@@ -15,7 +15,7 @@ export default async function CaseListPage() {
 
   return (
     <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-10">
-      <h1 className="text-2xl font-semibold mb-8">Danh sách hồ sơ</h1>
+      <h1 className="text-2xl font-semibold mb-8">Danh sách hồ sơ Thô</h1>
       <CaseList initialCases={cases} />
     </main>
   );

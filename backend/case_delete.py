@@ -29,3 +29,25 @@ def hard_delete_case(db: Session, case: Case) -> int:
     db.delete(case)  # cascade="all, delete-orphan" (models.py) xoá luôn các Document
     db.commit()
     return so_file
+
+
+def purge_case_files(db: Session, case: Case) -> int:
+    """Xoá TOÀN BỘ FILE giấy tờ của hồ sơ, GIỮ LẠI hồ sơ khách (thông tin, trạng thái, nguồn, đơn vị
+    XNKN, lịch sử...). Dùng cho tự xoá sau "Hoàn tất" (case_cleanup.run_once) từ 13/10/2026 — Docs yêu
+    cầu "xoá là xoá file thôi, profile vẫn giữ" sau khi 2 hồ sơ bị xoá hẳn cả khách.
+
+    Cùng thứ tự MinIO TRƯỚC, DB SAU như hard_delete_case. Ghi filesPurgedAt để trang hồ sơ nói rõ
+    "file đã xoá ngày ...", bỏ autoDeleteAt để vòng quét sau không xoá lại. completedAt giữ nguyên:
+    hồ sơ vẫn hiện 100% / "Hoàn tất" như lúc nhân viên bấm. Trả về số file đã xoá trên MinIO."""
+    from models import now_utc
+
+    so_file = storage.delete_prefix(f"{case.id}/")
+    for doc in list(case.documents):
+        db.delete(doc)
+    # File "hồ sơ hoàn thành" (<case_id>/hoan-thanh/...) đã bị xoá cùng thư mục ở trên -> bỏ luôn dòng DB.
+    for f in list(case.finalDocuments):
+        db.delete(f)
+    case.filesPurgedAt = now_utc()
+    case.autoDeleteAt = None
+    db.commit()
+    return so_file

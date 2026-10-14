@@ -27,7 +27,9 @@ from routers import (
     documents,
     notifications,
     ocr_test,
+    split_tool,
     translation_check,
+    final_docs,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +43,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     # Trình duyệt chỉ cho JS đọc header tuỳ biến khi được liệt kê ở đây (gọi khác nguồn gốc).
-    expose_headers=["X-Check-Id"],
+    expose_headers=["X-Check-Id", "X-File-Name"],
 )
 
 app.include_router(cases.router)
@@ -53,6 +55,8 @@ app.include_router(translation_check.router)
 app.include_router(activity_log.router)
 app.include_router(notifications.router)
 app.include_router(contract_templates.router)
+app.include_router(split_tool.router)
+app.include_router(final_docs.router)
 
 
 @app.middleware("http")
