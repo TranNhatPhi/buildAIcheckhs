@@ -267,7 +267,7 @@ export function UploadDropzone({ caseId, documents, onUploaded }: Props) {
           ref={inputRef}
           type="file"
           multiple
-          accept="image/*,application/pdf"
+          accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
           className="hidden"
           onChange={(e) => {
             if (e.target.files && e.target.files.length > 0) uploadFiles(e.target.files);

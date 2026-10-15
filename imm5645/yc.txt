@@ -1,0 +1,25 @@
+Mục 2 – Tạo số 0: Phiếu thông tin khách hàng → điền Family Form (IMM 5645E)
+
+Thông tin khách hàng (đương đơn)
+
+Họ tên khách hàng
+Tình trạng hôn nhân
+Ngày sinh, ghi theo định dạng yyyy-mm-dd
+Country: Vietnam
+Địa chỉ, lấy theo thứ tự ưu tiên:
+CT07 (xác nhận cư trú)
+CCCD
+(Không lấy địa chỉ từ phiếu thông tin. Mục này đã bị gạch trong ghi chú.)
+NN đương đơn: để trống (mình đoán “NN” là nghề nghiệp, bạn kiểm tra lại giúp)
+
+Thông tin mẹ
+
+Họ tên, tình trạng hôn nhân, ngày sinh
+Country: Vietnam
+Địa chỉ cũng ưu tiên ① CT07, sau đó mới đến ② CCCD
+
+Thông tin con cái: lấy từ Giấy khai sinh (GKS)
+
+Thông tin anh chị em: lấy từ Phiếu thông tin khách hàng (PTTKH)
+
+Dòng số điện thoại bị gạch ở góc dưới mình không đưa vào. Nếu cần, mình có thể làm thành checklist điền IMM 5645E theo đúng thứ tự các ô trên form.

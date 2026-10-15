@@ -78,7 +78,8 @@ export const ADMIN_STATUSES: readonly ApplicationStatus[] = [
 
 // "Nộp lại lần N" là THAO TÁC (POST /cases/{id}/resubmit), không phải trạng thái lưu trong DB.
 // Khớp RESUBMIT_FROM_STATUSES ở backend.
-export const RESUBMIT_FROM_STATUSES: readonly ApplicationStatus[] = ["SUBMITTED", "REJECTED"];
+// 15/10/2026: CHỈ sau khi rớt (CP đang xử lý -> Đậu / Rớt; Rớt -> Thanh lý / Nộp lại).
+export const RESUBMIT_FROM_STATUSES: readonly ApplicationStatus[] = ["REJECTED"];
 // Chỉ được nộp lại MỘT lần — khớp MAX_SUBMISSION_ROUND ở backend. Không có lần nộp thứ 3.
 export const MAX_SUBMISSION_ROUND = 2;
 // Tiến độ <= mốc này là "Chờ tiếp nhận", trên mốc dưới 100% là "Đang thu thập giấy tờ", 100% là
@@ -102,6 +103,9 @@ export function statusOptionsFor(
   vaiTro: "staff" | "admin",
   hienTai: ApplicationStatus,
 ): readonly ApplicationStatusDefinition[] {
+  // Admin luôn thấy ĐỦ các trạng thái — bước không hợp lệ (vd Sẵn sàng nộp chỉ sang CP đang xử lý; CP đang xử lý
+  // chỉ sang Đậu / Rớt; Rớt chỉ sang Thanh lý) hiện MỜ kèm lý do qua statusChangeBlockedReason, không ẩn đi
+  // (Docs yêu cầu 15/10/2026: thấy cả luồng, chỉ không chọn được).
   const cho = new Set<ApplicationStatus>(vaiTro === "staff" ? STAFF_STATUSES : ["COMPLETED", ...ADMIN_STATUSES]);
   cho.add(hienTai);
   return APPLICATION_STATUSES.filter((s) => cho.has(s.value));
@@ -122,6 +126,11 @@ export function statusChangeBlockedReason(
   laAdmin = false,
 ): string | null {
   if (den === hienTai) return null;
+  if (hienTai === "READY_TO_SUBMIT" && den !== "SUBMITTED") {
+    return "chỉ được chuyển sang CP đang xử lý";
+  }
+  if (hienTai === "SUBMITTED" && den !== "APPROVED" && den !== "REJECTED") return "chỉ sang Đậu hoặc Rớt";
+  if (hienTai === "REJECTED" && den !== "LIQUIDATED") return "chỉ sang Thanh lý hoặc Nộp lại";
   if (!laAdmin) {
     if (ADMIN_STATUSES.includes(hienTai)) return "admin cập nhật";
     if (!STAFF_STATUSES.includes(den)) return "admin cập nhật";

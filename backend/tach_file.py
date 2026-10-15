@@ -242,14 +242,32 @@ _TU = re.compile(r"\w+", re.UNICODE)
 def lop_chu_dung_duoc(t: str) -> bool:
     """Lớp chữ có sẵn trong PDF có dùng được không. Máy scan hay chèn lớp chữ RÁC ("o .Otzo o. x!r .L")
     — đủ dài nhưng toàn mẩu vụn; tin nó là AI không nhận ra trang (đo thật: bằng C3 bị nhận thành
-    CCCD). Đòi phần lớn là "từ" thật (toàn chữ cái, dài 2+)."""
-    if len(t.strip()) < CHU_TOI_THIEU:
+    CCCD). Đòi phần lớn là "từ" thật (toàn chữ cái, dài 2+).
+
+    Thêm 14/10/2026 (file bản dịch Trần Văn Hùng 32 trang): lớp chữ rác "trông như chữ" vẫn lọt — trang scan tiếng
+    Việt mang lớp chữ "xfl rm+elr mA cgmrr+.o-i" (bị tưởng là trang DỊCH tiếng Anh, cắt đôi bộ hồ sơ), trang lời
+    chứng hỏng mã hoá dấu "Nguy6n", "cu6c". Đo 32 trang: trang tốt có ký tự lạ ≤0,7% và từ lẫn chữ-số ≤3,1%; trang
+    rác ký tự lạ ≥2,4% hoặc từ lẫn chữ-số 6-9,5% -> ngưỡng 1,5% / 5%. Không dùng được thì OCR đọc lại từ ảnh."""
+    s = t.strip()
+    if len(s) < CHU_TOI_THIEU:
         return False
     tu = _TU.findall(t)
     if not tu:
         return False
     tu_that = sum(1 for w in tu if len(w) >= 2 and w.isalpha())
-    return tu_that / len(tu) >= 0.6
+    if tu_that / len(tu) < 0.6:
+        return False
+    if len(_KY_TU_LA.findall(s)) / len(s) >= 0.015:
+        return False
+    lai = sum(1 for w in tu if _TU_LAI.search(w) and not _SO_KY_HIEU.fullmatch(w))
+    return lai / len(tu) < 0.05
+
+
+# Dấu hiệu lớp chữ rác (lop_chu_dung_duoc): ký tự lạ hiếm gặp trong giấy tờ thật, và "từ" lẫn chữ-số kiểu
+# "Nguy6n" (khác số hiệu hợp lệ như "12a", "CT07", "08/2025LLTP" -> _SO_KY_HIEU).
+_KY_TU_LA = re.compile(r"[*$&#{}+€@=|~^\\<>]")
+_TU_LAI = re.compile(r"[^\W\d_]\d|\d[^\W\d_]")
+_SO_KY_HIEU = re.compile(r"\d+[^\W\d_]{0,2}|[^\W\d_]{1,3}\d+")
 
 
 def doc_chu_tung_trang(pdf: bytes) -> list[str]:
@@ -290,11 +308,21 @@ def doc_chu_tung_trang(pdf: bytes) -> list[str]:
 # --- Cấu trúc một bộ bản dịch -------------------------------------------------------------------
 
 _CO_DAU = re.compile(r"[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹáàãéèíìóòõúùýỳ]", re.IGNORECASE)
-# Trang lời chứng của người dịch / công chứng viên (song ngữ, phần tiếng Việt luôn có các cụm này).
+# Trang lời chứng của người dịch / công chứng viên. So trên chữ ĐÃ BỎ DẤU, viết thường: lớp chữ PDF của vài nơi
+# dịch HỎNG MÃ HOÁ tiếng Việt ("cam doan dd dich", "CEn cu6c cdng ddn" — gặp thật 14/10/2026) nên cụm có dấu không
+# khớp; thêm cụm TIẾNG ANH đặc trưng của trang lời chứng ("Certification of Translator's signature"). Không dùng
+# "hereby certify" — bản dịch thư xác nhận kinh nghiệm cũng có cụm đó.
 _CONG_CHUNG = re.compile(
-    r"cam\s*đoan\s*đã\s*dịch|lời\s*chứng|chứng\s*thực\s*chữ\s*ký\s*(của\s*)?người\s*dịch|công\s*chứng\s*viên",
+    r"cam\s*doan\s*d\w?\s*dich|loi\s*chung|chung\s*thuc\s*chu\s*ky\s*(cua\s*)?nguoi\s*dich|cong\s*chung\s*vien"
+    r"|certification\s*of\s*translator|translator\W{0,3}s\s*signature|i\s*hereby\s*certify\s*that\s*the\s*above\s*translation",
     re.IGNORECASE,
 )
+
+
+def _bo_dau_thuong(s: str) -> str:
+    s = unicodedata.normalize("NFD", s or "").replace("đ", "d").replace("Đ", "D")
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
+    return re.sub(r"\s+", " ", s)
 # Mục KHÔNG cần trang công chứng (Docs 13/10/2026): LLTP số 2 và phiếu lương.
 _KHONG_CAN_CONG_CHUNG = re.compile(r"lý lịch tư pháp số 2|phiếu lương", re.IGNORECASE)
 
@@ -314,9 +342,12 @@ def loai_trang(t: str) -> Optional[str]:
     tu = _TU.findall(s)
     if not tu:
         return None
+    # Trang lời chứng xét TRƯỚC tỉ lệ dấu: lớp chữ hỏng dấu làm trang lời chứng trông như "toàn tiếng Anh".
+    if _CONG_CHUNG.search(_bo_dau_thuong(s)):
+        return "cong_chung"
     if len(_CO_DAU.findall(s)) / len(tu) < 0.25:
         return "dich"
-    return "cong_chung" if _CONG_CHUNG.search(s) else "goc"
+    return "goc"
 
 
 def co_cau_truc(loai: list[Optional[str]]) -> bool:
@@ -326,21 +357,34 @@ def co_cau_truc(loai: list[Optional[str]]) -> bool:
     return bool(biet) and biet[0] == "dich" and any(x != "dich" for x in biet)
 
 
-def theo_cau_truc(doan: list[dict], loai: list[Optional[str]]) -> list[dict]:
+def theo_cau_truc(doan: list[dict], loai: list[Optional[str]], khong_dich: Optional[set] = None) -> list[dict]:
     """Sửa các đoạn AI chia theo cấu trúc bộ bản dịch:
     - BẮT BUỘC cắt ở trang dịch đứng sau trang công chứng / bản gốc (bắt đầu bộ mới);
     - BỎ chỗ cắt ở trang công chứng / bản gốc (chúng thuộc bộ đang mở — AI hay tách bản gốc ra riêng);
-    - giữ chỗ cắt AI đặt giữa các trang dịch liền nhau (2 bản dịch không kèm gốc đứng sát nhau).
+    - giữ chỗ cắt AI đặt giữa các trang dịch liền nhau (2 bản dịch không kèm gốc đứng sát nhau);
+    - giữ chỗ cắt AI đặt ở trang bản gốc khi AI xếp đoạn đó vào mục KHÔNG CẦN DỊCH (`khong_dich` — CCCD, hộ
+      chiếu, ảnh thẻ...): giấy đó nằm nguyên bản gốc, không kèm bản dịch (gặp thật 14/10/2026: CCCD 2 trang chèn
+      giữa bộ GKS và bộ LLTP).
     Mục của đoạn mới = mục AI gán cho trang đầu của nó, không có thì mục đầu tiên AI gán trong đoạn."""
     if not doan or not co_cau_truc(loai):
         return doan
     so_trang = len(loai)
     cat_ai = {d["from"] for d in doan}
+    khong_dich = khong_dich or set()
+    # Đoạn AI xếp vào mục không cần dịch: giữ nguyên chỗ cắt ở ĐẦU đoạn và ở NGAY SAU đoạn.
+    cat_giu = set()
+    for d in doan:
+        if d.get("itemId") in khong_dich:
+            cat_giu.add(d["from"])
+            if d["to"] < so_trang:
+                cat_giu.add(d["to"] + 1)
     cat: list[int] = [1]
     truoc = None  # loại của trang có chữ gần nhất phía trước
     for p in range(2, so_trang + 1):
         k = loai[p - 1]
         if k == "dich" and truoc in ("cong_chung", "goc"):
+            cat.append(p)
+        elif p in cat_giu:
             cat.append(p)
         elif p in cat_ai and k in ("dich", None) and truoc in ("dich", None):
             cat.append(p)
@@ -379,6 +423,11 @@ QUY_TAC_BAN_DICH = (
     "- Một bản dịch mới thường bắt đầu bằng quốc hiệu 'SOCIALIST REPUBLIC OF VIETNAM' / 'Independence - "
     "Freedom - Happiness' hoặc tiêu đề giấy tờ mới.\n"
     "- Bảng tính (Excel) phiếu lương / sao kê nhiều tháng là MỘT giấy tờ.\n"
+    "- Giấy KHÔNG CẦN DỊCH (mục ghi [không cần dịch]: CCCD, hộ chiếu, ảnh thẻ, chứng chỉ tiếng Anh…) có thể nằm "
+    "xen giữa ở dạng BẢN GỐC ĐỨNG RIÊNG (không có trang dịch / công chứng) — tách thành đoạn riêng, gán đúng mục đó; "
+    "KHÔNG gộp vào bộ bản dịch đứng trước. Hai mặt CCCD là một giấy.\n"
+    "- Trang [BẢN GỐC TIẾNG VIỆT] ngay sau trang công chứng là bản gốc của CHÍNH giấy vừa dịch, kể cả khi đọc được "
+    "rất ít chữ (scan mờ) — gộp vào bộ đó.\n"
 )
 
 
@@ -386,7 +435,11 @@ def _prompt(
     ten_khach: str, muc: list[MucChecklist], chu: list[str], dau_file: Optional[dict] = None, ban_dich: bool = False
 ) -> list[dict]:
     loai = [loai_trang(t) for t in chu] if ban_dich else [None] * len(chu)
-    danh_sach = "\n".join(f"{m.so} | {m.item.nameVi} | {m.item.section}" for m in muc)
+    danh_sach = "\n".join(
+        f"{m.so} | {m.item.nameVi}{' [không cần dịch]' if ban_dich and m.item.needsTranslation is False else ''}"
+        f" | {m.item.section}"
+        for m in muc
+    )
     dau_file = dau_file or {}
     # ZIP nhiều file: ghi tên file gốc ở trang đầu của nó — đầu file gần như luôn là đầu một giấy tờ,
     # và tên file khách đặt ("CCCD me.jpg") thường nói luôn là giấy gì.
@@ -430,19 +483,35 @@ def _prompt(
     return [{"role": "system", "content": he_thong}, {"role": "user", "content": nguoi_dung}]
 
 
+TOKEN_CHIA_TOI_DA = 64000
+
+
 def chia_bang_deepseek(
     ten_khach: str, muc: list[MucChecklist], chu: list[str], dau_file: Optional[dict] = None, ban_dich: bool = False
 ) -> list[dict]:
-    """[{"from", "to", "itemId" | None, "reason"}] phủ đủ trang 1..N. Lỗi thì ném ra."""
-    completion = llm.get_deepseek_client().chat.completions.create(
-        model=os.environ["DEEPSEEK_MODEL"],
-        messages=_prompt(ten_khach, muc, chu, dau_file, ban_dich),
-        response_format={"type": "json_object"},
-        max_tokens=16000,
-        timeout=600,
-    )
-    noi_dung = completion.choices[0].message.content or ""
-    du_lieu = json.loads(noi_dung)
+    """[{"from", "to", "itemId" | None, "reason"}] phủ đủ trang 1..N. Lỗi thì ném ra.
+
+    max_tokens tính CẢ phần model "nghĩ" (reasoning) — đo thật 14/10/2026 với file 32 trang: cùng một đề, lần 1
+    nghĩ 14.985 token rồi trả lời (OK), lần 2 nghĩ hết 16.000 -> finish=length, nội dung RỖNG -> "AI trả về
+    nội dung không đúng định dạng". Nên để trần cao (API nhận 128k) + thử lại 1 lần nếu vẫn rỗng / bị cắt."""
+    du_lieu = None
+    for lan in range(2):
+        completion = llm.get_deepseek_client().chat.completions.create(
+            model=os.environ["DEEPSEEK_MODEL"],
+            messages=_prompt(ten_khach, muc, chu, dau_file, ban_dich),
+            response_format={"type": "json_object"},
+            max_tokens=TOKEN_CHIA_TOI_DA,
+            timeout=900,
+        )
+        lua_chon = completion.choices[0]
+        noi_dung = (lua_chon.message.content or "").strip()
+        if noi_dung and lua_chon.finish_reason != "length":
+            du_lieu = json.loads(noi_dung)
+            break
+        logger.warning("Tách file: DeepSeek lần %d finish=%s, %d ký tự nội dung — %s", lan + 1,
+                       lua_chon.finish_reason, len(noi_dung), "thử lại" if lan == 0 else "bỏ")
+    if du_lieu is None:
+        raise ValueError("DeepSeek không trả về kết quả (nghĩ quá lâu, bị cắt) sau 2 lần")
     theo_so = {m.so: m for m in muc}
     tho = []
     for s in du_lieu.get("segments") or []:
@@ -456,7 +525,8 @@ def chia_bang_deepseek(
         tho.append({"from": tu, "to": den, "itemId": m.item.id if m else None,
                     "reason": str(s.get("reason") or "")[:300]})
     doan = chuan_hoa_doan(tho, len(chu))
-    return theo_cau_truc(doan, [loai_trang(t) for t in chu]) if ban_dich else doan
+    khong_dich = {m.item.id for m in muc if m.item.needsTranslation is False}
+    return theo_cau_truc(doan, [loai_trang(t) for t in chu], khong_dich) if ban_dich else doan
 
 
 def chuan_hoa_doan(doan: list[dict], so_trang: int) -> list[dict]:

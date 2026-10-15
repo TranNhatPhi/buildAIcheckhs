@@ -160,6 +160,9 @@ export function HoSoHoanThanhChiTiet({ id }: { id: string }) {
   const [d, setD] = useState<ChiTietHT | null>(null);
   const [loi, setLoi] = useState<string | null>(null);
   const [dangXoa, setDangXoa] = useState<string | null>(null);
+  // Chọn nhiều file để xoá một lần (14/10/2026, Docs yêu cầu) — giống trang hồ sơ thô.
+  const [chon, setChon] = useState<Set<string>>(new Set());
+  const [dangXoaNhieu, setDangXoaNhieu] = useState(false);
 
   const tai = useCallback(() => {
     fetch(`${API_URL}/final/cases/${id}`)
@@ -181,9 +184,33 @@ export function HoSoHoanThanhChiTiet({ id }: { id: string }) {
     }
   }
 
+  async function xoaDaChon(ids: string[]) {
+    if (!ids.length || !confirm(`Xoá ${ids.length} file đã chọn khỏi hồ sơ hoàn thành?\n\nFile xoá rồi KHÔNG khôi phục được.`))
+      return;
+    setDangXoaNhieu(true);
+    let hong = 0;
+    for (const fid of ids) {
+      const r = await fetch(`${API_URL}/final/files/${fid}`, { method: "DELETE" }).catch(() => null);
+      if (!r || !r.ok) hong++;
+    }
+    setDangXoaNhieu(false);
+    setChon(new Set());
+    if (hong) alert(`Không xoá được ${hong}/${ids.length} file — thử lại sau.`);
+    tai();
+  }
+
   if (loi) return <p className="px-6 py-10 text-neutral-500">{loi}</p>;
   if (!d) return <p className="px-6 py-10 text-neutral-400">Đang tải...</p>;
   const tongTrang = d.files.reduce((s, f) => s + (f.pageCount ?? 0), 0);
+  // File đã xoá mà id còn trong bộ chọn thì bỏ qua — số trên nút luôn khớp danh sách đang hiện.
+  const idChon = d.files.filter((f) => chon.has(f.id)).map((f) => f.id);
+  const doiChon = (fid: string) =>
+    setChon((cu) => {
+      const moi = new Set(cu);
+      if (moi.has(fid)) moi.delete(fid);
+      else moi.add(fid);
+      return moi;
+    });
 
   return (
     <main className="flex-1 w-full max-w-6xl mx-auto px-6 py-10 flex flex-col gap-6">
@@ -241,6 +268,31 @@ export function HoSoHoanThanhChiTiet({ id }: { id: string }) {
         )}
       </div>
 
+      {d.files.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-neutral-600">
+            <input
+              type="checkbox"
+              checked={idChon.length === d.files.length}
+              ref={(el) => {
+                if (el) el.indeterminate = idChon.length > 0 && idChon.length < d.files.length;
+              }}
+              onChange={() => setChon(idChon.length === d.files.length ? new Set() : new Set(d.files.map((f) => f.id)))}
+              className="h-4 w-4 rounded border-neutral-300"
+            />
+            {idChon.length > 0 ? `Đã chọn ${idChon.length}/${d.files.length} file` : "Chọn tất cả"}
+          </label>
+          <button
+            type="button"
+            onClick={() => xoaDaChon(idChon)}
+            disabled={idChon.length === 0 || dangXoaNhieu}
+            className="rounded-full bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:bg-neutral-100 disabled:text-neutral-400"
+          >
+            {dangXoaNhieu ? "Đang xoá..." : idChon.length > 0 ? `Xoá ${idChon.length} file đã chọn` : "Xoá file đã chọn"}
+          </button>
+        </div>
+      )}
+
       {d.files.length === 0 ? (
         <p className="rounded-2xl border-2 border-dashed border-neutral-200 bg-white px-6 py-10 text-center text-neutral-500">
           Hồ sơ chưa có file hoàn thành nào.
@@ -250,8 +302,17 @@ export function HoSoHoanThanhChiTiet({ id }: { id: string }) {
           {d.files.map((f) => (
             <li
               key={f.id}
-              className="flex flex-wrap items-center gap-3 rounded-2xl border-2 border-neutral-200 bg-white px-4 py-3"
+              className={`flex flex-wrap items-center gap-3 rounded-2xl border-2 bg-white px-4 py-3 ${
+                chon.has(f.id) ? "border-indigo-300" : "border-neutral-200"
+              }`}
             >
+              <input
+                type="checkbox"
+                checked={chon.has(f.id)}
+                onChange={() => doiChon(f.id)}
+                className="h-4 w-4 shrink-0 rounded border-neutral-300"
+                aria-label={`Chọn ${f.fileName}`}
+              />
               <div className="min-w-0 flex-1">
                 <a
                   href={`${API_URL}/final/files/${f.id}`}

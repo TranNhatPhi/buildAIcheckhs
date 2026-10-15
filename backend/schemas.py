@@ -103,6 +103,7 @@ class CreateCaseRequest(BaseModel):
     maritalStatus: Literal["SINGLE", "MARRIED"]
     numberOfChildren: int = Field(ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] = "LOW_SKILL"
+    travelPurpose: Literal["WORK", "TRAVEL"] = "WORK"
     partner: str | None = Field(default=None, max_length=191)
     receiverName: str | None = Field(default=None, max_length=191)
     managerName: str | None = Field(default=None, max_length=191)
@@ -122,6 +123,7 @@ class UpdateCaseRequest(BaseModel):
     maritalStatus: Literal["SINGLE", "MARRIED"] | None = None
     numberOfChildren: int | None = Field(default=None, ge=0, le=20)
     skillLevel: Literal["LOW_SKILL", "HIGH_SKILL"] | None = None
+    travelPurpose: Literal["WORK", "TRAVEL"] | None = None
     partner: str | None = Field(default=None, max_length=191)
     receiverName: str | None = Field(default=None, max_length=191)
     managerName: str | None = Field(default=None, max_length=191)
@@ -254,6 +256,7 @@ class ConflictValueDTO(BaseModel):
 
 
 class DataConflictDTO(BaseModel):
+    key: str  # doc_checks.khoa_bat_nhat — gửi lại khi bấm ✓ "đã kiểm tra"
     owner: str
     ownerLabel: str
     fieldLabel: str
@@ -293,6 +296,8 @@ class CaseDTO(BaseModel):
     maritalStatus: str
     numberOfChildren: int
     skillLevel: str = "LOW_SKILL"
+    # Mục đích đi: "WORK" (Làm việc) | "TRAVEL" (Du lịch).
+    travelPurpose: str = "WORK"
     # Đối tác / nguồn giới thiệu. None = hồ sơ khách tự tìm đến, hoặc hồ sơ tạo trước khi
     # có trường này.
     partner: str | None = None

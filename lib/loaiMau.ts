@@ -4,7 +4,7 @@
  * Thêm loại mới: thêm một mục ở đây + ở LOAI_MAU (backend/routers/contract_templates.py) + một
  * trang dưới app/ + một link ở Sidebar.
  */
-export type LoaiMau = "HDLD" | "XNKN" | "PL";
+export type LoaiMau = "HDLD" | "XNKN" | "PL" | "CV";
 
 export interface CauHinhMau {
   kind: LoaiMau;
@@ -24,6 +24,8 @@ export interface CauHinhMau {
   accept: string;
   /** Cách gọi các loại file nhận, dùng trong gợi ý / thông báo: "Word (.doc, .docx) hoặc PDF". */
   dinhDang: string;
+  /** Hiện khung "Công ty đang có trong hồ sơ nhưng chưa có mẫu" (mặc định có). CV thì không (Docs bỏ 14/10/2026). */
+  goiYCongTyThieu?: boolean;
 }
 
 const WORD_PDF = { accept: ".doc,.docx,.pdf", dinhDang: "Word (.doc, .docx) hoặc PDF" };
@@ -65,5 +67,19 @@ export const CAU_HINH_MAU: Record<LoaiMau, CauHinhMau> = {
     bieuTuong: "💵",
     accept: ".xls,.xlsx",
     dinhDang: "Excel (.xls, .xlsx)",
+  },
+  // 14/10/2026 — Docs yêu cầu: tab "Mẫu template CV".
+  CV: {
+    kind: "CV",
+    duongDan: "/mau-cv",
+    tieuDe: "Mẫu template CV",
+    moTa: "Thư viện mẫu CV (Resume) theo từng công ty — bấm vào mẫu để xem đầy đủ và tải về.",
+    tenMau: "mẫu CV",
+    tenThuVien: "mẫu CV",
+    viDuTenMau: "VD: CV công nhân nông nghiệp — bản tiếng Anh",
+    viDuGhiChu: "VD: dùng cho hồ sơ Low Skilled, 1 trang",
+    bieuTuong: "👤",
+    ...WORD_PDF,
+    goiYCongTyThieu: false,
   },
 };

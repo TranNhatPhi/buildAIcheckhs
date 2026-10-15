@@ -11,24 +11,17 @@ import {
   APPLICATION_STATUSES,
   APPLICATION_STATUS_HEX_COLOR,
   getApplicationStatus,
-  MAX_SUBMISSION_ROUND,
-  RESUBMIT_FROM_STATUSES,
-  statusChangeBlockedReason,
-  statusOptionsFor,
 } from "@/lib/application-status";
 import { ResubmitBadge } from "@/components/ResubmitBadge";
 import { CHUA_NHAP_NGUON, nhomTheoNguon } from "@/lib/nguon";
 
-// Giá trị giả trong ô chọn trạng thái cho thao tác "Nộp lại lần N" — không phải ApplicationStatus.
-const NOP_LAI = "__NOP_LAI__";
-import { EL, STATUS_LABEL, STATUS_COLOR, Tag, AdminSidebar, NutNhomTheoNguon, DongTieuDeNhom, baoSidebarDemLai } from "@/components/adminUi";
+import { EL, STATUS_LABEL, STATUS_COLOR, Tag, AdminSidebar, NutNhomTheoNguon, DongTieuDeNhom } from "@/components/adminUi";
 import { ChuongThongBao } from "@/components/ChuongThongBao";
 import { BO_LOC_HO_SO, type KhoaLoc } from "@/lib/adminCaseFilters";
 import type {
   AdminDocumentDTO,
   EmailLogDTO,
   AdminStatsDTO,
-  ApplicationStatus,
   CaseListItemDTO,
 } from "@/lib/client-types";
 
@@ -96,32 +89,20 @@ export function AdminDashboard() {
     const dem = (k: KhoaLoc) => song.filter(BO_LOC_HO_SO[k].dat).length;
     return {
       tong: song.length,
-      daNop: dem("daNop"),
+      choTiepNhan: dem("choTiepNhan"),
+      dangThuThap: dem("dangThuThap"),
       hoanThanh: dem("hoanThanh"),
       sanSangNop: dem("sanSangNop"),
       dangXuLy: dem("dangXuLy"),
       dau: dem("dau"),
       rot: dem("rot"),
       thanhLy: dem("thanhLy"),
-      nhacDaNop: dem("nhacDaNop"),
-      chuaKetQua: dem("chuaKetQua"),
       nopLan2: dem("nopLan2"),
-      chuaCapNhat: dem("chuaCapNhat"),
       // Cùng cách gộp tên nguồn với biểu đồ "Hồ sơ theo nguồn" (lib/nguon.ts).
       nguon: nhomTheoNguon(song).filter((g) => !g.chuaNhap).length,
-      canReview: dem("canReview"),
-      // Tổng số GIẤY TỜ cần review (thẻ đếm số hồ sơ) — chỉ để ghi trong chú thích của thẻ.
-      soGiayCanReview: song.reduce((t, c) => t + c.needsReviewCount, 0),
-      lanTay: dem("lanTay"),
-      // Ngày lăn tay gần nhất từ hôm nay — chú thích của thẻ "Ngày lăn tay".
-      lanTaySapToi: dem("lanTaySapToi"),
-      lanTayGanNhat: song.filter(BO_LOC_HO_SO.lanTaySapToi.dat).map((c) => c.biometricsDate as string).sort()[0] ?? null,
     };
   }, [cases]);
 
-  // Admin đổi trạng thái ngay tại bảng tổng quan (vd nhận hồ sơ "Hoàn thành" sang "Sẵn sàng nộp"). Trước
-  // đây chỉ trang nhân viên đổi được, admin phải mở trang khác.
-  const [dangDoiTrangThai, setDangDoiTrangThai] = useState<string | null>(null);
   const [dangLuuNgayLanTay, setDangLuuNgayLanTay] = useState<string | null>(null);
 
   // Ngày lăn tay — ô chọn ngày ở cột "Ngày lăn tay". Đổi là lưu ngay; xoá trắng ô = bỏ ngày.
@@ -145,66 +126,6 @@ export function AdminDashboard() {
       setDangLuuNgayLanTay(null);
     }
   }
-  const [thongBaoEmail, setThongBaoEmail] = useState<string | null>(null);
-
-  async function doiTrangThai(c: CaseListItemDTO, trangThai: ApplicationStatus) {
-    if (trangThai === c.applicationStatus) return;
-    setDangDoiTrangThai(c.id);
-    try {
-      const res = await adminFetch(`/cases/${c.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ applicationStatus: trangThai }),
-      }).catch(() => null);
-      if (!res || !res.ok) {
-        // Backend trả lý do cụ thể khi vi phạm quy tắc (vd "chỉ hồ sơ Hoàn thành mới chuyển cho admin").
-        const chiTiet = res ? (await res.json().catch(() => null))?.detail : null;
-        alert(chiTiet ?? "Không đổi được trạng thái — thử lại sau.");
-        return;
-      }
-      const kq = await res.json().catch(() => null);
-      // Backend tự quyết trạng thái nào gửi email (INSTANT_EMAIL_STATUSES) — chỉ báo lại.
-      setThongBaoEmail(
-        kq?.statusEmailQueued
-          ? `Đã chuyển "${c.clientName}" sang "${getApplicationStatus(trangThai).label}" — đã gửi email báo.`
-          : null
-      );
-      baoSidebarDemLai();
-      await load();
-    } finally {
-      setDangDoiTrangThai(null);
-    }
-  }
-
-  // "Nộp lại lần N": không phải trạng thái mà là thao tác xoá hết file + đưa hồ sơ về đầu —
-  // nên đi endpoint riêng và phải hỏi lại, vì file đã xoá là không lấy lại được.
-  async function nopLai(c: CaseListItemDTO) {
-    const lan = (c.submissionRound ?? 1) + 1;
-    if (
-      !confirm(
-        `Nộp lại lần ${lan} cho hồ sơ "${c.clientName}"?\n\n` +
-          "• XOÁ VĨNH VIỄN toàn bộ file đã nộp — không khôi phục được\n" +
-          "• Xoá số dư tiết kiệm và bản phân tích AI\n" +
-          `• Hồ sơ về "Chờ tiếp nhận" (0%), hiện nhãn "Nộp lại lần ${lan}" — nhân viên làm lại từ đầu ở trang checklist`
-      )
-    )
-      return;
-    setDangDoiTrangThai(c.id);
-    try {
-      const res = await adminFetch(`/cases/${c.id}/resubmit`, { method: "POST" }).catch(() => null);
-      if (!res || !res.ok) {
-        const chiTiet = res ? (await res.json().catch(() => null))?.detail : null;
-        alert(chiTiet ?? "Không chuyển nộp lại được — thử lại sau.");
-        return;
-      }
-      setThongBaoEmail(null);
-      baoSidebarDemLai();
-      await load();
-    } finally {
-      setDangDoiTrangThai(null);
-    }
-  }
-
   const casesTheoTienDo = useMemo(
     () =>
       [...cases].sort(
@@ -414,47 +335,11 @@ export function AdminDashboard() {
         </td>
         <td className="px-4 py-3">
           <div className="flex flex-col items-start gap-1.5">
-            {isDeleted ? (
-              <Tag color={APPLICATION_STATUS_HEX_COLOR[c.applicationStatus]}>
-                {getApplicationStatus(c.applicationStatus).label}
-              </Tag>
-            ) : (
-              <select
-                value={c.applicationStatus}
-                disabled={dangDoiTrangThai === c.id}
-                onChange={(e) =>
-                  e.target.value === NOP_LAI
-                    ? nopLai(c)
-                    : doiTrangThai(c, e.target.value as ApplicationStatus)
-                }
-                className="text-xs font-semibold rounded px-2 py-1 border bg-white disabled:opacity-50 cursor-pointer"
-                style={{
-                  color: APPLICATION_STATUS_HEX_COLOR[c.applicationStatus],
-                  borderColor: APPLICATION_STATUS_HEX_COLOR[c.applicationStatus],
-                }}
-                title="Đổi trạng thái hồ sơ"
-              >
-                {statusOptionsFor("admin", c.applicationStatus).map((st) => {
-                  const lyDo = statusChangeBlockedReason(st.value, c.applicationStatus, c.percent, true);
-                  return (
-                    <option key={st.value} value={st.value} disabled={!!lyDo} style={{ color: lyDo ? "#9ca3af" : "#111827" }}>
-                      {st.label}{lyDo ? ` (${lyDo})` : ""}
-                    </option>
-                  );
-                })}
-                {/* Đã nộp lần 2 thì không còn lựa chọn này — không có lần nộp thứ 3. */}
-                {(c.submissionRound ?? 1) < MAX_SUBMISSION_ROUND && (
-                  <option
-                    value={NOP_LAI}
-                    disabled={!RESUBMIT_FROM_STATUSES.includes(c.applicationStatus)}
-                    style={{ color: RESUBMIT_FROM_STATUSES.includes(c.applicationStatus) ? "#C2410C" : "#9ca3af" }}
-                  >
-                    🔁 Nộp lại lần {(c.submissionRound ?? 1) + 1}
-                    {RESUBMIT_FROM_STATUSES.includes(c.applicationStatus) ? "" : " (sau khi đã nộp)"}
-                  </option>
-                )}
-              </select>
-            )}
+            {/* CHỈ HIỆN NHÃN — không đổi trạng thái ở bảng tổng quan (admin yêu cầu 14/10/2026: tránh lỡ tay đổi
+                nhầm trên bảng dài). Đổi trạng thái / Nộp lại ở trang chi tiết hồ sơ ("Xem") — AdminStatusSelect. */}
+            <Tag color={APPLICATION_STATUS_HEX_COLOR[c.applicationStatus]}>
+              {getApplicationStatus(c.applicationStatus).label}
+            </Tag>
             {c.statusReminderDue && !isDeleted && (
               <Tag color={EL.danger}>Đến hạn nhắc</Tag>
             )}
@@ -571,58 +456,38 @@ export function AdminDashboard() {
             />
           ) : (
             <>
-              {/* 14 thẻ: màn rộng (2xl) 2 hàng x 7, màn vừa 6 cột. Ép hết vào một hàng thì nhãn bị cắt
+              {/* 11 thẻ: màn rộng (2xl) 2 hàng x 6, màn vừa 6 cột. Ép hết vào một hàng thì nhãn bị cắt
                   cụt ("Đến hạn nhắc 14 ngày" thành "Đến hạn ..."), đọc không ra nghĩa. */}
               {stats && (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 2xl:grid-cols-7 gap-4 mb-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+                  {/* Thứ tự theo đường đi của hồ sơ (admin yêu cầu 14/10/2026): tổng, nguồn, rồi từng trạng thái từ
+                      Chờ tiếp nhận tới Thanh lý. Đã bỏ "7 ngày chưa cập nhật", "Chưa có kết quả", "Hồ sơ đã nộp",
+                      "Cần review", "Ngày lăn tay" — các bộ lọc đó vẫn ở trang Thống kê. */}
                   <StatPanel icon="🗂️" label="Tổng hồ sơ" href="/admin/thong-ke" value={soLieu.tong} color={EL.primary}
                     hint="Hồ sơ đang hoạt động (không tính hồ sơ đã xoá)" />
                   <StatPanel icon="🤝" label="Số nguồn" href="/admin/thong-ke?nhom=nguon" value={soLieu.nguon} color={EL.primary}
                     hint="Số nguồn / đối tác khác nhau đang có hồ sơ — bấm để xem bảng nhóm theo nguồn" />
-                  <StatPanel icon="📨" label="Hồ sơ đã nộp" href="/admin/thong-ke?loc=daNop" value={soLieu.daNop} color={EL.primary}
-                    hint='Đã nộp đi: "CP đang xử lý" + "Được chấp thuận" + "Không thành công" + "Thanh lý hồ sơ"' />
+                  <StatPanel icon="📥" label="Chờ tiếp nhận" href="/admin/thong-ke?loc=choTiepNhan" value={soLieu.choTiepNhan}
+                    color={EL.info} hint='Hồ sơ đang ở trạng thái "Chờ tiếp nhận" (tiến độ ≤20%)' />
+                  <StatPanel icon="📂" label="Đang thu thập giấy tờ" href="/admin/thong-ke?loc=dangThuThap" value={soLieu.dangThuThap}
+                    color={EL.warning} hint='Hồ sơ đang ở trạng thái "Đang thu thập giấy tờ" (trên 20%, chưa đủ 100%)' />
                   <StatPanel icon="✅" label="Hồ sơ hoàn thành" href="/admin/thong-ke?loc=hoanThanh" value={soLieu.hoanThanh} color={EL.success}
                     hint='Hồ sơ đang ở trạng thái "Hoàn thành"' />
                   <StatPanel icon="☑️" label="Đã sẵn sàng nộp" href="/admin/thong-ke?loc=sanSangNop" value={soLieu.sanSangNop} color={EL.success}
                     hint='Hồ sơ đang ở trạng thái "Sẵn sàng nộp"' />
                   <StatPanel icon="🔄" label="Hồ sơ CP đang xử lý" href="/admin/thong-ke?loc=dangXuLy" value={soLieu.dangXuLy} color={EL.warning}
                     hint='Trạng thái "CP đang xử lý" — đã nộp, Chính phủ đang xét, chờ kết quả' />
+                  <StatPanel icon="🔁" label="Hồ sơ nộp lần 2" href="/admin/thong-ke?loc=nopLan2" value={soLieu.nopLan2}
+                    color={soLieu.nopLan2 > 0 ? EL.warning : EL.info}
+                    hint="Hồ sơ admin đã cho nộp lại — lần nộp cuối, không có lần 3" />
                   <StatPanel icon="🎉" label="Hồ sơ thành công (đậu)" href="/admin/thong-ke?loc=dau" value={soLieu.dau} color={EL.success}
                     hint='Trạng thái "Được chấp thuận"' />
                   <StatPanel icon="❌" label="Hồ sơ rớt" href="/admin/thong-ke?loc=rot" value={soLieu.rot}
                     color={soLieu.rot > 0 ? EL.danger : EL.info} hint='Trạng thái "Không thành công" (chưa thanh lý)' />
-                  <StatPanel icon="🔁" label="Hồ sơ nộp lần 2" href="/admin/thong-ke?loc=nopLan2" value={soLieu.nopLan2}
-                    color={soLieu.nopLan2 > 0 ? EL.warning : EL.info}
-                    hint="Hồ sơ admin đã cho nộp lại — lần nộp cuối, không có lần 3" />
-                  {/* Thay chỗ thẻ "Nhắc kiểm tra trạng thái (đang xử lý)". Loại nhắc này đã BỎ khỏi chuông
-                      admin (vì có thẻ riêng ở đây) nhưng vẫn ở chuông trang Docs. */}
-                  <StatPanel icon="🔔" label="7 ngày chưa cập nhật hồ sơ" href="/admin/thong-ke?loc=chuaCapNhat" value={soLieu.chuaCapNhat}
-                    color={soLieu.chuaCapNhat > 0 ? EL.warning : EL.info}
-                    hint="Không có file mới 7 ngày mà còn thiếu giấy tờ bắt buộc (chưa tới Hoàn thành)" />
-                  <StatPanel icon="⌛" label="Chưa có kết quả" href="/admin/thong-ke?loc=chuaKetQua" value={soLieu.chuaKetQua} color={EL.primary}
-                    hint='Chưa có kết quả "Được chấp thuận" / "Không thành công"' />
                   <StatPanel icon="🗃️" label="Hồ sơ thanh lý" href="/admin/thong-ke?loc=thanhLy" value={soLieu.thanhLy}
                     color={soLieu.thanhLy > 0 ? "#475569" : EL.info}
                     hint='Trạng thái "Thanh lý hồ sơ" — hồ sơ đã khép lại sau khi không thành công' />
-                  {/* Thay thẻ "Giấy tờ sắp hết hạn" (12/10/2026) — bộ lọc đó vẫn còn ở trang Thống kê. */}
-                  <StatPanel icon="🔍" label="Cần review" href="/admin/thong-ke?loc=canReview" value={soLieu.canReview}
-                    color={soLieu.canReview > 0 ? EL.warning : EL.info}
-                    hint={`Hồ sơ còn giấy tờ AI chưa chắc, cần xem lại tay — tổng ${soLieu.soGiayCanReview} giấy tờ`} />
-                  <StatPanel icon="🖐️" label="Ngày lăn tay" href="/admin/thong-ke?loc=lanTay" value={soLieu.lanTay}
-                    color={soLieu.lanTay > 0 ? EL.primary : EL.info}
-                    hint={
-                      "Hồ sơ đã có ngày lăn tay (cột Ngày lăn tay ở bảng dưới)" +
-                      ` — ${soLieu.lanTaySapToi} lịch từ hôm nay trở đi` +
-                      (soLieu.lanTayGanNhat
-                        ? `, gần nhất ${soLieu.lanTayGanNhat.split("-").reverse().join("/")}`
-                        : "")
-                    } />
                 </div>
-              )}
-              {thongBaoEmail && (
-                <p className="mb-4 text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
-                  {thongBaoEmail}
-                </p>
               )}
 
               {(cases.length > 0 || documents.length > 0) && (

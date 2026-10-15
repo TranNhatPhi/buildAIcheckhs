@@ -40,7 +40,7 @@ import fitz  # PyMuPDF
 import numpy as np
 import pytesseract
 from pytesseract import Output
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 import llm
 import paddle_ocr_vl
@@ -498,7 +498,42 @@ def _ocr_single_image_lines_best_of(img: Image.Image) -> list[OcrLine]:
         "Best-of preprocessing: chọn '%s' (%d ký tự) trong %d/%d phương án chạy được.",
         best_name, best_len, ran, len(variants),
     )
+    if best_len < CUU_NGUONG_KY_TU:
+        best_lines = _cuu_trang_trong(img, best_lines, best_len)
     return best_lines
+
+
+# Trang đọc ra dưới chừng này ký tự -> thử thêm vài cách "cứu" (xem _cuu_trang_trong).
+CUU_NGUONG_KY_TU = 150
+
+
+def _cuu_trang_trong(img: Image.Image, best_lines: list[OcrLine], best_len: int) -> list[OcrLine]:
+    """Trang mà CẢ 5 biến thể đều gần như trống: thử thêm lọc nhiễu MEDIAN và THU NHỎ ảnh (~200 DPI).
+
+    Gặp thật 14/10/2026: bản sao giấy khai sinh scan nền CHẤM NHIỄU, độ phân giải thấp (ảnh 827x1169 cho
+    cả trang A4) chèn trong file PDF bản dịch — cả 5 biến thể ra đúng 20 ký tự ("Số 10220 6/0KS-BS"), AI
+    tách file tưởng là trang trắng nên cắt nhầm sang CCCD. Đo trên chính trang đó (Tesseract psm 4):
+    median 300 DPI -> 1347 ký tự, thu về 200 DPI -> 1058 ký tự, đọc ra "GIẤY KHAI SINH… TRẦN VĂN HÙNG".
+    Chỉ chạy cho trang gần như trống nên không làm chậm trang bình thường."""
+    xam = img.convert("L")
+    nho = xam.resize((max(1, xam.width * 2 // 3), max(1, xam.height * 2 // 3)), Image.LANCZOS)
+    cach = {
+        "cuu_median": xam.filter(ImageFilter.MedianFilter(3)),
+        "cuu_thu_nho": nho,
+        "cuu_thu_nho_median": nho.filter(ImageFilter.MedianFilter(3)),
+    }
+    tot_ten, tot_dong, tot_len = None, best_lines, best_len
+    for ten, anh in cach.items():
+        try:
+            dong = _lines_from_preprocessed(anh, timeout=TESSERACT_TIMEOUT_SECONDS)
+        except ValueError:
+            continue
+        n = sum(len(l.text) for l in dong)
+        if n > tot_len:
+            tot_ten, tot_dong, tot_len = ten, dong, n
+    if tot_ten:
+        logger.info("Cứu trang gần như trống: '%s' %d -> %d ký tự.", tot_ten, best_len, tot_len)
+    return tot_dong
 
 
 def _lines_from_preprocessed(
@@ -906,6 +941,26 @@ def _fill_missing_pages(texts, pages, source_name, read_page, concurrency) -> No
                                i + 1, source_name, type(e).__name__)
 
 
+# File văn phòng (Word / Excel...) — 14/10/2026: upload "0. Phiếu thông tin.docx" bị coi là ẢNH -> lỗi "Không
+# nhận dạng được định dạng ảnh". Giờ chuyển sang PDF bằng LibreOffice (có trong image backend, cùng hàm với
+# xem trước mẫu hợp đồng) rồi đi đường PDF: có số trang + ảnh từng trang để xem, chữ lấy THẲNG từ file.
+DUOI_VAN_PHONG = {".doc", ".docx", ".odt", ".rtf", ".xls", ".xlsx", ".ods"}
+
+
+def la_file_van_phong(filename: str) -> bool:
+    return os.path.splitext((filename or "").lower())[1] in DUOI_VAN_PHONG
+
+
+def co_anh_trang(filename: str, mime_type: str) -> bool:
+    """File được lưu ảnh từng trang (xem như PDF): PDF và file văn phòng (đã chuyển sang PDF)."""
+    return mime_type == "application/pdf" or (filename or "").lower().endswith(".pdf") or la_file_van_phong(filename)
+
+
+def _chu_co_san(pdf: bytes) -> list[str]:
+    with fitz.open(stream=pdf, filetype="pdf") as d:
+        return [p.get_text() or "" for p in d]
+
+
 def extract_text(
     content: bytes,
     filename: str,
@@ -947,6 +1002,28 @@ def extract_text(
     đọc hỏng thì giữ nguyên các trang còn lại và ghi chú "[Không đọc được trang N: ...]" vào
     đúng chỗ đó trong văn bản trả về."""
     is_pdf = mime_type == "application/pdf" or filename.lower().endswith(".pdf")
+
+    if la_file_van_phong(filename):
+        import contract_preview
+
+        try:
+            content = contract_preview.word_sang_pdf(content, os.path.splitext(filename.lower())[1])
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"Không chuyển được file {os.path.splitext(filename)[1]} sang PDF để đọc — "
+                             "file có thể bị hỏng hoặc có mật khẩu.") from e
+        is_pdf = True
+        # Word/Excel có SẴN chữ chính xác tuyệt đối — dùng luôn, khỏi OCR (nhanh, không tốn AI). Chỉ khi
+        # gần như không có chữ (file chỉ chứa ảnh scan dán vào) mới đọc ảnh như PDF scan.
+        try:
+            chu = _chu_co_san(content)
+            pages = pdf_to_images(content)
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"Không đọc được file: {describe_file_read_error(e)}") from e
+        if sum(len(t.strip()) for t in chu) >= 20 * max(1, len(chu)):
+            van_ban = "\n\n".join(
+                f"--- Trang {i + 1} ---\n{t.strip()}" if len(chu) > 1 else t.strip() for i, t in enumerate(chu)
+            )
+            return van_ban, len(pages), [], pages
 
     try:
         if is_pdf:

@@ -1,24 +1,62 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { StaffIdentity } from "@/components/StaffIdentity";
 import { ChuongThongBao } from "@/components/ChuongThongBao";
+import { docJson, ghiJson } from "@/lib/luuTam";
+import { useHydrated } from "@/lib/useHydrated";
 
-const LINKS = [
-  { href: "/", label: "Danh sách hồ sơ Thô", icon: "📋" },
-  { href: "/ho-so-hoan-thanh", label: "Danh sách hồ sơ hoàn thành", icon: "✅" },
-  { href: "/cases/new", label: "Tạo hồ sơ thô mới", icon: "➕" },
-  { href: "/translation-check", label: "Kiểm tra dịch thuật", icon: "🌐" },
-  { href: "/tach-file", label: "Tách file PDF / Word gốc", icon: "✂️" },
-  { href: "/tach-ban-dich", label: "Tách hồ sơ dịch thuật PDF / Excel", icon: "📑" },
-  { href: "/mau-hop-dong", label: "Mẫu hợp đồng lao động", icon: "📄" },
-  { href: "/mau-xac-nhan-kinh-nghiem", label: "Mẫu thư xác nhận kinh nghiệm", icon: "📝" },
-  { href: "/mau-phieu-luong", label: "Mẫu phiếu lương", icon: "💵" },
+// Thanh bên chia 2 NHÓM CHA mở / thu gọn được (Docs yêu cầu 15/10/2026). `them` = đường dẫn KHÔNG có link riêng
+// nhưng thuộc nhóm (vd trang một hồ sơ /cases/[id]) — để nhóm đó tự mở khi đang ở trang ấy.
+const NHOM = [
+  {
+    khoa: "tho",
+    nhan: "Hồ sơ thô",
+    icon: "📋",
+    them: ["/cases/"],
+    links: [
+      { href: "/", label: "Danh sách", icon: "📋" },
+      { href: "/cases/new", label: "Tạo mới", icon: "➕" },
+      { href: "/tach-file", label: "Tách file PDF / Word gốc", icon: "✂️" },
+      { href: "/mau-hop-dong", label: "Mẫu HĐLĐ", icon: "📄" },
+      { href: "/mau-xac-nhan-kinh-nghiem", label: "Mẫu XNKN", icon: "📝" },
+      { href: "/mau-phieu-luong", label: "Mẫu lương", icon: "💵" },
+    ],
+  },
+  {
+    khoa: "hoan-thanh",
+    nhan: "Hồ sơ hoàn thành",
+    icon: "✅",
+    them: [] as string[],
+    links: [
+      { href: "/ho-so-hoan-thanh", label: "Danh sách", icon: "✅" },
+      { href: "/tach-ban-dich", label: "Tách HS dịch", icon: "📑" },
+      { href: "/translation-check", label: "Kiểm tra dịch thuật", icon: "🌐" },
+      { href: "/dien-form-imm5645", label: "Điền IMM5645e", icon: "🧾" },
+      { href: "/dien-form-imm1295", label: "Điền IMM1295e", icon: "🛂" },
+      { href: "/mau-cv", label: "Mẫu CV", icon: "👤" },
+    ],
+  },
 ];
+
+// "/" chỉ active đúng trang chủ, các link khác active cho cả trang con (vd /mau-cv/[id]); "/cases/new" không
+// active nhầm ở /cases/[id].
+const dangMo = (href: string, pathname: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
 
 export function Sidebar() {
   const pathname = usePathname();
+  const hydrated = useHydrated();
+  // Nhóm người dùng đã THU GỌN — nhớ trên trình duyệt (F5 vẫn giữ).
+  const [thuGon, setThuGon] = useState<Record<string, boolean>>(() => docJson("sidebar:thuGon") ?? {});
+  function doiNhom(khoa: string) {
+    setThuGon((cu) => {
+      const moi = { ...cu, [khoa]: !cu[khoa] };
+      ghiJson("sidebar:thuGon", moi);
+      return moi;
+    });
+  }
 
   // Trang /admin có giao diện riêng, tách biệt hoàn toàn khỏi trang chính (xem
   // components/AdminDashboard.tsx) — không dùng chung sidebar này.
@@ -46,24 +84,60 @@ export function Sidebar() {
       <ChuongThongBao vaiTro="docs" />
       </div>
 
-      <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
-        {LINKS.map((link) => {
-          // "/" chỉ active đúng trang chủ, các link khác active cho cả trang con (vd
-          // /cases/new active khi ở /cases/new, không active nhầm ở /cases/[id]).
-          const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
+      <nav className="flex-1 overflow-y-auto px-3 py-4 flex flex-col gap-2">
+        {NHOM.map((nhom) => {
+          const coTrangMo =
+            nhom.links.some((l) => dangMo(l.href, pathname)) || nhom.them.some((t) => pathname.startsWith(t));
+          // Trước hydrate luôn MỞ (server không đọc được lựa chọn đã nhớ) — tránh lệch HTML lúc hydrate. Thu gọn
+          // được cả nhóm đang chứa trang mở (tiêu đề nhóm vẫn tô tím để biết đang ở nhóm nào).
+          const mo = !hydrated || !thuGon[nhom.khoa];
           return (
-            <Link
-              key={link.href}
-              href={link.href}
-              className={`flex items-center gap-2.5 text-sm font-semibold px-3 py-2.5 rounded-xl transition-colors ${
-                active
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
-              }`}
-            >
-              <span aria-hidden>{link.icon}</span>
-              {link.label}
-            </Link>
+            <div key={nhom.khoa}>
+              <button
+                type="button"
+                onClick={() => doiNhom(nhom.khoa)}
+                aria-expanded={mo}
+                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-bold transition-colors ${
+                  coTrangMo ? "text-indigo-700" : "text-neutral-800 hover:bg-neutral-100"
+                }`}
+              >
+                <span aria-hidden>{nhom.icon}</span>
+                <span className="flex-1 text-left">{nhom.nhan}</span>
+                <svg
+                  aria-hidden
+                  viewBox="0 0 20 20"
+                  className={`h-4 w-4 text-neutral-400 transition-transform ${mo ? "rotate-90" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M7 5l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {mo && (
+                <div className="ml-4 mt-1 flex flex-col gap-0.5 border-l border-neutral-200 pl-2">
+                  {nhom.links.map((link) => {
+                    const active = dangMo(link.href, pathname);
+                    return (
+                      <Link
+                        key={link.href}
+                        href={link.href}
+                        className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-semibold transition-colors ${
+                          active
+                            ? "bg-indigo-600 text-white shadow-sm"
+                            : "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
+                        }`}
+                      >
+                        <span aria-hidden className="text-xs">
+                          {link.icon}
+                        </span>
+                        {link.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           );
         })}
       </nav>

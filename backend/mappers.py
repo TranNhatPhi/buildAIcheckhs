@@ -10,7 +10,7 @@ from completeness import (
     FinancialThreshold,
     SavingsAssessment,
 )
-from doc_checks import NGAY_CANH_BAO_HAN, DiemBatNhat, HanGiayTo
+from doc_checks import NGAY_CANH_BAO_HAN, DiemBatNhat, HanGiayTo, khoa_bat_nhat
 from schemas import (
     ChecklistItemStatusDTO,
     ChecklistSummaryDTO,
@@ -79,6 +79,7 @@ def doc_checks_to_dto(
         ],
         conflicts=[
             DataConflictDTO(
+                key=khoa_bat_nhat(d),
                 owner=d.owner,
                 ownerLabel=d.owner_label,
                 fieldLabel=d.field_label,

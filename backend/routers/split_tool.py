@@ -1,7 +1,8 @@
 """API trang "Tách file" (/tach-file) — logic ở tach_file.py.
 
-    POST /split-tool                    caseId + file (+ loai=dich cho trang "Tách hồ sơ dịch thuật") ->
-                                        đọc chữ, DeepSeek chia trang, trả bảng đề xuất
+    POST /split-tool                    caseId + file (+ loai=dich cho trang "Tách hồ sơ dịch thuật") -> 202 jobId;
+                                        đọc chữ + DeepSeek chia trang chạy NỀN
+    GET  /split-tool/{job}/result       202 đang chạy / 200 bảng đề xuất / 400 hỏng / 410 gián đoạn
     GET  /split-tool/{job}/source.pdf   file gốc (đã thành PDF) để xem
     GET  /split-tool/{job}/pages/{n}    ảnh nhỏ trang n (xem nhanh trong bảng)
     POST /split-tool/{job}/zip          tách THEO BẢNG nhân viên gửi lên (đã sửa) -> ZIP
@@ -15,12 +16,14 @@ import io
 import json
 import logging
 import re
+import time
 import uuid
 import zipfile
 from typing import List
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,7 +32,7 @@ import activity
 import llm
 import storage
 import tach_file
-from db import get_db
+from db import SessionLocal, get_db
 from models import Case, ChecklistItem
 
 logger = logging.getLogger(__name__)
@@ -78,7 +81,8 @@ def _muc_dto(muc) -> list[dict]:
 
 @router.post("")
 def phan_tich(
-    caseId: str = Form(...), file: List[UploadFile] = File(...), loai: str = Form("goc"), db: Session = Depends(get_db)
+    nen: BackgroundTasks,
+    caseId: str = Form(...), file: List[UploadFile] = File(...), loai: str = Form("goc"), db: Session = Depends(get_db),
 ):
     """`file` gửi 1 hoặc NHIỀU lần (kéo thả nhiều file một lúc). Nhiều file thì gói vào một ZIP trong bộ
     nhớ rồi đi đúng đường ZIP — cùng thứ tự theo tên, cùng chú thích "bắt đầu file gốc", cùng giới hạn."""
@@ -121,51 +125,128 @@ def phan_tich(
     if so_trang > tach_file.MAX_PAGES:
         raise HTTPException(status_code=400, detail=f"File {so_trang} trang — tối đa {tach_file.MAX_PAGES} trang mỗi lần.")
 
-    muc = _muc(db, case)
-    chu = tach_file.doc_chu_tung_trang(pdf)
-    ghi_chu = None
-    try:
-        # Bản dịch: chỉ đưa AI các mục CẦN dịch (bớt nhầm sang hộ chiếu / CCCD...); ô chọn mục vẫn đủ.
-        muc_ai = [m for m in muc if m.item.needsTranslation is not False] if ban_dich else muc
-        doan = tach_file.chia_bang_deepseek(case.clientName, muc_ai, chu, ghep.dau_file, ban_dich)
-    except Exception as e:  # noqa: BLE001
-        logger.exception("Tách file: DeepSeek hỏng")
-        ghi_chu = f"AI không chia được ({llm.describe_error(e)}) — mỗi trang để một dòng, hãy tự gộp và chọn mục."
-        doan = tach_file.moi_trang_mot_doan(so_trang, "Chưa phân tích")
-        loai_ai_hong = [tach_file.loai_trang(t) for t in chu] if ban_dich else []
-        if ban_dich and tach_file.co_cau_truc(loai_ai_hong):
-            # AI hỏng vẫn chia được theo cấu trúc bộ bản dịch (chỉ thiếu mục) — đưa vào MỘT đoạn để chỉ
-            # còn các chỗ cắt theo cấu trúc, không giữ "mỗi trang một dòng".
-            ghi_chu = f"AI không chia được ({llm.describe_error(e)}) — đã chia theo cấu trúc bộ bản dịch, hãy chọn mục."
-            doan = tach_file.theo_cau_truc(
-                [{"from": 1, "to": so_trang, "itemId": None, "reason": "Chia theo cấu trúc bộ bản dịch"}], loai_ai_hong
-            )
-    loai_trang = [tach_file.loai_trang(t) for t in chu] if ban_dich else None
-
+    # CHẠY NỀN (14/10/2026, Docs yêu cầu "bấm tách file thì F5 cũng không ảnh hưởng"): đọc chữ + DeepSeek mất
+    # vài phút — trước đây chạy TRONG request nên F5 là trình duyệt bỏ request, kết quả mất (máy chủ vẫn chạy
+    # xong mà không ai nhận). Giờ lưu file + meta rồi trả NGAY jobId (202); phần chậm chạy sau khi trả lời
+    # (BackgroundTasks) và ghi result.json lên MinIO — giao diện hỏi GET /{job}/result tới khi xong, F5 thì
+    # hỏi tiếp đúng lượt đó. Kết quả ở MinIO nên backend nào trong 3 bản trả lời cũng được.
     job = uuid.uuid4().hex
     storage.upload_object(_key(job, "source.pdf"), pdf, "application/pdf")
-    meta = {"caseId": case.id, "originalName": ten_file, "pageCount": so_trang, "loai": loai}
+    meta = {"caseId": case.id, "originalName": ten_file, "pageCount": so_trang, "loai": loai,
+            "startedAt": time.time()}
     storage.upload_object(_key(job, "meta.json"), json.dumps(meta, ensure_ascii=False).encode(), "application/json")
     activity.ghi("SPLIT_FILE", case=case,
-                 detail=("[Bản dịch] " if ban_dich else "") + f"{ten_file}: {so_trang} trang -> {len(doan)} file" + (" (AI lỗi)" if ghi_chu else ""))
-    return {
-        "jobId": job,
-        "fileName": ten_file,
-        "pageCount": so_trang,
-        "caseId": case.id,
-        "clientName": case.clientName,
-        "loai": loai,
-        "items": _muc_dto(muc),
-        "segments": doan,
-        "aiNote": ghi_chu,
-        # Bản dịch: loại từng trang ("dich" | "cong_chung" | "goc" | null) + có áp cấu trúc bộ hay không —
-        # giao diện ghi thành phần mỗi file và cảnh báo thiếu công chứng / bản gốc.
-        "pageKinds": loai_trang,
-        "structured": bool(loai_trang) and tach_file.co_cau_truc(loai_trang),
-        # ZIP: file gốc nào bắt đầu ở trang nào (giao diện ghi trên từng dòng) + file bị bỏ qua.
-        "sourceFiles": [{"page": p, "name": n} for p, n in sorted(ghep.dau_file.items())],
-        "skipped": ghep.bo_qua,
-    }
+                 detail=("[Bản dịch] " if ban_dich else "") + f"{ten_file}: {so_trang} trang — bắt đầu phân tích")
+    nen.add_task(_chay_tach, job, case.id, pdf, ten_file, so_trang, ban_dich, ghep.dau_file, ghep.bo_qua)
+    return JSONResponse(status_code=202, content={"jobId": job, "status": "processing", "fileName": ten_file,
+                                                  "pageCount": so_trang, "startedAt": meta["startedAt"]})
+
+
+# Lượt chưa có kết quả quá chừng này (máy chủ khởi động lại giữa chừng, tiến trình chết) -> báo gián đoạn.
+TACH_TOI_DA_GIAY = 30 * 60
+
+
+class _DaDung(Exception):
+    """Nhân viên đã bấm "Dừng tách file" (POST /{job}/cancel)."""
+
+
+def _kiem_tra_dung(job: str) -> None:
+    try:
+        storage.get_document_bytes(_key(job, "cancel.json"))
+    except Exception:  # noqa: BLE001 — không có dấu dừng = chạy tiếp
+        return
+    raise _DaDung
+
+
+@router.post("/{job}/cancel")
+def dung_tach(job: str):
+    """Dừng một lượt đang tách: ghi dấu cancel.json — phần chạy nền thấy thì thôi (xem _chay_tach)."""
+    meta = json.loads(_doc(job, "meta.json"))
+    storage.upload_object(_key(job, "cancel.json"), b"{}", "application/json")
+    activity.ghi("SPLIT_FILE", case_id=meta.get("caseId"), detail=f"Dừng tách '{meta.get('originalName')}'")
+    return {"ok": True}
+
+
+def _chay_tach(job: str, case_id: str, pdf: bytes, ten_file: str, so_trang: int, ban_dich: bool,
+               dau_file: dict, bo_qua: list) -> None:
+    """Phần CHẬM của một lượt tách (chạy nền): đọc chữ + DeepSeek chia trang -> result.json. Không ném lỗi:
+    hỏng thì ghi {"error": ...} để giao diện báo lại thay vì chờ mãi."""
+    db = SessionLocal()
+    try:
+        # Nút "Dừng tách file": kiểm tra trước mỗi bước chậm — dừng rồi thì không đọc chữ / gọi DeepSeek nữa
+        # (bước đọc chữ đang chạy dở thì chạy nốt, không cắt ngang được).
+        _kiem_tra_dung(job)
+        case = db.get(Case, case_id)
+        muc = _muc(db, case)
+        chu = tach_file.doc_chu_tung_trang(pdf)
+        _kiem_tra_dung(job)
+        ghi_chu = None
+        try:
+            # Bản dịch: đưa AI ĐỦ mục, mục không cần dịch được ghi chú [không cần dịch] trong prompt — trước đây
+            # lọc bỏ hẳn nên CCCD bản gốc chèn giữa file bị ép vào mục khác ("CMND cũ"), 14/10/2026.
+            doan = tach_file.chia_bang_deepseek(case.clientName, muc, chu, dau_file, ban_dich)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Tách file: DeepSeek hỏng")
+            ghi_chu = f"AI không chia được ({llm.describe_error(e)}) — mỗi trang để một dòng, hãy tự gộp và chọn mục."
+            doan = tach_file.moi_trang_mot_doan(so_trang, "Chưa phân tích")
+            loai_ai_hong = [tach_file.loai_trang(t) for t in chu] if ban_dich else []
+            if ban_dich and tach_file.co_cau_truc(loai_ai_hong):
+                # AI hỏng vẫn chia được theo cấu trúc bộ bản dịch (chỉ thiếu mục) — đưa vào MỘT đoạn để chỉ
+                # còn các chỗ cắt theo cấu trúc, không giữ "mỗi trang một dòng".
+                ghi_chu = f"AI không chia được ({llm.describe_error(e)}) — đã chia theo cấu trúc bộ bản dịch, hãy chọn mục."
+                doan = tach_file.theo_cau_truc(
+                    [{"from": 1, "to": so_trang, "itemId": None, "reason": "Chia theo cấu trúc bộ bản dịch"}], loai_ai_hong
+                )
+        loai_trang = [tach_file.loai_trang(t) for t in chu] if ban_dich else None
+        ket_qua = {
+            "jobId": job,
+            "fileName": ten_file,
+            "pageCount": so_trang,
+            "caseId": case.id,
+            "clientName": case.clientName,
+            "loai": "dich" if ban_dich else "goc",
+            "items": _muc_dto(muc),
+            "segments": doan,
+            "aiNote": ghi_chu,
+            # Bản dịch: loại từng trang ("dich" | "cong_chung" | "goc" | null) + có áp cấu trúc bộ hay không.
+            "pageKinds": loai_trang,
+            "structured": bool(loai_trang) and tach_file.co_cau_truc(loai_trang),
+            # ZIP: file gốc nào bắt đầu ở trang nào (giao diện ghi trên từng dòng) + file bị bỏ qua.
+            "sourceFiles": [{"page": p, "name": n} for p, n in sorted(dau_file.items())],
+            "skipped": bo_qua,
+        }
+        logger.info("Tách file %s: %s trang -> %s file%s", job, so_trang, len(doan), " (AI lỗi)" if ghi_chu else "")
+    except _DaDung:
+        logger.info("Tách file %s: nhân viên bấm Dừng", job)
+        ket_qua = {"error": "Đã dừng tách file.", "cancelled": True}
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Tách file %s: hỏng khi phân tích", job)
+        ket_qua = {"error": f"Không phân tích được file ({e.__class__.__name__}) — thử tách lại."}
+    finally:
+        db.close()
+    storage.upload_object(_key(job, "result.json"), json.dumps(ket_qua, ensure_ascii=False).encode(), "application/json")
+
+
+@router.get("/{job}/result")
+def ket_qua_tach(job: str):
+    """202 khi còn đang chạy, 200 + bảng đề xuất khi xong, 400 khi phân tích hỏng, 410 khi lượt bị gián đoạn
+    (quá TACH_TOI_DA_GIAY mà chưa có kết quả), 404 khi lượt đã hết hạn / không tồn tại."""
+    try:
+        ket_qua = json.loads(storage.get_document_bytes(_key(job, "result.json")))
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001
+        ket_qua = None
+    if ket_qua is not None:
+        if "error" in ket_qua:
+            raise HTTPException(status_code=400, detail=ket_qua["error"])
+        return ket_qua
+    meta = json.loads(_doc(job, "meta.json"))  # 404 nếu lượt không còn
+    bat_dau = meta.get("startedAt") or 0
+    if time.time() - bat_dau > TACH_TOI_DA_GIAY:
+        raise HTTPException(status_code=410, detail="Lượt tách bị gián đoạn (máy chủ khởi động lại) — bấm Tách file lại.")
+    return JSONResponse(status_code=202, content={"status": "processing", "startedAt": bat_dau,
+                                                  "fileName": meta.get("originalName"), "pageCount": meta.get("pageCount")})
 
 
 @router.get("/{job}/source.pdf")
@@ -227,6 +308,9 @@ def dua_vao_hoan_thanh(job: str, body: MotFileRequest, db: Session = Depends(get
     except (KeyError, TypeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e) or "Bảng tách file không hợp lệ.") from e
     d = doan[body.index]
+    # Tên TIẾNG ANH, KHÔNG DẤU theo quy ước bộ file mẫu (docs/test), vd "5. Phan Huy Di Dan - Birth
+    # certificate.pdf" — tính cho CẢ bảng để 2 bản dịch cùng mục ra " (2)" như tên tiếng Việt.
+    ten = final_docs.ten_tieng_anh_cho(db, case, [(s["itemId"], "x.pdf") for s in doan])[body.index]
     f, da_thay = final_docs.luu_file(db, case, ten, noi_dung, d["itemId"], d["to"] - d["from"] + 1)
     activity.ghi("FINAL_ADD", case=case, detail=ten + (" (thay bản cũ)" if da_thay else ""))
     return {"id": f.id, "fileName": ten, "replaced": da_thay}

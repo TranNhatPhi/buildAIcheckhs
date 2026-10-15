@@ -20,6 +20,7 @@ import {
   FORM_SUBMIT,
   toExperienceMonths,
 } from "@/lib/formStyles";
+import { MUC_DICH_DI, type MucDichDi } from "@/lib/mucDichDi";
 import {
   APPLICATION_STATUSES,
   APPLICATION_STATUS_BADGE_CLASS,
@@ -48,6 +49,9 @@ interface Props {
 
 export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
   const [clientName, setClientName] = useState(caseItem.clientName);
+  const [travelPurpose, setTravelPurpose] = useState<MucDichDi>(
+    caseItem.travelPurpose === "TRAVEL" ? "TRAVEL" : "WORK",
+  );
   const [maritalStatus, setMaritalStatus] = useState<"SINGLE" | "MARRIED">(
     caseItem.maritalStatus as "SINGLE" | "MARRIED",
   );
@@ -123,6 +127,7 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
           maritalStatus,
           numberOfChildren,
           skillLevel,
+          travelPurpose,
           partner,
           ...nguoi,
           occupation,
@@ -270,6 +275,26 @@ export function EditCaseModal({ caseItem, onClose, onSaved }: Props) {
                   onChange={(e) => setNumberOfChildren(Number(e.target.value))}
                   className={`${FORM_INPUT} w-32`}
                 />
+              </div>
+              <div>
+                <span className={FORM_LABEL}>Mục đích đi</span>
+                <div className="flex flex-wrap gap-3">
+                  {MUC_DICH_DI.map(([value, label]) => (
+                    <label
+                      key={value}
+                      className={`${FORM_PILL_BASE} ${travelPurpose === value ? FORM_PILL_ON : FORM_PILL_OFF}`}
+                    >
+                      <input
+                        type="radio"
+                        name="sua-muc-dich-di"
+                        className="sr-only"
+                        checked={travelPurpose === value}
+                        onChange={() => setTravelPurpose(value)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
           </section>

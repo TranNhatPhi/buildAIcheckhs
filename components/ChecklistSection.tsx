@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useState, type ReactNode } from "react";
 import { buildChecklistNumbers } from "@/lib/format";
 import type { ChecklistItemStatusDTO } from "@/lib/client-types";
 
@@ -8,7 +10,12 @@ interface Props<T extends ChecklistItemStatusDTO> {
   // nhãn, và dưới mỗi mục liệt kê file hoàn thành. Hồ sơ thô không truyền hai prop này.
   nhanMo?: (s: T) => string | null;
   phuLuc?: (s: T) => ReactNode;
+  // Trang hồ sơ thô: các ô "Giấy tờ khác N" có nút ✏️ đặt tên riêng cho hồ sơ (backend ten_giay_to_khac.py).
+  // Gửi tên trống = về tên mặc định.
+  doiTen?: (itemId: string, ten: string) => Promise<void>;
 }
+
+const laOGiayToKhac = (id: string) => id.includes("giay-to-khac-");
 
 function groupBy<T extends ChecklistItemStatusDTO>(items: T[]) {
   const map = new Map<string, T[]>();
@@ -20,8 +27,21 @@ function groupBy<T extends ChecklistItemStatusDTO>(items: T[]) {
   return map;
 }
 
-export function ChecklistSection<T extends ChecklistItemStatusDTO>({ items, nhanMo, phuLuc }: Props<T>) {
+export function ChecklistSection<T extends ChecklistItemStatusDTO>({ items, nhanMo, phuLuc, doiTen }: Props<T>) {
   const grouped = groupBy(items);
+  const [dangSua, setDangSua] = useState<string | null>(null);
+  const [nhap, setNhap] = useState("");
+  const [dangLuu, setDangLuu] = useState(false);
+  async function luu(itemId: string) {
+    if (!doiTen) return;
+    setDangLuu(true);
+    try {
+      await doiTen(itemId, nhap.trim());
+      setDangSua(null);
+    } finally {
+      setDangLuu(false);
+    }
+  }
   // Số thứ tự theo đúng checklist gốc khách gửi, gồm cả các mục dùng số con kiểu 18.1/18.2
   // — xem buildChecklistNumbers. Dùng chung một hàm với CaseDetail/CaseSummary/AdminCaseDetail
   // để bốn chỗ không bao giờ hiện hai số khác nhau cho cùng một mục.
@@ -61,10 +81,59 @@ export function ChecklistSection<T extends ChecklistItemStatusDTO>({ items, nhan
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold text-neutral-800">
-                        <span className="text-neutral-400">{numberById.get(s.item.id)}</span>{" "}
-                        {s.item.nameVi}
-                      </span>
+                      {dangSua === s.item.id ? (
+                        <form
+                          className="flex flex-wrap items-center gap-1.5"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            luu(s.item.id);
+                          }}
+                        >
+                          <span className="text-sm font-semibold text-neutral-400">{numberById.get(s.item.id)}</span>
+                          <input
+                            autoFocus
+                            value={nhap}
+                            onChange={(e) => setNhap(e.target.value)}
+                            onKeyDown={(e) => e.key === "Escape" && setDangSua(null)}
+                            maxLength={120}
+                            placeholder="Tên giấy tờ, vd Giấy khai sinh con 3"
+                            className="w-72 rounded-lg border border-indigo-300 px-2 py-1 text-sm"
+                            aria-label="Tên giấy tờ"
+                          />
+                          <button
+                            type="submit"
+                            disabled={dangLuu}
+                            className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                          >
+                            {dangLuu ? "Đang lưu..." : "Lưu"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDangSua(null)}
+                            className="rounded-lg px-2 py-1 text-xs font-semibold text-neutral-600 hover:bg-neutral-100"
+                          >
+                            Huỷ
+                          </button>
+                        </form>
+                      ) : (
+                        <span className="text-sm font-semibold text-neutral-800">
+                          <span className="text-neutral-400">{numberById.get(s.item.id)}</span>{" "}
+                          {s.item.nameVi}
+                          {doiTen && laOGiayToKhac(s.item.id) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNhap(/^Giấy tờ khác \d+ \(nếu có\)$/.test(s.item.nameVi) ? "" : s.item.nameVi);
+                                setDangSua(s.item.id);
+                              }}
+                              title="Đổi tên ô này cho hồ sơ (để trống = về tên mặc định)"
+                              className="ml-1.5 rounded-md px-1.5 py-0.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
+                            >
+                              ✏️ Sửa tên
+                            </button>
+                          )}
+                        </span>
+                      )}
                       {s.item.isOptional && (
                         <span className="text-[11px] font-medium bg-neutral-100 text-neutral-500 px-2 py-0.5 rounded-full">
                           Tuỳ chọn

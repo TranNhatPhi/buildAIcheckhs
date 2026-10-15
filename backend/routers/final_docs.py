@@ -33,6 +33,8 @@ from sqlalchemy.orm import Session
 import activity
 import storage
 import tach_file
+import ten_giay_to_khac
+import ten_tieng_anh
 from completeness import compute_checklist_summary
 from db import get_db
 from models import Case, ChecklistItem, FinalDocument, new_id, now_utc
@@ -78,6 +80,21 @@ def _so_muc(db: Session, case: Case) -> dict[str, str]:
         list(db.scalars(select(ChecklistItem)).all()), case.maritalStatus, case.numberOfChildren, case.skillLevel
     )
     return {m.item.id: m.so for m in muc}
+
+
+def ten_tieng_anh_cho(db: Session, case: Case, ds: list[tuple]) -> list[str]:
+    """Tên file TIẾNG ANH KHÔNG DẤU (ten_tieng_anh.py) cho các file sắp đưa vào hồ sơ hoàn thành.
+    `ds` = [(id mục hoặc None, tên file gốc)] theo đúng thứ tự; trùng tên trong lượt -> " (2)"."""
+    so = _so_muc(db, case)
+    items = {i.id: i for i in db.scalars(select(ChecklistItem)).all()}
+    rieng = ten_giay_to_khac.doc_ten(case)
+    ra = []
+    for item_id, ten_goc in ds:
+        it = items.get(item_id or "")
+        duoi = os.path.splitext(ten_goc or "")[1] or ".pdf"
+        ra.append(ten_tieng_anh.ten_file(so.get(item_id or ""), case.clientName, it.nameVi if it else None, duoi,
+                                         rieng.get(item_id or ""), ten_goc))
+    return ten_tieng_anh.danh_so_trung(ra)
 
 
 def _checklist(items: list, case: Case):
@@ -143,7 +160,7 @@ def chi_tiet(case_id: str, db: Session = Depends(get_db)):
     case = _ho_so(db, case_id)
     so = _so_muc(db, case)
     items = list(db.scalars(select(ChecklistItem)).all())
-    ten_muc = {i.id: i.nameVi for i in items}
+    ten_muc = {i.id: i.nameVi for i in items} | ten_giay_to_khac.doc_ten(case)
     files = [{
         "id": f.id, "fileName": f.fileName, "itemId": f.checklistItemId,
         "number": so.get(f.checklistItemId or ""), "itemName": ten_muc.get(f.checklistItemId or ""),
@@ -158,7 +175,8 @@ def chi_tiet(case_id: str, db: Session = Depends(get_db)):
         theo_muc.setdefault(f.checklistItemId or "", []).append({"id": f.id, "fileName": ten_file[f.id]})
     return {
         "checklist": [{
-            "item": _item_dto(s.item), "requiredCount": s.required_count, "fulfilledCount": s.fulfilled_count,
+            "item": {**_item_dto(s.item), "nameVi": ten_muc.get(s.item.id, s.item.nameVi)},
+            "requiredCount": s.required_count, "fulfilledCount": s.fulfilled_count,
             "complete": s.complete, "matchedDocuments": [], "files": theo_muc.get(s.item.id, []),
         } for s in tt.items],
         "progress": {"done": xong, "total": tong, "percent": round(100 * xong / tong) if tong else 100},
@@ -228,10 +246,14 @@ def chep_tieng_anh(case_id: str, db: Session = Depends(get_db)):
     if not tai_lieu:
         raise HTTPException(status_code=404, detail="Hồ sơ không có file tiếng Anh (không cần dịch) nào để chép.")
     them = thay = 0
-    for d in sorted(tai_lieu, key=lambda d: d.uploadedAt or now_utc()):
+    # Thứ tự CỐ ĐỊNH (giờ upload, rồi tên) để chép lại lần sau ra đúng cùng tên -> thay đúng bản cũ.
+    tai_lieu.sort(key=lambda d: (d.uploadedAt or now_utc(), d.originalFilename))
+    # Tên file TIẾNG ANH, KHÔNG DẤU (Docs yêu cầu 14/10/2026) — không giữ tên file gốc nhân viên đặt.
+    ten_moi = ten_tieng_anh_cho(db, case, [(d.matchedChecklistItemId, d.originalFilename) for d in tai_lieu])
+    for d, ten in zip(tai_lieu, ten_moi):
         noi_dung = storage.get_document_bytes(d.storedPath)
         so_trang = d.pageCount or (1 if (d.mimeType or "").startswith("image/") else None)
-        _, da_thay = luu_file(db, case, d.originalFilename, noi_dung, d.matchedChecklistItemId, so_trang,
+        _, da_thay = luu_file(db, case, ten, noi_dung, d.matchedChecklistItemId, so_trang,
                               d.mimeType or "application/octet-stream")
         thay += da_thay
         them += not da_thay

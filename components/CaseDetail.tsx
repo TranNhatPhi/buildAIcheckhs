@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { nhanMucDichDi } from "@/lib/mucDichDi";
 import { useRouter } from "next/navigation";
 import { ResubmitBadge } from "@/components/ResubmitBadge";
 import { tomTatDonVi } from "@/components/ExperienceUnitsField";
@@ -604,6 +605,7 @@ export function CaseDetail({ caseId, initialData }: Props) {
           {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
           {" · "}
           {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
+          {` · ${nhanMucDichDi(c.travelPurpose)}`}
           {c.occupation ? ` · ${c.occupation}` : ""}
           {formatExperience(c.experienceMonths) ? ` · ${formatExperience(c.experienceMonths)}` : ""}
           {" · Hoàn thành "}
@@ -820,7 +822,7 @@ export function CaseDetail({ caseId, initialData }: Props) {
 
       {/* Đặt TRƯỚC mọi thứ khác trong phần thân: giấy tờ đã quá hạn làm hồ sơ trông đủ mà
           thực chất không dùng được — nhân viên phải thấy trước khi kịp nghĩ hồ sơ đã xong. */}
-      <DocChecksPanel checks={data.docChecks} onChanged={refetch} />
+      <DocChecksPanel caseId={caseId} checks={data.docChecks} onChanged={refetch} />
 
       <GeneralNotesBanner />
 
@@ -913,7 +915,22 @@ export function CaseDetail({ caseId, initialData }: Props) {
 
       <div>
         <h2 className="text-lg font-bold text-neutral-800 mb-3">Checklist</h2>
-        <ChecklistSection items={checklist.items} />
+        <ChecklistSection
+          items={checklist.items}
+          doiTen={async (itemId, ten) => {
+            const r = await fetch(`${API_URL}/cases/${caseId}/other-doc-names`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ itemId, name: ten }),
+            }).catch(() => null);
+            if (!r || !r.ok) {
+              const kq = r ? await r.json().catch(() => null) : null;
+              alert(typeof kq?.detail === "string" ? kq.detail : "Không đổi được tên — thử lại sau.");
+              return;
+            }
+            refetch();
+          }}
+        />
       </div>
     </main>
   );

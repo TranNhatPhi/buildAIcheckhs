@@ -54,7 +54,8 @@ ADMIN_STATUSES = ("READY_TO_SUBMIT", "SUBMITTED", "APPROVED", "REJECTED", "LIQUI
 # "Nộp lại lần N" không phải trạng thái lưu trong DB mà là một THAO TÁC (POST /cases/{id}/resubmit):
 # xoá hết file, tăng lần nộp, đưa hồ sơ về "Chờ tiếp nhận". Chỉ cho hồ sơ đã thật sự nộp đi mà
 # chưa đậu — "Sẵn sàng nộp" chưa nộp thì không có gì để nộp lại, "Được chấp thuận" là xong rồi.
-RESUBMIT_FROM_STATUSES = ("SUBMITTED", "REJECTED")
+# Từ 15/10/2026 (Docs yêu cầu) CHỈ sau khi RỚT: "CP đang xử lý" -> Đậu / Rớt; Rớt -> Thanh lý / Nộp lại.
+RESUBMIT_FROM_STATUSES = ("REJECTED",)
 # Chỉ được nộp lại MỘT lần: lần 2 là lần cuối, không có lần nộp thứ 3 (quy định văn phòng).
 MAX_SUBMISSION_ROUND = 2
 
@@ -79,6 +80,17 @@ def ly_do_khong_chuyen_duoc(den: str, hien_tai: str, tien_do: int, la_admin: boo
     """
     if den == hien_tai:
         return None
+    # Từ lúc admin xác nhận hồ sơ "Sẵn sàng nộp", bước nghiệp vụ kế tiếp bắt buộc là
+    # nộp cho Chính phủ. Không cho nhảy thẳng tới kết quả hoặc trả ngược về "Hoàn thành":
+    # các đường đó làm mất mốc SUBMITTED dùng để ghi ngày nộp và gửi email thông báo.
+    if hien_tai == "READY_TO_SUBMIT" and den != "SUBMITTED":
+        return "Hồ sơ 'Sẵn sàng nộp' chỉ được chuyển sang 'CP đang xử lý'."
+    # Luồng kết quả (15/10/2026, Docs yêu cầu): CP đang xử lý -> Đậu hoặc Rớt; Rớt -> Thanh lý (hoặc thao tác
+    # "Nộp lại", xem RESUBMIT_FROM_STATUSES). Không trả ngược, không nhảy cóc.
+    if hien_tai == "SUBMITTED" and den not in ("APPROVED", "REJECTED"):
+        return "Hồ sơ 'CP đang xử lý' chỉ được chuyển sang 'Được chấp thuận' (đậu) hoặc 'Không thành công' (rớt)."
+    if hien_tai == "REJECTED" and den != "LIQUIDATED":
+        return "Hồ sơ 'Không thành công' chỉ được chuyển sang 'Thanh lý hồ sơ' — hoặc chọn 'Nộp lại'."
     if not la_admin:
         if hien_tai in ADMIN_STATUSES:
             return "Hồ sơ đã chuyển cho admin — từ 'Sẵn sàng nộp' trở đi do admin cập nhật ở trang quản trị."

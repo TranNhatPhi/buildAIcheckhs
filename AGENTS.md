@@ -231,7 +231,34 @@ Logic `backend/tach_file.py`, API `routers/split_tool.py`, giao diện `componen
   X-File-Name, cùng hàm đặt tên với ZIP) rồi upload qua ĐÚNG `POST /cases/{id}/documents` — chống trùng,
   OCR, xếp mục theo tên file, ghi lịch sử như upload tay. File trùng tên file đã có trong hồ sơ sẽ THAY
   bản cũ (quy tắc upload sẵn có) — giao diện đánh dấu trước "Trùng tên — sẽ thay bản cũ".
-- Đồng bộ trong request (có thể vài phút). File tạm `tach-file/<job>/` xoá sau 24 giờ
+- F5 KHÔNG MẤT VIỆC (14/10/2026, cả 2 trang tách): `lib/luuTam.ts` — file đã chọn ở IndexedDB (Blob, file scan
+  vài chục MB không vừa localStorage), hồ sơ đã chọn + bảng kết quả (jobId, đoạn, đã duyệt) ở localStorage, khoá
+  riêng mỗi trang ("tach-file:*" / "tach-ban-dich:*"). Bảng kết quả chỉ khôi phục khi lượt còn trên máy chủ (thử
+  GET trang 1); "Tách file khác" / "Bỏ hết" xoá. Thử bằng Playwright thật: chọn file + hồ sơ, tách, duyệt -> F5
+  đều còn. Mọi thao tác lưu nuốt lỗi (ẩn danh / chặn lưu trữ thì chỉ là không nhớ).
+- CHẠY NỀN (14/10/2026): `POST /split-tool` chỉ kiểm tra + lưu source.pdf/meta.json rồi trả NGAY 202 `jobId`;
+  đọc chữ + DeepSeek chạy sau (`BackgroundTasks` -> `_chay_tach`) và ghi `result.json` lên MinIO (backend nào
+  trả lời cũng được). Giao diện hỏi `GET /{job}/result` mỗi 3 giây (202 đang chạy / 200 xong / 400 hỏng / 410 quá
+  30 phút = gián đoạn), nhớ lượt ở localStorage `<trang>:dangTach` -> F5 / tắt trang rồi mở lại vẫn chờ tiếp đúng
+  lượt. Nút "⏹ Dừng tách file" -> `POST /{job}/cancel` ghi cancel.json; `_chay_tach` kiểm tra trước đọc chữ và
+  trước DeepSeek (bước đọc chữ đang dở thì chạy nốt). Đo thật (Playwright): F5 giữa chừng -> vẫn ra 9 trang → 3
+  file; Dừng -> backend log "nhân viên bấm Dừng", không gọi DeepSeek.
+- NHIỀU FILE (14/10/2026): `RoUpload` CỘNG DỒN — chọn / thả thêm lần nữa là thêm vào danh sách (trùng tên +
+  dung lượng + ngày sửa thì bỏ qua), có nút "+ Thêm file", hiện tổng MB và chặn > 80MB trước khi gửi. Backend vẫn
+  gói nhiều file thành một ZIP và ghép theo thứ tự tên file.
+- Sửa 14/10/2026 theo file bản dịch Trần Văn Hùng 32 trang (GKS bị cắt sang "CMND"):
+  (1) `lop_chu_dung_duoc` loại thêm lớp chữ RÁC "trông như chữ": ký tự lạ `* $ & # { } + €…` ≥1,5% hoặc từ lẫn
+  chữ-số kiểu "Nguy6n"/"cu6c" ≥5% (đo: trang tốt ≤0,7% / ≤3,1%) -> OCR đọc lại từ ảnh. Bộ Word sạch Hồ Sỹ Trọng
+  vẫn 34/34 trang dùng lớp chữ. (2) `loai_trang` nhận trang lời chứng TRƯỚC tỉ lệ dấu, trên chữ đã bỏ dấu + cụm
+  tiếng Anh "Certification of Translator" (lời chứng hỏng mã hoá dấu bị tưởng là trang dịch). (3) Giấy KHÔNG CẦN
+  DỊCH nằm nguyên bản gốc giữa các bộ (CCCD, sổ tiết kiệm…): AI được thấy ĐỦ mục (ghi `[không cần dịch]`, trước
+  đây bị lọc bỏ nên CCCD bị ép vào "CMND cũ"), `theo_cau_truc(…, khong_dich)` giữ chỗ cắt quanh đoạn AI gán mục
+  không cần dịch. (4) OCR `_cuu_trang_trong` (ocr.py): trang < 150 ký tự sau 5 biến thể -> thử median / thu nhỏ
+  ~200 DPI (bản sao GKS nền chấm: 20 -> 1000+ ký tự). Kết quả: file 32 trang đúng 11/11 bộ; bộ 49 trang cũ vẫn 9/9.
+- DeepSeek chia trang: `max_tokens` tính CẢ phần model nghĩ — 16.000 từng bị nghĩ hết -> nội dung RỖNG ("AI trả
+  về nội dung không đúng định dạng", file 32 trang, 14/10/2026). Giờ `TOKEN_CHIA_TOI_DA = 64000` + thử lại 1 lần
+  khi rỗng / finish=length. Nút "🔄 Tách lại" ở đầu bảng kết quả: bỏ kết quả, tách lại ngay đúng file + hồ sơ.
+- File tạm `tach-file/<job>/` xoá sau 24 giờ
   (`case_cleanup.don_tach_file`). Lịch sử: SPLIT_FILE / SPLIT_ZIP.
 
 ## Trang "Tách hồ sơ dịch thuật PDF / Excel" (`/tach-ban-dich`, 13/10/2026)
@@ -263,8 +290,19 @@ NGUỒN THỨ HAI (13/10/2026): nút "📋 Chép hồ sơ tiếng Anh sang hồ 
 `needsTranslation = False` — hồ sơ thô KHÔNG đổi gì. Giữ nguyên định dạng (ảnh thẻ vẫn .jpg — cột
 `FinalDocument.mimeType`, key MinIO theo đuôi file gốc; mọi chỗ đọc file dùng `storedPath`). Trùng tên ->
 thay, nên bấm lại không nhân đôi. Lịch sử FINAL_COPY.
+TÊN FILE TIẾNG ANH, KHÔNG DẤU (14/10/2026): mọi file đưa vào hồ sơ hoàn thành (chép tiếng Anh + bản dịch đã duyệt)
+đặt lại tên `"<số mục>. <Họ tên không dấu> - <tên giấy tiếng Anh>"` — `ten_tieng_anh.py`, theo ĐÚNG quy ước bộ
+mẫu `docs/test` ("Birth certificate", "Criminal record certificate No2", "Certificate of employment", "Letter of
+re-offer", "Saving book"...; bảng TEN_TIENG_ANH, thêm mục mới vào seed thì thêm vào đây). Tên file gốc đúng dạng
+"<số>. <Họ tên> - <loại>" thì GIỮ họ tên trong đó (CCCD bố ghi tên bố) + loại chung ("ID Card"); không có họ tên
+(bản dịch tách ra, "0. Phiếu thông tin - gửi lại") thì tên khách + loại cụ thể ("Father's ID Card"). Ô "Giấy tờ
+khác" đặt tên riêng -> DeepSeek dịch (max_tokens 1000: model nghĩ trước, 40 token ra RỖNG), lỗi thì bỏ dấu.
+Bản dịch KHÔNG còn đuôi " - translated" (giống bộ mẫu). Trang tách bản dịch báo "Mục đã có file" theo MỤC.
 
-Trang tổng quan admin ĐÃ BỎ biểu đồ "Tiến độ hồ sơ (% hoàn thành)" và "Nhãn hồ sơ" (admin yêu cầu
+Trang tổng quan admin — 11 thẻ theo thứ tự (14/10/2026): Tổng hồ sơ, Số nguồn, Chờ tiếp nhận, Đang thu thập giấy tờ,
+Hoàn thành, Đã sẵn sàng nộp, CP đang xử lý, Nộp lần 2, Đậu, Rớt, Thanh lý (bộ lọc mới choTiepNhan / dangThuThap). ĐÃ BỎ
+thẻ "7 ngày chưa cập nhật", "Chưa có kết quả", và "Hồ sơ đã nộp", "Cần review" và "Ngày lăn tay" (14/10/2026 — bộ lọc daNop / canReview / lanTay vẫn ở trang
+Thống kê, cột Ngày lăn tay vẫn ở bảng). Cũng ĐÃ BỎ biểu đồ "Tiến độ hồ sơ (% hoàn thành)" và "Nhãn hồ sơ" (admin yêu cầu
 13/10/2026) — còn "Hồ sơ theo nguồn" và "Hồ sơ theo trạng thái". API vẫn trả `casesByTag`.
 - CẤU TRÚC MỘT BỘ (Docs 13/10/2026): trang DỊCH (tiếng Anh) → trang CÔNG CHỨNG ("Tôi, … cam đoan đã
   dịch chính xác…") → BẢN GỐC tiếng Việt; LLTP số 2 và phiếu lương KHÔNG cần trang công chứng
@@ -274,12 +312,19 @@ Trang tổng quan admin ĐÃ BỎ biểu đồ "Tiến độ hồ sơ (% hoàn t
   cắt ở trang dịch đứng sau công chứng/gốc, BỎ chỗ cắt ở trang công chứng/gốc. Chỉ áp khi file bắt đầu bằng
   trang dịch VÀ có trang công chứng/gốc (`co_cau_truc`) — bộ chỉ toàn bản dịch Word thì để AI chia. AI lỗi vẫn
   chia theo cấu trúc (chỉ thiếu mục). Giao diện KHÔNG hiện thành phần Dịch / Công chứng / Bản gốc và
-  KHÔNG có nút "Tách trang đầu" / "Gộp với file dưới" (Docs bỏ 13/10/2026 — sửa bằng ô trang từ–đến);
+  CÓ nút "Tách trang đầu" / "Gộp với file dưới" (bỏ 13/10, Docs bật lại 14/10/2026);
   API vẫn trả pageKinds / structured nếu sau này cần. Đo 9 bộ thật của Phan Huy Di Đan (`docs/test`, gộp
   1 PDF 49 trang scan, OCR ~100 giây): loại trang 49/49, ranh giới + mục 9/9.
 - Lịch sử SPLIT_FILE / SPLIT_ZIP có tiền tố "[Bản dịch]".
 - Đo thật với bộ bản dịch Hồ Sỹ Trọng (13 file Word gộp thành 1 PDF 34 trang, không gợi ý tên file):
   13/13 ranh giới + mục đúng, ~6 giây (bản dịch có lớp chữ, không phải OCR).
+
+## Thanh bên trang Docs — 2 nhóm cha (15/10/2026)
+
+`components/Sidebar.tsx` mảng `NHOM`: **Hồ sơ thô** (Danh sách, Tạo mới, Tách file PDF/Word gốc, Mẫu HĐLĐ, Mẫu XNKN,
+Mẫu lương; `them: ["/cases/"]` để trang một hồ sơ thuộc nhóm này) và **Hồ sơ hoàn thành** (Danh sách, Tách HS dịch,
+Kiểm tra dịch thuật, Điền IMM5645e, Điền IMM1295e, Mẫu CV). Bấm tiêu đề nhóm để thu gọn / mở; nhớ ở localStorage "sidebar:thuGon";
+trước hydrate luôn mở (tránh lệch HTML). Nhóm chứa trang đang mở tô tím. Thêm trang mới -> thêm vào đúng nhóm.
 
 ## Mục "0. Phiếu TT khách hàng" (13/10/2026)
 
@@ -290,6 +335,100 @@ lùi về "Đang thu thập"), không cần dịch. Số "0" nhờ numberGroup �
 sau, nên file cũ "1. … - Passport" vẫn trỏ đúng. Tên file "0. <Họ tên> - Phiếu TT khách hàng" tự vào mục
 (loại `phieu_tt_kh` trong `_KINDS`). 4 file `docs/CHECKLIST - *.md` đã thêm dòng 0.
 
+## "Mục đích đi" của hồ sơ (14/10/2026)
+
+`Case.travelPurpose` = "WORK" (Làm việc, mặc định — mọi hồ sơ cũ) | "TRAVEL" (Du lịch). Chọn ở form tạo hồ sơ +
+form "Sửa" (cạnh Số con, `lib/mucDichDi.ts`), hiện trên thẻ danh sách và đầu trang hồ sơ. CHỈ là thông tin —
+KHÔNG đổi checklist / % / trạng thái. Lịch sử sửa ghi "mục đích đi".
+**Thêm trường cho hồ sơ phải sửa ĐỦ các chỗ dựng DTO** (đã sót 2 lần khi làm trường này): `cases.py` (tạo,
+danh sách `c.`, chi tiết `"…": case.`, sửa, các `occupation=case.occupation`) và `admin.py` (danh sách admin).
+
+## Upload file Word / Excel vào hồ sơ (14/10/2026)
+
+Trước đây `ocr.extract_text` coi mọi thứ không phải PDF là ẢNH -> "0. Phiếu thông tin.docx" lỗi "Không nhận dạng
+được định dạng ảnh". Giờ `DUOI_VAN_PHONG` (.doc/.docx/.odt/.rtf/.xls/.xlsx/.ods) chuyển sang PDF bằng LibreOffice
+(`contract_preview.word_sang_pdf`) rồi đi đường PDF: lưu ảnh từng trang (`ocr.co_anh_trang`, cả upload lẫn "Phân
+tích lại"), số trang thật, chữ lấy THẲNG từ file (≥20 ký tự/trang; ít hơn = file chỉ dán ảnh scan -> OCR như PDF).
+File gốc giữ nguyên định dạng. Ô chọn file của UploadDropzone nhận thêm .doc/.docx/.xls/.xlsx.
+
+## Tab "Điền form IMM5645e" (`/dien-form-imm5645`, 14/10/2026)
+
+Family Information (IMM 5645E) từ giấy tờ hồ sơ, theo quy tắc `imm5645/yc.txt`. `backend/imm5645.py` +
+`routers/imm5645.py` + `components/DienFormImm5645.tsx`; mẫu PDF `backend/mau_form/imm5645e.pdf`.
+- Gom chữ (manualCorrectedText > correctedText > ocrText) các file thuộc mục có tên Phiếu TT / cư trú / CT07 /
+  căn cước / CMND / khai sinh / kết hôn / ly hôn (phiếu tối đa 14k ký tự, giấy khác 3k) -> DeepSeek (max_tokens 64k,
+  thử lại khi rỗng) -> JSON: applicant / spouse / mother / father / children (≤4) / siblings (≤7) + `canhBao` (mâu
+  thuẫn giữa các giấy) + `nguon` từng người. Địa chỉ ① CT07 ② CCCD, KHÔNG lấy từ phiếu; nghề nghiệp đương đơn để trống;
+  con từ GKS; anh chị em từ phiếu; tên VIẾT HOA không dấu; địa chỉ tiếng Anh. Loại hồ sơ = Worker / Visitor theo
+  `travelPurpose`. Ô "đi cùng sang Canada" để trống cho nhân viên chọn.
+- Lưu `Case.imm5645Data` (JSON, MEDIUMTEXT) — nhân viên sửa trên bảng rồi Lưu; "Tải PDF" tự lưu trước.
+- PDF là form LAI AcroForm + XFA: `dien_pdf` điền CẢ widget PyMuPDF LẪN XFA datasets (Adobe vẽ theo XFA). Tình trạng
+  hôn nhân: XFA lưu mã "1".."8", widget hiện chữ. Đo thật hồ sơ Lê Thị Hạnh (9 giấy): 28 giây, đủ 4 người + 1 con + 2
+  anh chị em, 7 cảnh báo đúng (tên mẹ GKS khác CCCD, xã CT07 sau sáp nhập khác giấy cũ...).
+- THEO FILE MẪU DOCS (`imm5645/2.1 file so khop.pdf` — Hồ Sỹ Hội, bản ảnh đã nộp, 14/10/2026): họ tên Chữ Hoa Đầu Từ
+  không dấu; địa chỉ KHÔNG thêm ", Vietnam"; tình trạng "Single"/"Married" (Married không có mã XFA -> lưu nguyên
+  chữ); CÓ nghề nghiệp đương đơn (khác yc.txt — làm theo file đã nộp); anh chị em "Older/Younger brother/sister" do
+  CODE tính từ giới tính + ngày sinh so đương đơn (`_quan_he_anh_chi_em`); người thân mặc định NO; ngày ký = hôm nay,
+  NOTE 1/NOTE 2 chỉ ghi ngày khi đúng là không có vợ/chồng / con. Anh chị em thêm người là con của bố/mẹ trong hộ
+  CT07 mà PTTKH sót; địa chỉ con / anh chị em cùng nơi -> địa chỉ CT07 (tên xã mới sau sáp nhập).
+- MODEL: bước đọc dùng `deepseek-v4-pro` (`imm5645.MODEL_AI`, đổi qua env IMM5645_DEEPSEEK_MODEL) — Docs yêu cầu 14/10/2026; mọi chỗ khác vẫn `DEEPSEEK_MODEL` (flash). Pro chậm hơn: Hồ Sỹ Hội 98 giây (flash 17 giây), kết quả tương đương.
+- FONT: widget ép `text_font="Cour"` (PyMuPDF không có Courier New -> trước vẽ Helvetica), giữ cỡ form (8 / 6,1pt).
+- LỌC `kiem_tra` (chạy mỗi lần đọc / lưu / xem / tải): TỰ SỬA nghề nghiệp là ngày/số (lỗi có thật trong file mẫu đã
+  nộp: "Ho Sy Giao" occupation "2004-09-17"), bỏ anh chị em trùng đương đơn / trùng nhau; BÁO thiếu tên / ngày sinh /
+  tình trạng / địa chỉ / đi cùng, ngày sai dạng / không có thật, bố mẹ hơn < 13 tuổi, Single mà có vợ/chồng... Giao
+  diện hiện khung đỏ "Kiểm tra tự động". Hồ Sỹ Hội sau sửa: khớp file mẫu, bắt đúng "Ho Sy Truyen thiếu tình trạng".
+
+## Tab "Điền form IMM1295e" (`/dien-form-imm1295`, 15/10/2026)
+
+Application for Work Permit Made Outside of Canada (IMM 1295E) — làm giống IMM5645. `backend/imm1295.py` +
+`routers/imm1295.py` + `components/DienFormImm1295.tsx`; mẫu `backend/mau_form/imm1295e.pdf` (bản gốc `imm1295e/`).
+- Giấy tờ: mục Phiếu TT / Passport / căn cước (bỏ CCCD bố mẹ) / CMND / CT07 / kết hôn / ly hôn / bằng (bỏ bảng điểm,
+  học bạ) / CV / XNKN / HĐLĐ / chứng chỉ tiếng Anh / GKS. Model `MODEL_AI` = env IMM1295_DEEPSEEK_MODEL, mặc định như
+  IMM5645 (deepseek-v4-pro). Hồ Sỹ Hội (10 giấy): 89 giây.
+- Dữ liệu PHẲNG (`familyName`, `passportIssue`, `bgRefused`...) + `previousCOR` (≤2) + `occupations` (≤3, mới nhất
+  trước). Họ tên theo hộ chiếu, Chữ Hoa Đầu Từ; địa chỉ ① CT07 ② CCCD tách streetName / cityTown / district; số điện
+  thoại lưu KHÔNG số 0 đầu, PDF tick "Other" + mã nước 84. Phần việc làm ở Canada (nhà tuyển dụng, LMIA...) AI để
+  trống — nhân viên nhập. Loại giấy phép mặc định ELMO (giá trị sẵn trong file mẫu).
+- PDF là XFA THUẦN (không có widget, trình duyệt chỉ hiện "Please wait...") -> `dien_pdf` chỉ sửa XFA datasets dưới
+  `form1`; ô danh sách lưu MÃ LOVFile đọc từ chính PDF (`_lov`, `quoc_gia()`: Vietnam 270, Japan 207, Korea South
+  258...); ô ngày điền kèm ô ẩn YYYY/MM/DD. File gốc có chữ ký chứng thực DocMDP + UR3 -> gỡ `/Perms`, `/V` ô chữ ký,
+  `SigFlags` (không gỡ thì Adobe báo tài liệu bị sửa sau chứng thực). API tải PDF là `attachment`; nhân viên mở bằng
+  Adobe Reader rồi bấm Validate trong form để tạo mã vạch.
+- `kiem_tra`: thiếu ô bắt buộc, ngày sai dạng / không có thật, hộ chiếu hết hạn / hết hạn trước ngày cấp, CCCD không
+  12 số, email / SĐT sai, kết hôn thiếu tên vợ chồng, câu lý lịch "Có" thiếu chi tiết, quá độ dài ô (maxChars của
+  template, `DO_DAI`), quốc gia không có trong danh sách form, nam giới nhắc hỏi nghĩa vụ quân sự (câu 4), phần việc
+  làm ở Canada chưa nhập. Nghề nghiệp là ngày/số -> tự xoá.
+- GIAO DIỆN theo ĐÚNG thứ tự + số câu của form (Docs yêu cầu 15/10/2026): mảng `PHAN` -> `Cau` {so, ten, o[]}
+  — đầu form (1 UCI, 2 Service in), Personal details 1-11, Languages, Passport 1-4, National ID 1-5, US PR card,
+  Contact 1/2/3/6, Intended work 1-6, Education, Employment, Background 1-6; mỗi câu một khối có số câu, ô trái -> phải
+  như trên form. Câu cố định (9A, US PR card, địa chỉ cư trú = nhận thư) hiện chữ `ghi`. Thêm ô `serviceIn`.
+
+## "Thông tin lệch nhau giữa các giấy tờ" — nút ✓ Đã check (15/10/2026)
+
+`components/DocChecksPanel.tsx`: mỗi mục lệch có nút "✓ Đã check" -> ẩn ngay, POST `/cases/{id}/conflicts/checked`
+{key}. Lưu `Case.conflictsChecked` (JSON list khoá). Khoá = `doc_checks.khoa_bat_nhat` = owner + trường + CÁC GIÁ TRỊ
+đang lệch -> upload / sửa file làm giá trị đổi thì mục tự hiện lại. Chi tiết hồ sơ lọc bằng `bo_da_kiem_tra`; lúc lưu
+chỉ giữ khoá của điểm lệch còn tồn tại. Ghi nhật ký CONFLICT_CHECKED.
+
+## DeepSeek: max_tokens gồm cả phần "nghĩ"
+
+Model `DEEPSEEK_MODEL` (deepseek-v4-flash) NGHĨ trước khi trả lời và phần nghĩ ăn vào `max_tokens`. Đặt thấp là
+nội dung trả về RỖNG với finish_reason="length" (ten_tieng_anh: 40 token -> rỗng; tách file 32 trang: 16.000 ->
+lúc được lúc rỗng). Mọi lệnh gọi DeepSeek mới phải để trần cao và kiểm tra nội dung rỗng.
+
+## Phần cuối "Giấy tờ khác" — 5 ô trống (14/10/2026)
+
+Cả 4 bản giấy kết thúc bằng "GIẤY TỜ KHÁC" 5 dòng trống (LOW độc thân 33-37, LOW kết hôn 37-41, HIGH độc thân
+31-35, HIGH kết hôn đủ 3 con 73-77). `seed._giay_to_khac`: "Giấy tờ khác 1..5 (nếu có)", TUỲ CHỌN (không đổi %),
+section "Giấy tờ khác", order 900+ -> luôn đứng cuối, số mục cũ không đổi và số 5 ô tự khớp bản giấy (đã kiểm
+cả 4 bộ). Tên ô không chứa loại giấy nên file "<số ô>. <Họ tên> - <tên giấy bất kỳ>" vào thẳng ô theo số.
+
+ĐỔI TÊN Ô THEO HỒ SƠ (14/10/2026): nút "✏️ Sửa tên" cạnh ô trong checklist trang hồ sơ thô ->
+`PATCH /cases/{id}/other-doc-names {itemId, name}` (chỉ ô "giay-to-khac-*" cùng skillLevel, tối đa 120 ký tự,
+trống = về tên mặc định). Lưu `Case.otherDocNames` (JSON), KHÔNG sửa ChecklistItem (dùng chung mọi hồ sơ) —
+`ten_giay_to_khac.ap_vao_case_detail` thay tên vào DTO trả ra (checklist + mục khớp của file); hồ sơ hoàn thành
+cũng dùng tên này. Xếp file theo tên file vẫn dùng tên gốc. Lịch sử OTHER_DOC_RENAME.
+
 ## Trang "CP đang xử lý" (`/admin/cpprocessing`, 12/10/2026)
 
 Tab riêng ở sidebar admin (`components/AdminCpProcessing.tsx`). Liệt kê hồ sơ trạng thái SUBMITTED
@@ -298,12 +437,19 @@ Tên KH | Ngày nộp | Ngày lăn tay | KQ.
 - **Ngày nộp** = `Case.submittedDate` (DATE), admin tự chọn — `PATCH /admin/cases/{id}/submitted-date`.
 - **Ngày lăn tay** = CHUNG cột `biometricsDate` với bảng tổng quan. Hai API ngày dùng chung
   `admin._dat_ngay` (lịch sử SUBMIT_DATE_SET / BIOMETRICS_SET).
-- **KQ** (hỏi xác nhận) gọi đúng API sẵn có: Đậu -> PATCH trạng thái APPROVED, Rớt -> REJECTED,
-  Nộp lại -> `POST /cases/{id}/resubmit` (xoá file, về Chờ tiếp nhận; khoá nếu đã nộp lần 2). Có KQ
+- **KQ** (hỏi xác nhận) gọi đúng API sẵn có: Đậu -> PATCH trạng thái APPROVED, Rớt -> REJECTED. KHÔNG còn
+  "Nộp lại" ở đây (15/10/2026) — chỉ sau khi Rớt, chọn ở trang chi tiết hồ sơ (cùng Thanh lý). Có KQ
   là hồ sơ rời khỏi danh sách — trang chỉ là danh sách việc đang chờ, không phải lịch sử.
 - **Số cạnh tab** ở sidebar = `GET /admin/sidebar-counts` (1 câu COUNT, KHÔNG dùng /admin/stats vì
   nặng). Sidebar đếm lúc mở trang + khi có `baoSidebarDemLai()` (adminUi.tsx) — gọi hàm này sau MỌI
   thao tác đổi trạng thái ở trang admin, không thì số đứng yên tới lần mở trang sau.
+
+## Admin đổi trạng thái hồ sơ — CHỈ ở trang chi tiết (14/10/2026)
+
+Bảng tổng quan admin chỉ HIỆN NHÃN trạng thái (admin yêu cầu: tránh lỡ tay đổi nhầm trên bảng dài). Ô đổi
+trạng thái + "Nộp lại lần N" = `components/AdminStatusSelect.tsx`, đặt ở trang chi tiết hồ sơ admin
+(`/admin/cases/[id]`, nút "Xem"), đổi xong `router.refresh()` + `baoSidebarDemLai()`. Trang "CP đang xử lý" vẫn
+chọn KQ Đậu / Rớt / Nộp lại như cũ.
 
 ## Cột "Ngày lăn tay" ở bảng hồ sơ trang tổng quan admin (12/10/2026)
 
@@ -325,6 +471,10 @@ Nút tải riêng 2 nhóm (13/10/2026): "⬇ Tải hồ sơ dịch thuật thô 
 cộng lại đúng bằng toàn bộ file; không kèm bản phân tích AI; ghi Theo dõi Docs ZIP_DOWNLOAD.
 
 ## Công tắc "Đã sẵn sàng nộp" (12/10/2026)
+
+ẨN SAU 1 NGÀY (14/10/2026, Docs yêu cầu): danh sách hồ sơ thô (CaseList) ẩn hồ sơ đã bật công tắc quá 24 giờ (tính
+sau hydrate, mốc giờ lấy 1 lần lúc mở trang). GÕ TÌM tên vẫn ra; dòng "Hiển thị N/M" ghi số đã ẩn + nút "Hiện lại".
+Chỉ là ẩn trên giao diện — trang admin, thống kê, chuông không đổi.
 
 Trên THẺ hồ sơ ở danh sách Docs (cạnh nút "Hoàn tất"): `POST/DELETE /cases/{id}/ready-to-submit`,
 lưu `Case.readyToSubmitAt` + `readyToSubmitBy`. CHỈ bật/tắt BẰNG TAY — bấm Hoàn tất KHÔNG tự bật,
@@ -364,6 +514,15 @@ chỉ để làm mờ lựa chọn trên các ô chọn trạng thái — sửa 
 - **Nhân viên** chỉ đổi trong phần của mình và chỉ khi hồ sơ CÒN ở đó; hồ sơ đã sang phần admin
   thì ô trạng thái bị khoá.
 - **Admin**: cửa vào duy nhất là Hoàn thành → **Sẵn sàng nộp** (không nhảy thẳng "CP đang xử lý").
+- **Sẵn sàng nộp → CHỈ "CP đang xử lý"** (15/10/2026, Docs yêu cầu): không trả về Hoàn thành, không nhảy thẳng tới
+  kết quả, không "Nộp lại" — chặn ở `ly_do_khong_chuyen_duoc` (backend, 400) + `statusChangeBlockedReason` /
+  `statusOptionsFor` (các lựa chọn khác hiện mờ, không chọn được). Lý do: mất mốc SUBMITTED dùng ghi ngày nộp
+  + gửi email. LƯU Ý lịch sử: quy tắc này nằm trong mã nguồn từ 17:40 14/10 nhưng chưa build — phải build + deploy
+  thì mới có hiệu lực (đã deploy 15/10).
+- **Luồng kết quả** (15/10/2026, Docs yêu cầu): **CP đang xử lý → Đậu hoặc Rớt** (không lùi, không Thanh lý / Nộp lại
+  thẳng); **Rớt → Thanh lý hoặc Nộp lại** (`RESUBMIT_FROM_STATUSES = ("REJECTED",)` — trước là SUBMITTED + REJECTED);
+  Thanh lý → Rớt vẫn được (gỡ thao tác). Chặn ở backend + bản sao giao diện; ô chọn HIỆN ĐỦ mọi trạng thái, bước không hợp lệ bị bôi mờ kèm lý do (Docs yêu cầu 15/10 — không ẩn). Thử
+  13/13 trên hồ sơ tạm (SUBMITTED đặt bằng SQL để không gửi email).
   Admin được **trả về "Hoàn thành"** hồ sơ đã ở phần admin — lối thoát khi nhận nhầm, không có thì
   hồ sơ kẹt vì không bên nào đổi được. Admin không tự đánh dấu Hoàn thành cho hồ sơ còn ở phần NV.
 - Nhận diện admin: `admin_auth.is_admin` — header `X-Admin-Password` đúng thì là admin, thiếu/SAI
@@ -558,7 +717,7 @@ qua `GET /notifications` (router riêng — đặt dưới /cases thì bị `GET
 chuông ở sidebar Docs (`<ChuongThongBao vaiTro="docs" />`) + banner đỏ trong trang hồ sơ quá hạn
 (CaseDetail hỏi đúng danh sách này, không tự tính lại quy tắc 7 ngày).
 
-## Thư viện mẫu: hợp đồng lao động (`/mau-hop-dong`), thư xác nhận kinh nghiệm (`/mau-xac-nhan-kinh-nghiem`), phiếu lương (`/mau-phieu-luong`)
+## Thư viện mẫu: hợp đồng lao động (`/mau-hop-dong`), thư xác nhận kinh nghiệm (`/mau-xac-nhan-kinh-nghiem`), phiếu lương (`/mau-phieu-luong`), CV (`/mau-cv`, kind CV, Word/PDF — 14/10/2026)
 
 Ba thư viện, MỘT bộ code: cùng bảng `ContractTemplate`, cùng API `routers/contract_templates.py`,
 cùng component `ContractTemplates` / `ContractTemplateDetail` — phân biệt bằng cột `kind`

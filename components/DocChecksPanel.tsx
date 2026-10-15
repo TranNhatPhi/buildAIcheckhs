@@ -5,6 +5,7 @@ import type { DocChecksDTO, DocExpiryDTO } from "@/lib/client-types";
 import { API_URL } from "@/lib/format";
 
 type Props = {
+  caseId: string;
   checks: DocChecksDTO;
   onChanged: () => void;
 };
@@ -134,9 +135,29 @@ function DongHan({ han, onChanged }: { han: DocExpiryDTO; onChanged: () => void 
  * Không có gì để báo thì KHÔNG hiện gì cả: một khung "mọi thứ đều ổn" nằm thường trực chỉ
  * làm nhân viên quen mắt bỏ qua đúng chỗ này, tới lúc có cảnh báo thật cũng không ai nhìn.
  */
-export function DocChecksPanel({ checks, onChanged }: Props) {
+export function DocChecksPanel({ caseId, checks, onChanged }: Props) {
+  // Mục lệch vừa bấm ✓ — ẩn NGAY trên màn hình, không chờ tải lại hồ sơ.
+  const [daCheck, setDaCheck] = useState<string[]>([]);
+  const conLech = checks.conflicts.filter((x) => !daCheck.includes(x.key));
   const coHan = checks.expiries.length > 0;
-  const coBatNhat = checks.conflicts.length > 0;
+  const coBatNhat = conLech.length > 0;
+
+  /** Bấm ✓: nhân viên đã đối chiếu xong mục này -> ẩn (lưu theo hồ sơ, máy khác / F5 cũng ẩn). File đổi làm giá
+   *  trị lệch đổi thì backend coi là mục mới, tự hiện lại. */
+  async function danhDauDaKiemTra(key: string) {
+    setDaCheck((cu) => [...cu, key]);
+    const res = await fetch(`${API_URL}/cases/${caseId}/conflicts/checked`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      setDaCheck((cu) => cu.filter((k) => k !== key));
+      alert("Không lưu được — thử lại.");
+      return;
+    }
+    onChanged();
+  }
   if (!coHan && !coBatNhat) return null;
 
   return (
@@ -175,14 +196,24 @@ export function DocChecksPanel({ checks, onChanged }: Props) {
             Thông tin lệch nhau giữa các giấy tờ
           </h2>
           <ul className="space-y-2">
-            {checks.conflicts.map((x) => (
+            {conLech.map((x) => (
               <li
-                key={`${x.owner}-${x.fieldLabel}`}
+                key={x.key}
                 className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-2.5"
               >
-                <p className="text-sm font-semibold text-neutral-800">
-                  {x.ownerLabel} · {x.fieldLabel}
-                </p>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-semibold text-neutral-800">
+                    {x.ownerLabel} · {x.fieldLabel}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => danhDauDaKiemTra(x.key)}
+                    title="Đã kiểm tra — ẩn mục này"
+                    className="shrink-0 rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition-colors hover:bg-emerald-50"
+                  >
+                    ✓ Đã check
+                  </button>
+                </div>
                 <ul className="mt-1 space-y-0.5">
                   {x.values.map((v) => (
                     <li key={v.filename + v.value} className="text-xs text-neutral-700">
@@ -196,7 +227,8 @@ export function DocChecksPanel({ checks, onChanged }: Props) {
           </ul>
           <p className="mt-2 text-xs text-neutral-500">
             Chỉ so giữa các giấy tờ của cùng một người, và số CCCD chỉ so với số CCCD (số hộ
-            chiếu của cùng người vốn khác số CCCD, không phải mâu thuẫn).
+            chiếu của cùng người vốn khác số CCCD, không phải mâu thuẫn). Bấm “✓ Đã check” khi đã đối chiếu xong —
+            mục đó ẩn đi; nếu sau này file đổi làm giá trị lệch khác đi thì mục tự hiện lại.
           </p>
         </div>
       )}

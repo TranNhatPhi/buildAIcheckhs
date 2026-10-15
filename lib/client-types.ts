@@ -74,6 +74,8 @@ export interface DocExpiryDTO {
 }
 
 export interface DataConflictDTO {
+  /** Gửi lại khi bấm ✓ "đã kiểm tra" (POST /cases/{id}/conflicts/checked). */
+  key: string;
   owner: string;
   ownerLabel: string;
   fieldLabel: string;
@@ -128,6 +130,8 @@ export interface CaseListItemDTO {
   receiverName: string | null;
   managerName: string | null;
   saleName: string | null;
+  /** Mục đích đi: "WORK" (Làm việc) | "TRAVEL" (Du lịch) — không đổi checklist. */
+  travelPurpose?: "WORK" | "TRAVEL";
   /** Nghề nghiệp của đương đơn, vd "Xây dựng", "Chế biến hải sản". */
   occupation: string | null;
   /** Kinh nghiệm quy về SỐ THÁNG. Dùng formatExperience() để hiển thị. */
@@ -244,6 +248,7 @@ export interface CaseDetailDTO {
     managerName: string | null;
     saleName: string | null;
     occupation: string | null;
+    travelPurpose?: "WORK" | "TRAVEL";
     experienceMonths: number | null;
     experienceUnits: ExperienceUnit[];
     notes: string | null;

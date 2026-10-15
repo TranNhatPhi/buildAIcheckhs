@@ -10,6 +10,7 @@ luôn có sẵn, và không tốn token.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import unicodedata
@@ -213,6 +214,27 @@ def doi_chieu_cheo(documents: list[Document]) -> list[DiemBatNhat]:
 
     ket_qua.sort(key=lambda d: (d.owner_label, d.field_label))
     return ket_qua
+
+
+def khoa_bat_nhat(d: DiemBatNhat) -> str:
+    """Khoá nhận diện 1 điểm lệch để nhân viên đánh dấu "đã kiểm tra" (Case.conflictsChecked). Gồm cả CÁC GIÁ TRỊ
+    đang lệch: upload / sửa file làm đổi giá trị thì khoá đổi -> điểm lệch tự hiện lại cho người xem lần nữa."""
+    gia_tri = "|".join(sorted({v.value.strip() for v in d.values}))
+    return f"{d.owner}::{d.field_label}::{gia_tri}"
+
+
+def doc_da_kiem_tra(case) -> set[str]:
+    try:
+        ds = json.loads(case.conflictsChecked or "[]")
+    except ValueError:
+        return set()
+    return {str(x) for x in ds} if isinstance(ds, list) else set()
+
+
+def bo_da_kiem_tra(bat_nhat: list[DiemBatNhat], case) -> list[DiemBatNhat]:
+    """Bỏ các điểm lệch nhân viên đã bấm ✓ "đã kiểm tra" (15/10/2026, Docs yêu cầu)."""
+    da = doc_da_kiem_tra(case)
+    return [d for d in bat_nhat if khoa_bat_nhat(d) not in da]
 
 
 def dem_han_tai_lieu(documents) -> tuple[int, int]:

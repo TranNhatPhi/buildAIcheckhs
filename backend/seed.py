@@ -30,6 +30,7 @@ from models import Base, Case, ChecklistItem, Document
 SECTION_APPLICANT = "Hồ sơ đương đơn"
 SECTION_DEPENDENTS = "Hồ sơ người phụ thuộc"
 SECTION_SPOUSE = "Hồ sơ người phụ thuộc (Vợ/chồng)"
+SECTION_OTHER = "Giấy tờ khác"
 
 GROUP_PERSONAL = "Giấy tờ cá nhân"
 GROUP_DEGREE = "Giấy tờ chứng minh bằng cấp"
@@ -37,6 +38,22 @@ GROUP_WORK = "Giấy tờ chứng minh kinh nghiệm làm việc"
 GROUP_FINANCE = "Giấy tờ chứng minh tài chính"
 GROUP_WORK_FINANCE = "Giấy tờ chứng minh kinh nghiệm làm việc & tài chính"
 GROUP_OTHER = "Giấy tờ khác"
+GROUP_EXTRA = "Giấy tờ bổ sung (nếu có)"
+SO_GIAY_TO_KHAC = 5
+
+
+def _giay_to_khac(prefix: str) -> list[dict]:
+    """Phần CUỐI của cả 4 bản giấy — "GIẤY TỜ KHÁC": 5 dòng TRỐNG (vd 33-37 bản LOW độc thân, 73-77 bản
+    HIGH kết hôn đủ 3 con) cho giấy ngoài danh sách. Thêm 14/10/2026 (Docs yêu cầu). TUỲ CHỌN nên không
+    đổi % hồ sơ; order 900+ nên luôn đứng cuối -> số thứ tự mục cũ giữ nguyên, số của 5 ô này tự khớp bản
+    giấy. Tên file "<số ô>. <Họ tên> - <tên giấy>" tự vào ô (tên ô không có loại giấy nên số được tin)."""
+    return [
+        dict(id=f"{prefix}giay-to-khac-{k}", order=900 + k, section=SECTION_OTHER, group=GROUP_EXTRA,
+             nameVi=f"Giấy tờ khác {k} (nếu có)", isOptional=True,
+             note=("Giấy tờ ngoài danh sách trên — đặt tên file \"<số mục>. <Họ tên> - <tên giấy>\""
+                   if k == 1 else None))
+        for k in range(1, SO_GIAY_TO_KHAC + 1)
+    ]
 GROUP_DEPENDENT_PERSONAL = "Giấy tờ cá nhân (người phụ thuộc)"
 
 
@@ -220,7 +237,7 @@ LOW_SKILL_ITEMS = [
          nameVi="Giấy khai sinh con 1 (nếu có)", isOptional=True, appliesTo="SINGLE"),
     dict(id="giay-khai-sinh-con2-doc-than", order=45, section=SECTION_APPLICANT, group=GROUP_OTHER,
          nameVi="Giấy khai sinh con 2 (nếu có)", isOptional=True, appliesTo="SINGLE"),
-]
+] + _giay_to_khac("")
 for _d in LOW_SKILL_ITEMS:
     _d["skillLevel"] = "LOW_SKILL"
 
@@ -449,7 +466,9 @@ HIGH_SKILL_CHILDREN_ITEMS = (
     _high_skill_child_items(1, 54) + _high_skill_child_items(2, 62) + _high_skill_child_items(3, 70)
 )
 
-HIGH_SKILL_ITEMS = HIGH_SKILL_APPLICANT_ITEMS + HIGH_SKILL_SPOUSE_ITEMS + HIGH_SKILL_CHILDREN_ITEMS
+HIGH_SKILL_ITEMS = (
+    HIGH_SKILL_APPLICANT_ITEMS + HIGH_SKILL_SPOUSE_ITEMS + HIGH_SKILL_CHILDREN_ITEMS + _giay_to_khac("hs-")
+)
 for _d in HIGH_SKILL_ITEMS:
     _d["skillLevel"] = "HIGH_SKILL"
 
@@ -572,6 +591,18 @@ ADDED_COLUMNS = [
     ("Case", "readyToSubmitBy", "VARCHAR(191) NULL"),
     # Định dạng file hồ sơ hoàn thành (models.FinalDocument.mimeType) — file có từ trước đều là PDF.
     ("FinalDocument", "mimeType", "VARCHAR(191) NOT NULL DEFAULT 'application/pdf'"),
+    # Tên riêng của các ô "Giấy tờ khác" theo hồ sơ (models.Case.otherDocNames).
+    ("Case", "otherDocNames", "TEXT NULL"),
+    # Mục đích đi (models.Case.travelPurpose) — hồ sơ cũ là Làm việc.
+    ("Case", "travelPurpose", "VARCHAR(16) NOT NULL DEFAULT 'WORK'"),
+    # Dữ liệu form IMM 5645E theo hồ sơ (models.Case.imm5645Data).
+    ("Case", "imm5645Data", "MEDIUMTEXT NULL"),
+    ("Case", "imm5645UpdatedAt", "DATETIME NULL"),
+    # Dữ liệu form IMM 1295E theo hồ sơ (models.Case.imm1295Data).
+    ("Case", "imm1295Data", "MEDIUMTEXT NULL"),
+    ("Case", "imm1295UpdatedAt", "DATETIME NULL"),
+    # Điểm lệch giữa giấy tờ đã được nhân viên đánh dấu kiểm tra (models.Case.conflictsChecked).
+    ("Case", "conflictsChecked", "TEXT NULL"),
 ]
 
 

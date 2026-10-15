@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { nhanMucDichDi } from "@/lib/mucDichDi";
 import { ResubmitBadge } from "@/components/ResubmitBadge";
 import { useEffect, useMemo, useState } from "react";
 import { CanhCuonHoSo } from "@/components/CanhCuonHoSo";
@@ -66,6 +67,9 @@ export function CaseList({ initialCases }: Props) {
   const [hoanTatId, setHoanTatId] = useState<string | null>(null);
   const [sanSangId, setSanSangId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  // Hồ sơ đã bật "Đã sẵn sàng nộp" QUÁ 1 NGÀY thì ẨN khỏi danh sách (Docs yêu cầu 14/10/2026 — việc của Docs đã
+  // xong, để danh sách chỉ còn hồ sơ đang làm). Gõ tìm tên vẫn ra; bấm "Hiện lại" để xem hết.
+  const [hienDaAn, setHienDaAn] = useState(false);
   const [checklistStatusFilter, setChecklistStatusFilter] = useState<ChecklistStatusFilter>("ALL");
   const [applicationStatusFilter, setApplicationStatusFilter] =
     useState<ApplicationStatusFilter>("ALL");
@@ -117,11 +121,25 @@ export function CaseList({ initialCases }: Props) {
     partnerFilter !== "ALL" ||
     sortOption !== "PERCENT_DESC";
 
+  // Chỉ tính sau hydrate: "bây giờ" ở server và trình duyệt lệch nhau -> lệch HTML lúc hydrate.
+  // Mốc "bây giờ" lấy MỘT lần lúc mở trang (lazy init) — gọi Date.now() trong lúc render là không thuần.
+  const [moMoc] = useState(() => Date.now());
+  const daAnSanSang = useMemo(() => {
+    if (!hydrated) return new Set<string>();
+    const nguong = moMoc - 24 * 60 * 60 * 1000;
+    return new Set(
+      cases
+        .filter((c) => c.readyToSubmitAt && parseUtcDate(c.readyToSubmitAt).getTime() < nguong)
+        .map((c) => c.id),
+    );
+  }, [cases, hydrated, moMoc]);
+
   const visibleCases = useMemo(() => {
     const normalizedQuery = normalizeSearchText(searchQuery.trim());
 
     return cases
       .filter((caseItem) => {
+        if (!hienDaAn && normalizedQuery === "" && daAnSanSang.has(caseItem.id)) return false;
         const searchableText = normalizeSearchText(
           `${caseItem.clientName} ${caseItem.partner ?? ""} ${caseItem.notes ?? ""}`,
         );
@@ -178,6 +196,8 @@ export function CaseList({ initialCases }: Props) {
   }, [
     applicationStatusFilter,
     cases,
+    daAnSanSang,
+    hienDaAn,
     checklistStatusFilter,
     maritalFilter,
     partnerFilter,
@@ -502,6 +522,21 @@ export function CaseList({ initialCases }: Props) {
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-3">
           <p className="text-sm text-neutral-500">
             Hiển thị <span className="font-semibold text-neutral-700">{visibleCases.length}</span>/{cases.length} hồ sơ
+            {daAnSanSang.size > 0 && (
+              <>
+                {" · "}
+                <span title="Hồ sơ đã bật “Đã sẵn sàng nộp” quá 1 ngày được ẩn — gõ tìm tên vẫn ra">
+                  {hienDaAn ? "đang hiện" : "đã ẩn"} {daAnSanSang.size} hồ sơ sẵn sàng nộp quá 1 ngày
+                </span>{" "}
+                <button
+                  type="button"
+                  onClick={() => setHienDaAn((x) => !x)}
+                  className="font-semibold text-indigo-700 hover:text-indigo-900"
+                >
+                  {hienDaAn ? "Ẩn lại" : "Hiện lại"}
+                </button>
+              </>
+            )}
           </p>
           {hasActiveFilters && (
             <button
@@ -577,6 +612,7 @@ export function CaseList({ initialCases }: Props) {
                         {c.numberOfChildren > 0 ? ` · ${c.numberOfChildren} con` : ""}
                         {" · "}
                         {c.skillLevel === "HIGH_SKILL" ? "High Skilled" : "Low Skilled"}
+                        {` · ${nhanMucDichDi(c.travelPurpose)}`}
                         {c.occupation ? ` · ${c.occupation}` : ""}
                         {formatExperience(c.experienceMonths)
                           ? ` · ${formatExperience(c.experienceMonths)}`

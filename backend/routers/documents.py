@@ -243,8 +243,8 @@ def reclassify_document(document_id: str, engine: str = "auto", db: Session = De
             ocr_engine=None if engine == "auto" else engine,
         )
 
-        is_pdf = doc.mimeType == "application/pdf" or doc.originalFilename.lower().endswith(".pdf")
-        if is_pdf:
+        # PDF + Word/Excel (ocr chuyển sang PDF) đều lưu ảnh từng trang.
+        if ocr.co_anh_trang(doc.originalFilename, doc.mimeType):
             ocr.save_pdf_page_images(doc.caseId, doc.id, pages)
         # Ghi số trang cho MỌI loại file chứ không riêng PDF: danh sách tài liệu hiển thị
         # số trang từng file, mà ảnh rời thì pageCount cũ để trống nên hiện ra ô trắng.

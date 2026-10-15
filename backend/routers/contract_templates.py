@@ -3,6 +3,7 @@ contract_preview.py). Mỗi loại (cột `kind`) một trang riêng ở Docs nh
     HDLD — "Mẫu hợp đồng lao động"          (/mau-hop-dong)              Word / PDF
     XNKN — "Mẫu thư xác nhận kinh nghiệm"   (/mau-xac-nhan-kinh-nghiem)  Word / PDF
     PL   — "Mẫu phiếu lương"                (/mau-phieu-luong)           Excel
+    CV   — "Mẫu template CV"                (/mau-cv)                    Word / PDF
 API danh sách / thêm / nhập zip / tải zip nhận `kind` (mặc định HDLD — giữ nguyên hành vi cũ); API
 theo id thì không cần vì id đã xác định mẫu.
 
@@ -56,6 +57,7 @@ LOAI_MAU = {
     "HDLD": {"nhan": "HĐLĐ", "zip": "Mau-hop-dong-lao-dong", **_WORD_PDF},
     "XNKN": {"nhan": "Thư XNKN", "zip": "Mau-thu-xac-nhan-kinh-nghiem", **_WORD_PDF},
     "PL": {"nhan": "Phiếu lương", "zip": "Mau-phieu-luong", "duoi": {".xls", ".xlsx"}, "ten_duoi": "Excel (.xls, .xlsx)"},
+    "CV": {"nhan": "CV", "zip": "Mau-CV", **_WORD_PDF},
 }
 
 

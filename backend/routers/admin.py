@@ -57,6 +57,7 @@ def list_all_cases(db: Session = Depends(get_db)):
                 managerName=c.managerName,
                 saleName=c.saleName,
                 occupation=c.occupation,
+                travelPurpose=c.travelPurpose,
                 experienceMonths=c.experienceMonths,
                 experienceUnits=parse_experience_units(c.experienceUnits),
                 notes=c.notes,

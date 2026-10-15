@@ -30,6 +30,8 @@ from routers import (
     split_tool,
     translation_check,
     final_docs,
+    imm5645,
+    imm1295,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +59,8 @@ app.include_router(notifications.router)
 app.include_router(contract_templates.router)
 app.include_router(split_tool.router)
 app.include_router(final_docs.router)
+app.include_router(imm5645.router)
+app.include_router(imm1295.router)
 
 
 @app.middleware("http")

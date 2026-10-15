@@ -14,6 +14,10 @@ import {
 } from "@/lib/application-status";
 import { EL, STATUS_LABEL, STATUS_COLOR, Tag, AdminSidebar } from "@/components/adminUi";
 import { ChuongThongBao } from "@/components/ChuongThongBao";
+import { AdminStatusSelect } from "@/components/AdminStatusSelect";
+import { baoSidebarDemLai } from "@/components/adminUi";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import type { CaseDetailDTO } from "@/lib/client-types";
 
 export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
@@ -22,6 +26,8 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
   // chưa đăng nhập admin, tránh việc share thẳng link này ra ngoài mà vẫn xem được.
   const hydrated = useHydrated();
   const authorized = hydrated ? !!getAdminPassword() : null;
+  const router = useRouter();
+  const [thongBao, setThongBao] = useState<string | null>(null);
 
   if (authorized === null) return null;
 
@@ -79,6 +85,19 @@ export function AdminCaseDetail({ data }: { data: CaseDetailDTO }) {
                 <span className="text-neutral-500">Đơn vị xác nhận kinh nghiệm:</span> {tomTatDonVi(c.experienceUnits)}
               </p>
             )}
+            {/* Đổi trạng thái / Nộp lại CHỈ ở đây (14/10/2026) — bảng tổng quan chỉ hiện nhãn. */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-sm text-neutral-500">Đổi trạng thái:</span>
+              <AdminStatusSelect
+                c={{ ...c, percent: checklist.percent }}
+                onDaDoi={(tb) => {
+                  setThongBao(tb ?? "Đã đổi trạng thái.");
+                  baoSidebarDemLai();
+                  router.refresh();
+                }}
+              />
+              {thongBao && <span className="text-sm text-green-700">{thongBao}</span>}
+            </div>
           </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <InfoPanel

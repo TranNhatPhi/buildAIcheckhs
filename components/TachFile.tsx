@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_URL, normalizeSearchText } from "@/lib/format";
 import { FORM_HINT, FORM_INPUT, FORM_LABEL } from "@/lib/formStyles";
 import { RoUpload } from "@/components/RoUpload";
+import { docFiles, docJson, ghiJson, luuFiles } from "@/lib/luuTam";
 import type { CaseListItemDTO } from "@/lib/client-types";
 
 interface MucTach {
@@ -93,6 +94,117 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
   }, [xem]);
   // Tên file đang có trong hồ sơ — file tách ra trùng tên sẽ THAY bản cũ (đúng quy tắc upload).
   const [tenDaCo, setTenDaCo] = useState<Set<string>>(new Set());
+  // Hồ sơ hoàn thành đặt tên TIẾNG ANH (khác tên xem trước ở đây) -> so theo MỤC thay vì tên.
+  const caseKq = kq?.caseId;
+  useEffect(() => {
+    if (!caseKq) return;
+    fetch(banDich ? `${API_URL}/final/cases/${caseKq}` : `${API_URL}/cases/${caseKq}`)
+      .then((x) => (x.ok ? x.json() : null))
+      .then((ct) =>
+        setTenDaCo(
+          new Set(
+            banDich
+              ? (ct?.files ?? []).map((f: { itemId: string | null }) => `muc:${f.itemId}`)
+              : (ct?.case?.documents ?? []).map((doc: { originalFilename: string }) =>
+                  doc.originalFilename.normalize("NFC").toLocaleLowerCase("vi"),
+                ),
+          ),
+        ),
+      )
+      .catch(() => setTenDaCo(new Set()));
+  }, [caseKq, banDich]);
+
+  // F5 KHÔNG MẤT VIỆC (14/10/2026, Docs yêu cầu): nhớ hồ sơ đã chọn + bảng kết quả (localStorage) và file
+  // đã chọn (IndexedDB — file scan vài chục MB) theo từng trang; mở lại thì khôi phục. Bảng kết quả chỉ
+  // khôi phục khi lượt tách còn trên máy chủ (file tạm tự xoá sau 24 giờ). "Tách file khác" / "Bỏ hết" xoá.
+  const KHOA = banDich ? "tach-ban-dich" : "tach-file";
+  const [daKhoiPhuc, setDaKhoiPhuc] = useState(false);
+
+  // TÁCH CHẠY NỀN (14/10/2026): POST /split-tool trả ngay jobId (202), phần đọc chữ + AI chạy trên máy chủ.
+  // Hỏi GET /{job}/result mỗi 3 giây tới khi xong. Lượt đang chờ nhớ ở localStorage `${KHOA}:dangTach` — F5
+  // thì hỏi tiếp ĐÚNG lượt đó (không tách lại). `luotCho` = lượt đang được chờ; bấm Dừng / lượt mới thì vòng
+  // hỏi cũ tự thôi.
+  const luotCho = useRef<string | null>(null);
+  const choKetQua = useCallback(
+    async (job: string) => {
+      luotCho.current = job;
+      setDangXuLy(true);
+      while (luotCho.current === job) {
+        const r = await fetch(`${API_URL}/split-tool/${job}/result`).catch(() => null);
+        if (luotCho.current !== job) return;
+        if (r && r.status === 202) {
+          await new Promise((ok) => setTimeout(ok, 3000));
+          continue;
+        }
+        const d = r ? await r.json().catch(() => null) : null;
+        if (luotCho.current !== job) return;
+        if (!r) {
+          // Mất mạng chốc lát — hỏi lại, lượt vẫn đang chạy trên máy chủ.
+          await new Promise((ok) => setTimeout(ok, 5000));
+          continue;
+        }
+        luotCho.current = null;
+        ghiJson(`${KHOA}:dangTach`, null);
+        setDangXuLy(false);
+        if (r.ok) {
+          setKq(d);
+          setDoan(d.segments);
+        } else if (!d?.cancelled) {
+          setLoi(typeof d?.detail === "string" ? d.detail : "Không tách được file — thử lại sau.");
+        }
+        return;
+      }
+    },
+    [KHOA],
+  );
+
+  async function dungTach() {
+    const job = luotCho.current;
+    luotCho.current = null;
+    ghiJson(`${KHOA}:dangTach`, null);
+    setDangXuLy(false);
+    setLoi("Đã dừng tách file — file đã chọn vẫn giữ, bấm Tách file để chạy lại.");
+    if (job) await fetch(`${API_URL}/split-tool/${job}/cancel`, { method: "POST" }).catch(() => null);
+  }
+  useEffect(() => {
+    let huy = false;
+    (async () => {
+      const ma = docJson<string>(`${KHOA}:caseId`);
+      if (ma && !huy) setCaseId(ma);
+      const fs = await docFiles(`${KHOA}:files`);
+      if (fs.length && !huy) setFiles(fs);
+      const luu = docJson<{ kq: KetQuaPhanTich; doan: Doan[] }>(`${KHOA}:ketQua`);
+      if (luu?.kq?.jobId) {
+        const conSong = await fetch(`${API_URL}/split-tool/${luu.kq.jobId}/pages/1?dpi=40`)
+          .then((r) => r.ok)
+          .catch(() => false);
+        if (conSong && !huy) {
+          setKq(luu.kq);
+          // Đang đưa dở lúc F5 thì coi như chưa đưa — bấm lại được.
+          setDoan(luu.doan.map((d) => ({ ...d, dangDua: false })));
+        } else ghiJson(`${KHOA}:ketQua`, null);
+      }
+      // Đang tách dở lúc F5 -> chờ tiếp đúng lượt đó, đồng hồ tính từ lúc bấm Tách.
+      const dang = docJson<{ jobId: string; startedAt: number }>(`${KHOA}:dangTach`);
+      if (dang?.jobId && !huy) {
+        setGiay(Math.max(0, Math.round(Date.now() / 1000 - (dang.startedAt || Date.now() / 1000))));
+        choKetQua(dang.jobId);
+      }
+      if (!huy) setDaKhoiPhuc(true);
+    })();
+    return () => {
+      huy = true;
+    };
+  }, [KHOA, choKetQua]);
+  useEffect(() => {
+    if (daKhoiPhuc) ghiJson(`${KHOA}:caseId`, caseId);
+  }, [daKhoiPhuc, KHOA, caseId]);
+  useEffect(() => {
+    if (daKhoiPhuc) luuFiles(`${KHOA}:files`, files);
+  }, [daKhoiPhuc, KHOA, files]);
+  useEffect(() => {
+    if (daKhoiPhuc) ghiJson(`${KHOA}:ketQua`, kq ? { kq, doan } : null);
+  }, [daKhoiPhuc, KHOA, kq, doan]);
 
   useEffect(() => {
     fetch(`${API_URL}/cases`)
@@ -116,11 +228,37 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
       : hoSo;
   }, [hoSo, timHoSo]);
 
-  async function phanTich(e: React.FormEvent) {
+  function phanTich(e: React.FormEvent) {
     e.preventDefault();
+    batDauTach();
+  }
+
+  // "🔄 Tách lại" (14/10/2026, Docs yêu cầu): bỏ kết quả hiện tại (cách chia / mục / dấu duyệt) và tách lại
+  // NGAY đúng file + hồ sơ đó — vd lượt trước AI lỗi. File đã đưa vào hồ sơ thì vẫn ở đó.
+  function tachLai() {
+    if (
+      !confirm(
+        "Tách lại từ đầu với đúng file này?\n\nCách chia, mục đã chọn và dấu duyệt hiện tại sẽ mất " +
+          "(file đã đưa vào hồ sơ vẫn giữ).",
+      )
+    )
+      return;
+    setKq(null);
+    setDoan([]);
+    setXem(null);
+    if (!files.length) {
+      setLoi("Không còn file đã chọn trên trình duyệt — chọn lại file rồi bấm Tách file.");
+      return;
+    }
+    batDauTach();
+  }
+
+  async function batDauTach() {
     if (!caseId) return setLoi("Chọn hồ sơ trước — số thứ tự trong tên file lấy theo checklist của hồ sơ đó.");
     if (!files.length)
       return setLoi(`Kéo thả hoặc chọn file PDF, Word, ${banDich ? "Excel, " : ""}ảnh hoặc ZIP cần tách.`);
+    if (files.reduce((t, f) => t + f.size, 0) > 80 * 1024 * 1024)
+      return setLoi("Tổng dung lượng các file vượt 80MB — bỏ bớt file rồi tách làm nhiều lần.");
     setLoi(null);
     setKq(null);
     setGiay(0);
@@ -134,27 +272,13 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
       const d = await r.json().catch(() => null);
       if (!r.ok) {
         setLoi(typeof d?.detail === "string" ? d.detail : "Không tách được file — thử lại sau.");
+        setDangXuLy(false);
         return;
       }
-      setKq(d);
-      setDoan(d.segments);
-      // Tên file đã có ở nơi nhận — trùng tên sẽ THAY bản cũ.
-      fetch(banDich ? `${API_URL}/final/cases/${d.caseId}` : `${API_URL}/cases/${d.caseId}`)
-        .then((x) => (x.ok ? x.json() : null))
-        .then((ct) =>
-          setTenDaCo(
-            new Set(
-              (banDich
-                ? (ct?.files ?? []).map((f: { fileName: string }) => f.fileName)
-                : (ct?.case?.documents ?? []).map((doc: { originalFilename: string }) => doc.originalFilename)
-              ).map((ten: string) => ten.normalize("NFC").toLocaleLowerCase("vi")),
-            ),
-          ),
-        )
-        .catch(() => setTenDaCo(new Set()));
+      ghiJson(`${KHOA}:dangTach`, { jobId: d.jobId, startedAt: d.startedAt });
+      await choKetQua(d.jobId);
     } catch {
       setLoi("Không kết nối được máy chủ — thử lại sau.");
-    } finally {
       setDangXuLy(false);
     }
   }
@@ -220,9 +344,16 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
 
   const soDaDuyet = doan.filter((d) => d.duyet && !d.daDua).length;
 
+  // Nơi nhận đã có file này chưa (sẽ THAY bản cũ). Hồ sơ hoàn thành đặt tên tiếng Anh nên so theo MỤC.
+  function daCo(d: Doan, i: number) {
+    return banDich
+      ? !!d.itemId && tenDaCo.has(`muc:${d.itemId}`)
+      : tenDaCo.has(tenFiles[i].normalize("NFC").toLocaleLowerCase("vi"));
+  }
+
   async function duaVaoHoSo() {
     if (!kq || !soDaDuyet) return;
-    const thay = doan.filter((d, i) => d.duyet && !d.daDua && tenDaCo.has(tenFiles[i].normalize("NFC").toLocaleLowerCase("vi"))).length;
+    const thay = doan.filter((d, i) => d.duyet && !d.daDua && daCo(d, i)).length;
     if (
       !confirm(
         `Đưa ${soDaDuyet} file đã duyệt vào ${NOI_NHAN} "${kq.clientName}"?\n\n` +
@@ -406,9 +537,19 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
               {dangXuLy ? "Đang đọc chữ & phân tích…" : "✂️ Tách file"}
             </button>
             {dangXuLy && (
-              <span className="text-sm text-neutral-500 tabular-nums">
-                {giay} giây — file scan nhiều trang có thể mất vài phút, đừng tắt trang.
-              </span>
+              <>
+                <span className="text-sm text-neutral-500 tabular-nums">
+                  {giay} giây — file scan nhiều trang có thể mất vài phút. Đang chạy trên máy chủ: F5 / tắt trang
+                  không mất, mở lại là chờ tiếp.
+                </span>
+                <button
+                  type="button"
+                  onClick={dungTach}
+                  className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"
+                >
+                  ⏹ Dừng tách file
+                </button>
+              </>
             )}
           </div>
         </form>
@@ -432,6 +573,15 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
               >
                 Xem file gốc
               </a>
+              <button
+                type="button"
+                onClick={tachLai}
+                disabled={dangDuaVao}
+                title="Bỏ kết quả này và tách lại ngay đúng file + hồ sơ đã chọn"
+                className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+              >
+                🔄 Tách lại
+              </button>
               <button
                 type="button"
                 onClick={lamLai}
@@ -516,7 +666,7 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
           <ol className="flex flex-col gap-3">
             {doan.map((d, i) => {
               const khoa = dangDuaVao || !!d.daDua || !!d.dangDua;
-              const trungTen = tenDaCo.has(tenFiles[i].normalize("NFC").toLocaleLowerCase("vi"));
+              const trungTen = daCo(d, i);
               return (
               <li
                 key={i}
@@ -553,9 +703,13 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
                       {trungTen && !d.daDua && (
                         <span
                           className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
-                          title="Hồ sơ đã có file cùng tên — đưa vào sẽ THAY bản cũ"
+                          title={
+                            banDich
+                              ? "Hồ sơ hoàn thành đã có file ở mục này — đưa vào sẽ THAY bản cũ"
+                              : "Hồ sơ đã có file cùng tên — đưa vào sẽ THAY bản cũ"
+                          }
                         >
-                          Trùng tên — sẽ thay bản cũ
+                          {banDich ? "Mục đã có file — sẽ thay bản cũ" : "Trùng tên — sẽ thay bản cũ"}
                         </span>
                       )}
                     </p>
@@ -627,10 +781,7 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
                     >
                       {d.daDua ? "✓ Đã vào hồ sơ" : d.duyet ? "✓ Đã duyệt" : "✓ Duyệt"}
                     </button>
-                    {/* Trang bản dịch bỏ "Tách trang đầu" / "Gộp với file dưới" (Docs 13/10/2026) — sửa
-                        bằng ô trang từ–đến. */}
-                    {!banDich && (
-                    <>
+                    {/* "Tách trang đầu" / "Gộp với file dưới": có ở CẢ 2 trang (trang bản dịch bỏ 13/10, Docs bật lại 14/10/2026). */}
                     <button
                       type="button"
                       onClick={() => tachDoi(i)}
@@ -649,8 +800,6 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
                     >
                       ⤓ Gộp với file dưới
                     </button>
-                    </>
-                    )}
                     <button
                       type="button"
                       onClick={() => setDoan((cu) => cu.filter((_, k) => k !== i))}

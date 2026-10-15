@@ -22,6 +22,7 @@ import {
   FORM_SUBMIT,
   toExperienceMonths,
 } from "@/lib/formStyles";
+import { MUC_DICH_DI, type MucDichDi } from "@/lib/mucDichDi";
 
 export function NewCaseForm() {
   const router = useRouter();
@@ -29,6 +30,7 @@ export function NewCaseForm() {
   const [maritalStatus, setMaritalStatus] = useState<"SINGLE" | "MARRIED">("SINGLE");
   const [numberOfChildren, setNumberOfChildren] = useState(0);
   const [skillLevel, setSkillLevel] = useState<"LOW_SKILL" | "HIGH_SKILL">("LOW_SKILL");
+  const [travelPurpose, setTravelPurpose] = useState<MucDichDi>("WORK");
   const [partner, setPartner] = useState("");
   const [nguoi, setNguoi] = useState<CasePeople>({ receiverName: "", managerName: "", saleName: "" });
   const [occupation, setOccupation] = useState("");
@@ -68,6 +70,7 @@ export function NewCaseForm() {
           maritalStatus,
           numberOfChildren,
           skillLevel,
+          travelPurpose,
           partner,
           ...nguoi,
           occupation,
@@ -168,6 +171,26 @@ export function NewCaseForm() {
                 onChange={(e) => setNumberOfChildren(Number(e.target.value))}
                 className={`${FORM_INPUT} w-32`}
               />
+            </div>
+            <div>
+              <span className={FORM_LABEL}>Mục đích đi</span>
+              <div className="flex flex-wrap gap-3">
+                {MUC_DICH_DI.map(([value, label]) => (
+                  <label
+                    key={value}
+                    className={`${FORM_PILL_BASE} ${travelPurpose === value ? FORM_PILL_ON : FORM_PILL_OFF}`}
+                  >
+                    <input
+                      type="radio"
+                      name="muc-dich-di"
+                      className="sr-only"
+                      checked={travelPurpose === value}
+                      onChange={() => setTravelPurpose(value)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
         </section>

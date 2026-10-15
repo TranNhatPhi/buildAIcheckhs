@@ -468,7 +468,7 @@ File mẫu, bản PDF và ảnh xem trước sẽ bị xoá vĩnh viễn.`)) ret
         </div>
       )}
 
-      {chuaCoMau.length > 0 && !tim && !locCongTy && (
+      {ch.goiYCongTyThieu !== false && chuaCoMau.length > 0 && !tim && !locCongTy && (
         <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
           <p className="text-sm font-semibold text-amber-900">
             Công ty đang có trong hồ sơ nhưng chưa có mẫu ({chuaCoMau.length})

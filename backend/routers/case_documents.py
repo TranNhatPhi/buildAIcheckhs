@@ -216,6 +216,8 @@ def upload_document(
     ]
 
     is_pdf = mime_type == "application/pdf" or filename.lower().endswith(".pdf")
+    # PDF + Word/Excel (ocr chuyển sang PDF) đều lưu ảnh từng trang.
+    co_anh_trang = ocr.co_anh_trang(filename, mime_type)
 
     try:
         # try_harder=True cho PDF ngay từ lần upload đầu — đã xác nhận bằng thực nghiệm
@@ -227,7 +229,7 @@ def upload_document(
             content, document.originalFilename, mime_type, try_harder=is_pdf
         )
 
-        if is_pdf:
+        if co_anh_trang:
             ocr.save_pdf_page_images(case_id, document.id, pages)
         # Ghi số trang cho MỌI loại file chứ không riêng PDF: danh sách tài liệu hiển thị
         # số trang từng file, mà ảnh rời thì pageCount cũ để trống nên hiện ra ô trắng.

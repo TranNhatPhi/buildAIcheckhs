@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { adminFetch, AdminUnauthorizedError } from "@/lib/adminApi";
 import { getAdminPassword } from "@/lib/adminAuth";
-import { getApplicationStatus, MAX_SUBMISSION_ROUND } from "@/lib/application-status";
+import { getApplicationStatus } from "@/lib/application-status";
 import { normalizeSearchText, parseUtcDate } from "@/lib/format";
 import { useHydrated } from "@/lib/useHydrated";
 import { EL, AdminSidebar, baoSidebarDemLai } from "@/components/adminUi";
@@ -19,7 +19,7 @@ const API_NGAY: Record<CotNgay, string> = {
   biometricsDate: "biometrics-date",
 };
 
-type KetQua = "DAU" | "ROT" | "NOP_LAI";
+type KetQua = "DAU" | "ROT";
 
 function ngayTiepNhan(iso: string) {
   return parseUtcDate(iso).toLocaleDateString("vi-VN", {
@@ -33,8 +33,8 @@ function ngayTiepNhan(iso: string) {
 /**
  * Trang "CP đang xử lý" (/admin/cpprocessing): hồ sơ ở trạng thái SUBMITTED ("CP đang xử lý" — đã
  * nộp, Chính phủ đang xét). Admin ghi NGÀY NỘP và NGÀY LĂN TAY (ô chọn ngày, đổi là lưu ngay) và chọn
- * KẾT QUẢ: Đậu -> "Được chấp thuận", Rớt -> "Không thành công", Nộp lại -> quy trình "Nộp lại lần 2"
- * có sẵn (xoá hết file, hồ sơ về "Chờ tiếp nhận"). Có kết quả là hồ sơ rời khỏi danh sách này.
+ * KẾT QUẢ: Đậu -> "Được chấp thuận", Rớt -> "Không thành công". Có kết quả là hồ sơ rời khỏi danh sách này.
+ * "Nộp lại" KHÔNG còn ở đây (15/10/2026): chỉ sau khi rớt, chọn ở trang chi tiết hồ sơ (cùng "Thanh lý").
  * Ngày lăn tay dùng CHUNG cột với bảng hồ sơ ở trang tổng quan.
  */
 export function AdminCpProcessing() {
@@ -100,27 +100,19 @@ export function AdminCpProcessing() {
   }
 
   async function chonKetQua(c: CaseListItemDTO, kq: KetQua) {
-    const lan = (c.submissionRound ?? 1) + 1;
     const xacNhan =
       kq === "DAU"
         ? `Hồ sơ "${c.clientName}" ĐẬU?\n\nChuyển sang "${getApplicationStatus("APPROVED").label}" — hồ sơ rời khỏi danh sách CP đang xử lý.`
-        : kq === "ROT"
-          ? `Hồ sơ "${c.clientName}" RỚT?\n\nChuyển sang "${getApplicationStatus("REJECTED").label}" — hồ sơ rời khỏi danh sách CP đang xử lý.`
-          : `Nộp lại lần ${lan} cho hồ sơ "${c.clientName}"?\n\n` +
-            "• XOÁ VĨNH VIỄN toàn bộ file đã nộp — không khôi phục được\n" +
-            "• Xoá số dư tiết kiệm và bản phân tích AI\n" +
-            `• Hồ sơ về "Chờ tiếp nhận" (0%), hiện nhãn "Nộp lại lần ${lan}" — nhân viên làm lại từ đầu ở trang checklist`;
+        : `Hồ sơ "${c.clientName}" RỚT?\n\nChuyển sang "${getApplicationStatus("REJECTED").label}" — hồ sơ rời khỏi danh sách CP đang xử lý. ` +
+          "Sau đó chọn Thanh lý hoặc Nộp lại ở trang chi tiết hồ sơ.";
     if (!confirm(xacNhan)) return;
     setDangLuu(`${c.id}:kq`);
     try {
-      const res = await (kq === "NOP_LAI"
-        ? adminFetch(`/cases/${c.id}/resubmit`, { method: "POST" })
-        : adminFetch(`/cases/${c.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ applicationStatus: kq === "DAU" ? "APPROVED" : "REJECTED" }),
-          })
-      ).catch(() => null);
+      const res = await adminFetch(`/cases/${c.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationStatus: kq === "DAU" ? "APPROVED" : "REJECTED" }),
+      }).catch(() => null);
       if (!res || !res.ok) {
         const chiTiet = res ? (await res.json().catch(() => null))?.detail : null;
         alert(chiTiet ?? "Không cập nhật được kết quả — thử lại sau.");
@@ -131,9 +123,7 @@ export function AdminCpProcessing() {
       setThongBao(
         kq === "DAU"
           ? `🎉 "${c.clientName}" — Được chấp thuận.`
-          : kq === "ROT"
-            ? `"${c.clientName}" — Không thành công. Muốn nộp lại hoặc thanh lý thì chọn ở trang Tổng quan.`
-            : `"${c.clientName}" — đã chuyển Nộp lại lần ${lan}, hồ sơ về "Chờ tiếp nhận".`,
+          : `"${c.clientName}" — Không thành công. Chọn Thanh lý hoặc Nộp lại ở trang chi tiết hồ sơ (nút Xem ở Tổng quan).`,
       );
     } finally {
       setDangLuu(null);
@@ -275,7 +265,6 @@ export function AdminCpProcessing() {
                   </thead>
                   <tbody className="divide-y divide-neutral-100">
                     {ketQuaTim.map((c, i) => {
-                      const daNopLan2 = (c.submissionRound ?? 1) >= MAX_SUBMISSION_ROUND;
                       return (
                         <tr key={c.id} className="hover:bg-neutral-50">
                           <td className="px-4 py-3 text-neutral-500 tabular-nums">{i + 1}</td>
@@ -304,9 +293,8 @@ export function AdminCpProcessing() {
                               <option value="">— Chờ kết quả —</option>
                               <option value="DAU">🎉 Đậu</option>
                               <option value="ROT">❌ Rớt</option>
-                              <option value="NOP_LAI" disabled={daNopLan2}>
-                                🔁 Nộp lại{daNopLan2 ? " (đã nộp lần 2 — không có lần 3)" : ""}
-                              </option>
+                              {/* Không còn "Nộp lại" ở đây (15/10/2026): CP đang xử lý -> Đậu / Rớt; Rớt rồi mới
+                                  Thanh lý / Nộp lại ở trang chi tiết hồ sơ. */}
                             </select>
                           </td>
                         </tr>

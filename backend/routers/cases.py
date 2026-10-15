@@ -14,6 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import activity
+import doc_checks
+import ten_giay_to_khac
 import emailjs
 import pdf_export
 import storage
@@ -95,6 +97,7 @@ def list_cases(db: Session = Depends(get_db)):
                 managerName=c.managerName,
                 saleName=c.saleName,
                 occupation=c.occupation,
+                travelPurpose=c.travelPurpose,
                 experienceMonths=c.experienceMonths,
                 experienceUnits=parse_experience_units(c.experienceUnits),
                 notes=c.notes,
@@ -220,6 +223,7 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
         maritalStatus=body.maritalStatus,
         numberOfChildren=body.numberOfChildren,
         skillLevel=body.skillLevel,
+        travelPurpose=body.travelPurpose,
         # Cắt khoảng trắng thừa và quy chuỗi rỗng về NULL: "  " và "" phải là "không có đối
         # tác" giống hệt nhau, nếu không danh sách gợi ý sẽ mọc ra một "nhóm" vô hình.
         partner=(body.partner or "").strip() or None,
@@ -248,6 +252,7 @@ def create_case(body: CreateCaseRequest, db: Session = Depends(get_db)):
         managerName=case.managerName,
         saleName=case.saleName,
         occupation=case.occupation,
+        travelPurpose=case.travelPurpose,
         experienceMonths=case.experienceMonths,
         experienceUnits=parse_experience_units(case.experienceUnits),
         notes=case.notes,
@@ -292,6 +297,7 @@ def list_deleted_cases(db: Session = Depends(get_db)):
                 managerName=c.managerName,
                 saleName=c.saleName,
                 occupation=c.occupation,
+                travelPurpose=c.travelPurpose,
                 experienceMonths=c.experienceMonths,
                 experienceUnits=parse_experience_units(c.experienceUnits),
                 notes=c.notes,
@@ -344,6 +350,7 @@ def restore_case(case_id: str, db: Session = Depends(get_db)):
         managerName=case.managerName,
         saleName=case.saleName,
         occupation=case.occupation,
+        travelPurpose=case.travelPurpose,
         experienceMonths=case.experienceMonths,
         experienceUnits=parse_experience_units(case.experienceUnits),
         notes=case.notes,
@@ -375,9 +382,9 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
     threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
     items_by_id = {i.id: i for i in checklist_items}
     han = danh_gia_han(list(case.documents), items_by_id)
-    bat_nhat = doi_chieu_cheo(list(case.documents))
+    bat_nhat = doc_checks.bo_da_kiem_tra(doi_chieu_cheo(list(case.documents)), case)
 
-    return CaseDetailDTO(
+    dto = CaseDetailDTO(
         case={
             "id": case.id,
             "clientName": case.clientName,
@@ -389,6 +396,7 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
             "managerName": case.managerName,
             "saleName": case.saleName,
             "occupation": case.occupation,
+            "travelPurpose": case.travelPurpose,
             "experienceMonths": case.experienceMonths,
             "experienceUnits": parse_experience_units(case.experienceUnits),
             "notes": case.notes,
@@ -409,6 +417,53 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
         savings=_savings_dto(case),
         docChecks=doc_checks_to_dto(han, bat_nhat),
     )
+    # Tên riêng của các ô "Giấy tờ khác" trong hồ sơ này (ten_giay_to_khac.py).
+    ten_giay_to_khac.ap_vao_case_detail(dto, ten_giay_to_khac.doc_ten(case))
+    return dto
+
+
+class DoiTenGiayToKhacRequest(BaseModel):
+    itemId: str
+    name: str = ""
+
+
+@router.patch("/{case_id}/other-doc-names")
+def doi_ten_giay_to_khac(case_id: str, body: DoiTenGiayToKhacRequest, db: Session = Depends(get_db)):
+    """Đặt tên riêng cho một ô "Giấy tờ khác N" của hồ sơ. Tên trống = về tên mặc định."""
+    case = db.get(Case, case_id)
+    if not case or case.deletedAt is not None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    item = db.get(ChecklistItem, body.itemId)
+    if item is None or not ten_giay_to_khac.la_o_giay_to_khac(item.id) or item.skillLevel != case.skillLevel:
+        raise HTTPException(status_code=400, detail="Chỉ đổi tên được các ô \"Giấy tờ khác\" của hồ sơ này.")
+    cu = ten_giay_to_khac.doc_ten(case).get(item.id, item.nameVi)
+    ten = ten_giay_to_khac.ghi_ten(case, item.id, body.name)
+    db.commit()
+    activity.ghi("OTHER_DOC_RENAME", case=case, detail=f"'{cu}' → '{ten.get(item.id, item.nameVi)}'")
+    return {"otherDocNames": ten}
+
+
+class DaKiemTraLechRequest(BaseModel):
+    key: str
+
+
+@router.post("/{case_id}/conflicts/checked")
+def danh_dau_lech_da_kiem_tra(case_id: str, body: DaKiemTraLechRequest, db: Session = Depends(get_db)):
+    """Bấm ✓ cạnh một mục "Thông tin lệch nhau giữa các giấy tờ" -> mục đó ẩn (nhân viên đã đối chiếu xong).
+    Khoá có kèm các giá trị lệch nên file đổi giá trị thì mục tự hiện lại."""
+    case = db.get(Case, case_id)
+    if not case or case.deletedAt is not None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    hien_co = {doc_checks.khoa_bat_nhat(d): d for d in doi_chieu_cheo(list(case.documents))}
+    d = hien_co.get(body.key)
+    if d is None:
+        raise HTTPException(status_code=400, detail="Mục lệch này không còn — tải lại trang.")
+    # Chỉ giữ khoá của các điểm lệch CÒN tồn tại để danh sách không phình mãi.
+    da = (doc_checks.doc_da_kiem_tra(case) & set(hien_co)) | {body.key}
+    case.conflictsChecked = json.dumps(sorted(da), ensure_ascii=False)
+    db.commit()
+    activity.ghi("CONFLICT_CHECKED", case=case, detail=f"{d.owner_label} · {d.field_label}")
+    return {"ok": True}
 
 
 def _savings_dto(case: Case) -> SavingsAssessmentDTO:
@@ -866,6 +921,7 @@ def update_case(
         managerName=case.managerName,
         saleName=case.saleName,
         occupation=case.occupation,
+        travelPurpose=case.travelPurpose,
         experienceMonths=case.experienceMonths,
         experienceUnits=parse_experience_units(case.experienceUnits),
         notes=case.notes,
@@ -977,7 +1033,7 @@ def resubmit_case(case_id: str, db: Session = Depends(get_db)):
     if case.applicationStatus not in RESUBMIT_FROM_STATUSES:
         raise HTTPException(
             status_code=400,
-            detail="Chỉ hồ sơ 'CP đang xử lý' hoặc 'Không thành công' mới chọn nộp lại được.",
+            detail="Chỉ hồ sơ 'Không thành công' (rớt) mới chọn nộp lại được.",
         )
     if (case.submissionRound or 1) >= MAX_SUBMISSION_ROUND:
         raise HTTPException(

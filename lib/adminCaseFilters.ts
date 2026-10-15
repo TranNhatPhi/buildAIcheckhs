@@ -25,6 +25,9 @@ export const BO_LOC_HO_SO = {
   // Theo ĐÚNG TRẠNG THÁI (13/10/2026, admin yêu cầu: bấm thẻ chỉ ra hồ sơ ở trạng thái đó). Trước đó
   // (12/10) "Hồ sơ hoàn thành" đếm mọi hồ sơ 100% ở mọi trạng thái, "Đã sẵn sàng nộp" đếm công tắc trên
   // thẻ Docs — bảng mở ra lẫn "CP đang xử lý" / "Sẵn sàng nộp" với "Hoàn thành".
+  // Hai thẻ phần Docs (14/10/2026, admin yêu cầu) — theo đúng trạng thái.
+  choTiepNhan: { nhan: "Hồ sơ chờ tiếp nhận", dat: (c) => c.applicationStatus === "PENDING" },
+  dangThuThap: { nhan: "Hồ sơ đang thu thập giấy tờ", dat: (c) => c.applicationStatus === "COLLECTING_DOCUMENTS" },
   hoanThanh: { nhan: "Hồ sơ hoàn thành", dat: (c) => c.applicationStatus === "COMPLETED" },
   sanSangNop: { nhan: "Hồ sơ sẵn sàng nộp", dat: (c) => c.applicationStatus === "READY_TO_SUBMIT" },
   // Theo trạng thái cùng tên "CP đang xử lý" — thẻ và ô chọn trùng tên thì phải đếm cùng một thứ.

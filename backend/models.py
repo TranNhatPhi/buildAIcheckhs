@@ -147,6 +147,22 @@ class Case(Base):
     # (3) không cần query JSON phức tạp — chỉ đọc/ghi nguyên mảng, lọc tag làm phía app.
     tags = Column(Text, nullable=True)
 
+    # Mục đích đi (14/10/2026): "WORK" = Làm việc | "TRAVEL" = Du lịch. Chỉ là thông tin hồ sơ — KHÔNG đổi
+    # checklist. Hồ sơ cũ mặc định Làm việc.
+    travelPurpose = Column(String(16), nullable=False, default="WORK", server_default="WORK")
+    # Dữ liệu form IMM 5645E (tab "Điền form IMM5645e", imm5645.py) — JSON AI đọc từ giấy tờ rồi nhân viên sửa.
+    imm5645Data = Column(Text, nullable=True)
+    imm5645UpdatedAt = Column(DateTime, nullable=True)
+    # Dữ liệu form IMM 1295E (tab "Điền form IMM1295e", imm1295.py) — cùng cách IMM5645.
+    imm1295Data = Column(Text, nullable=True)
+    imm1295UpdatedAt = Column(DateTime, nullable=True)
+    # Khoá các điểm "Thông tin lệch nhau giữa các giấy tờ" nhân viên đã bấm ✓ (doc_checks.khoa_bat_nhat), JSON list.
+    conflictsChecked = Column(Text, nullable=True)
+
+    # Tên riêng của 5 ô "Giấy tờ khác 1..5" trong hồ sơ NÀY (14/10/2026): JSON {"<id mục>": "<tên>"}.
+    # Mục checklist dùng chung mọi hồ sơ nên tên sửa phải nằm ở hồ sơ — xem ten_giay_to_khac.py.
+    otherDocNames = Column(Text, nullable=True)
+
     documents = relationship("Document", back_populates="case", cascade="all, delete-orphan")
     # File của tab "Danh sách hồ sơ hoàn thành" (routers/final_docs.py) — KHO RIÊNG, không tính vào
     # tiến độ / số trang dịch thuật như Document.
@@ -368,6 +384,7 @@ class ContractTemplate(Base):
     #   HDLD = "Mẫu hợp đồng lao động" (/mau-hop-dong)
     #   XNKN = "Mẫu thư xác nhận kinh nghiệm" (/mau-xac-nhan-kinh-nghiem)
     #   PL   = "Mẫu phiếu lương" (/mau-phieu-luong) — file Excel, không phải Word
+    #   CV   = "Mẫu template CV" (/mau-cv) — Word / PDF (14/10/2026)
     # Mẫu có từ trước khi có cột này đều là hợp đồng -> DEFAULT 'HDLD'.
     kind = Column(String(16), nullable=False, default="HDLD", server_default="HDLD")
 
