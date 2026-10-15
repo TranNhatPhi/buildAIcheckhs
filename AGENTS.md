@@ -410,6 +410,13 @@ Application for Work Permit Made Outside of Canada (IMM 1295E) — làm giống 
 đang lệch -> upload / sửa file làm giá trị đổi thì mục tự hiện lại. Chi tiết hồ sơ lọc bằng `bo_da_kiem_tra`; lúc lưu
 chỉ giữ khoá của điểm lệch còn tồn tại. Ghi nhật ký CONFLICT_CHECKED.
 
+## PP-OCRv5 — đã thử rồi GỠ (15/10/2026)
+
+Docs yêu cầu thử PP-OCRv5 (PaddleOCR 3.6, lang="vi" -> latin_PP-OCRv5_mobile_rec) cạnh Tesseract, đo xong thì yêu cầu GỠ
+hẳn (service ppocr, nút so OCR, ppocr_v5.py). Số đo để khỏi thử lại: Phiếu TT .docx 12 trang (chữ gốc làm đáp án) ->
+giống 83,7%, giữ 1028/1941 ký tự có dấu, 113 giây CPU — model latin THIẾU chữ dấu chồng (ộ ủ ệ ị ố ữ...): "Huyn",
+"L TH HNH". Cùng lỗi mất dấu như lần thử PaddleOCR đời cũ (docstring ocr.py). Không dùng cho tiếng Việt.
+
 ## DeepSeek: max_tokens gồm cả phần "nghĩ"
 
 Model `DEEPSEEK_MODEL` (deepseek-v4-flash) NGHĨ trước khi trả lời và phần nghĩ ăn vào `max_tokens`. Đặt thấp là

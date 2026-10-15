@@ -1,3 +1,4 @@
+import logging
 import re
 from urllib.parse import quote
 
@@ -23,6 +24,7 @@ from schemas import (
 )
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+logger = logging.getLogger(__name__)
 
 
 def _content_disposition(filename: str) -> str:
