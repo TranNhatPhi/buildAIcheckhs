@@ -33,13 +33,16 @@ const NHOM = [
     links: [
       { href: "/ho-so-hoan-thanh", label: "Danh sách", icon: "✅" },
       { href: "/tach-ban-dich", label: "Tách HS dịch", icon: "📑" },
-      { href: "/translation-check", label: "Kiểm tra dịch thuật", icon: "🌐" },
       { href: "/dien-form-imm5645", label: "Điền IMM5645e", icon: "🧾" },
       { href: "/dien-form-imm1295", label: "Điền IMM1295e", icon: "🛂" },
       { href: "/mau-cv", label: "Mẫu CV", icon: "👤" },
     ],
   },
 ];
+
+// Link ĐỨNG RIÊNG, không thuộc nhóm nào (Docs yêu cầu 15/10/2026: "Kiểm tra dịch thuật" nằm ngoài nhóm Hồ sơ
+// hoàn thành) — hiện dưới các nhóm, cùng cỡ chữ tiêu đề nhóm.
+const LINK_RIENG = [{ href: "/translation-check", label: "Kiểm tra dịch thuật", icon: "🌐" }];
 
 // "/" chỉ active đúng trang chủ, các link khác active cho cả trang con (vd /mau-cv/[id]); "/cases/new" không
 // active nhầm ở /cases/[id].
@@ -138,6 +141,21 @@ export function Sidebar() {
                 </div>
               )}
             </div>
+          );
+        })}
+        {LINK_RIENG.map((link) => {
+          const active = dangMo(link.href, pathname);
+          return (
+            <Link
+              key={link.href}
+              href={link.href}
+              className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-bold transition-colors ${
+                active ? "bg-indigo-600 text-white shadow-sm" : "text-neutral-800 hover:bg-neutral-100"
+              }`}
+            >
+              <span aria-hidden>{link.icon}</span>
+              {link.label}
+            </Link>
           );
         })}
       </nav>

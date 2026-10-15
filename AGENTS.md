@@ -323,7 +323,7 @@ Thống kê, cột Ngày lăn tay vẫn ở bảng). Cũng ĐÃ BỎ biểu đ�
 
 `components/Sidebar.tsx` mảng `NHOM`: **Hồ sơ thô** (Danh sách, Tạo mới, Tách file PDF/Word gốc, Mẫu HĐLĐ, Mẫu XNKN,
 Mẫu lương; `them: ["/cases/"]` để trang một hồ sơ thuộc nhóm này) và **Hồ sơ hoàn thành** (Danh sách, Tách HS dịch,
-Kiểm tra dịch thuật, Điền IMM5645e, Điền IMM1295e, Mẫu CV). Bấm tiêu đề nhóm để thu gọn / mở; nhớ ở localStorage "sidebar:thuGon";
+Điền IMM5645e, Điền IMM1295e, Mẫu CV). "Kiểm tra dịch thuật" đứng RIÊNG ngoài nhóm (`LINK_RIENG`, dưới 2 nhóm). Bấm tiêu đề nhóm để thu gọn / mở; nhớ ở localStorage "sidebar:thuGon";
 trước hydrate luôn mở (tránh lệch HTML). Nhóm chứa trang đang mở tô tím. Thêm trang mới -> thêm vào đúng nhóm.
 
 ## Mục "0. Phiếu TT khách hàng" (13/10/2026)
