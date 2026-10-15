@@ -417,6 +417,14 @@ hẳn (service ppocr, nút so OCR, ppocr_v5.py). Số đo để khỏi thử l�
 giống 83,7%, giữ 1028/1941 ký tự có dấu, 113 giây CPU — model latin THIẾU chữ dấu chồng (ộ ủ ệ ị ố ữ...): "Huyn",
 "L TH HNH". Cùng lỗi mất dấu như lần thử PaddleOCR đời cũ (docstring ocr.py). Không dùng cho tiếng Việt.
 
+## Tách file / Tách HS dịch — không mất trang (15/10/2026)
+
+`components/TachFile.tsx` (dùng cho cả /tach-file và /tach-ban-dich): nút "✂ Tách trang" (thay "Tách trang đầu") mở
+`KhungTachTrang` — ĐỦ ảnh mọi trang from..to, bấm ✂ giữa 2 trang để cắt / bỏ cắt (nhiều chỗ), xem trước các file tô
+màu; `tachTheoDiemCat` tạo các đoạn NỐI LIỀN nên không rơi trang (file đầu giữ mục AI, file sau "Tách tay"). Trang không
+thuộc file nào (`trangThieu`, vd bấm "Bỏ file này" nhầm — Docs gặp mất trang 3 bản Trần Văn Hùng) -> nút "↺ Khôi phục
+trang bị thiếu" ở khung cảnh báo, mỗi đoạn liền thành 1 file chèn đúng thứ tự. "Bỏ file này" giờ hỏi lại, nói rõ trang.
+
 ## DeepSeek: max_tokens gồm cả phần "nghĩ"
 
 Model `DEEPSEEK_MODEL` (deepseek-v4-flash) NGHĨ trước khi trả lời và phần nghĩ ăn vào `max_tokens`. Đặt thấp là

@@ -86,6 +86,9 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
   const [dangDuaVao, setDangDuaVao] = useState(false);
   // Khung xem MỘT file đã tách: chỉ hiện đúng các trang của file đó (không mở cả file gốc).
   const [xem, setXem] = useState<number | null>(null);
+  // Khung "✂ Tách trang": file thứ `i`, `cat` = các trang mà SAU trang đó sẽ cắt. Hiện ĐỦ ảnh mọi trang của file và
+  // các file mới luôn phủ kín from..to — không trang nào bị rơi (Docs 15/10/2026: tách xong mất trang 3).
+  const [tach, setTach] = useState<{ i: number; cat: number[] } | null>(null);
   useEffect(() => {
     if (xem === null) return;
     const dong = (e: KeyboardEvent) => e.key === "Escape" && setXem(null);
@@ -309,6 +312,16 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
     });
   }, [doan, mucTheoId, kq, DUOI]);
 
+  // Trang không thuộc file nào (vd "Bỏ file này" nhầm) — có nút khôi phục ở khung cảnh báo.
+  const trangThieu = useMemo(() => {
+    if (!kq) return [];
+    const co = new Array(kq.pageCount + 1).fill(false);
+    doan.forEach((d) => {
+      for (let p = Math.max(1, d.from); p <= Math.min(d.to, kq.pageCount); p++) co[p] = true;
+    });
+    return co.map((x, p) => (p > 0 && !x ? p : 0)).filter(Boolean);
+  }, [doan, kq]);
+
   // Cảnh báo: trang chưa thuộc file nào / trang nằm trong 2 file / số trang sai.
   const canhBao = useMemo(() => {
     if (!kq) return [];
@@ -412,16 +425,54 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
     setDangDuaVao(false);
   }
 
-  function tachDoi(i: number) {
+  /** Cắt file thứ i SAU mỗi trang trong `cat`. File đầu giữ mục / lý do AI, các file sau "Tách tay" chưa chọn mục.
+   *  Các đoạn nối liền from..to nên KHÔNG mất trang nào. */
+  function tachTheoDiemCat(i: number, cat: number[]) {
+    setDoan((cu) => {
+      const d = cu[i];
+      if (!d) return cu;
+      const diem = [...new Set(cat)].filter((p) => p >= d.from && p < d.to).sort((a, b) => a - b);
+      if (!diem.length) return cu;
+      const moi: Doan[] = [];
+      let tu = d.from;
+      for (const p of [...diem, d.to]) {
+        moi.push(moi.length ? { from: tu, to: p, itemId: null, reason: "Tách tay" } : { ...d, from: tu, to: p, duyet: false });
+        tu = p + 1;
+      }
+      return [...cu.slice(0, i), ...moi, ...cu.slice(i + 1)];
+    });
+  }
+
+  /** Mỗi đoạn trang liền nhau không thuộc file nào -> 1 file mới, chèn đúng vị trí theo số trang. */
+  function khoiPhucTrangThieu() {
+    if (!trangThieu.length) return;
+    const doanThieu: Doan[] = [];
+    for (const p of trangThieu) {
+      const cuoi = doanThieu[doanThieu.length - 1];
+      if (cuoi && cuoi.to === p - 1) cuoi.to = p;
+      else doanThieu.push({ from: p, to: p, itemId: null, reason: "Trang bị thiếu — đã khôi phục" });
+    }
+    setDoan((cu) => {
+      const ra = [...cu];
+      for (const m of doanThieu) {
+        // Chèn trước file đầu tiên bắt đầu sau đoạn thiếu (giữ thứ tự trang).
+        const k = ra.findIndex((d) => d.from > m.to);
+        ra.splice(k < 0 ? ra.length : k, 0, m);
+      }
+      return ra;
+    });
+  }
+
+  function boFile(i: number) {
     const d = doan[i];
-    if (d.from >= d.to) return;
-    const giua = d.from;
-    setDoan((cu) => [
-      ...cu.slice(0, i),
-      { ...d, to: giua, duyet: false },
-      { from: giua + 1, to: d.to, itemId: null, reason: "Tách tay" },
-      ...cu.slice(i + 1),
-    ]);
+    if (
+      !confirm(
+        `Bỏ file "${tenFiles[i]}" (trang ${d.from}${d.to > d.from ? `–${d.to}` : ""})?\n\n` +
+          "Các trang này sẽ KHÔNG nằm trong file nào. Bỏ nhầm thì bấm “Khôi phục trang bị thiếu” ở khung cảnh báo.",
+      )
+    )
+      return;
+    setDoan((cu) => cu.filter((_, k) => k !== i));
   }
 
   function gopXuong(i: number) {
@@ -656,11 +707,24 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
             <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{kq.aiNote}</p>
           )}
           {canhBao.length > 0 && (
-            <ul className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 list-disc list-inside">
-              {canhBao.map((c) => (
-                <li key={c}>{c}</li>
-              ))}
-            </ul>
+            <div className="flex flex-wrap items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              <ul className="mr-auto list-disc list-inside">
+                {canhBao.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+              {trangThieu.length > 0 && (
+                <button
+                  type="button"
+                  onClick={khoiPhucTrangThieu}
+                  disabled={dangDuaVao}
+                  className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-40"
+                  title="Mỗi đoạn trang không thuộc file nào thành 1 file riêng (chưa chọn mục)"
+                >
+                  ↺ Khôi phục trang bị thiếu ({trangThieu.length})
+                </button>
+              )}
+            </div>
           )}
 
           <ol className="flex flex-col gap-3">
@@ -784,12 +848,12 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
                     {/* "Tách trang đầu" / "Gộp với file dưới": có ở CẢ 2 trang (trang bản dịch bỏ 13/10, Docs bật lại 14/10/2026). */}
                     <button
                       type="button"
-                      onClick={() => tachDoi(i)}
+                      onClick={() => setTach({ i, cat: [d.from] })}
                       disabled={khoa || d.from >= d.to}
-                      title="Trang đầu thành 1 file riêng, các trang sau thành file khác"
+                      title="Xem đủ các trang của file này và chọn chỗ cắt — không trang nào bị mất"
                       className="rounded-lg px-3 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-30"
                     >
-                      ✂ Tách trang đầu
+                      ✂ Tách trang
                     </button>
                     <button
                       type="button"
@@ -802,7 +866,7 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDoan((cu) => cu.filter((_, k) => k !== i))}
+                      onClick={() => boFile(i)}
                       disabled={khoa}
                       className="rounded-lg px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-30"
                     >
@@ -815,6 +879,23 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
             })}
           </ol>
         </section>
+      )}
+
+      {/* Khung "✂ Tách trang": ĐỦ ảnh mọi trang của file, bấm khe giữa 2 trang để cắt / bỏ cắt. */}
+      {kq && tach && doan[tach.i] && (
+        <KhungTachTrang
+          d={doan[tach.i]}
+          ten={tenFiles[tach.i]}
+          jobId={kq.jobId}
+          soTrangGoc={kq.pageCount}
+          cat={tach.cat}
+          doiCat={(p) => setTach({ i: tach.i, cat: tach.cat.includes(p) ? tach.cat.filter((x) => x !== p) : [...tach.cat, p] })}
+          dong={() => setTach(null)}
+          xacNhan={() => {
+            tachTheoDiemCat(tach.i, tach.cat);
+            setTach(null);
+          }}
+        />
       )}
 
       {/* Khung xem một file đã tách — CHỈ các trang from..to của file đó, theo bảng đang sửa. */}
@@ -880,5 +961,105 @@ export function TachFile({ banDich = false }: { banDich?: boolean }) {
         </div>
       )}
     </main>
+  );
+}
+
+const MAU_FILE = ["bg-indigo-100 text-indigo-800", "bg-amber-100 text-amber-800", "bg-emerald-100 text-emerald-800", "bg-rose-100 text-rose-800"];
+
+/** Khung "✂ Tách trang": hiện ĐỦ ảnh các trang from..to, bấm ✂ giữa 2 trang để cắt / bỏ cắt; xem trước các file sẽ
+ *  tạo (tô màu theo file). Các file luôn phủ kín mọi trang nên không mất trang nào. */
+function KhungTachTrang({
+  d,
+  ten,
+  jobId,
+  soTrangGoc,
+  cat,
+  doiCat,
+  dong,
+  xacNhan,
+}: {
+  d: Doan;
+  ten: string;
+  jobId: string;
+  soTrangGoc: number;
+  cat: number[];
+  doiCat: (p: number) => void;
+  dong: () => void;
+  xacNhan: () => void;
+}) {
+  useEffect(() => {
+    const thoat = (e: KeyboardEvent) => e.key === "Escape" && dong();
+    window.addEventListener("keydown", thoat);
+    return () => window.removeEventListener("keydown", thoat);
+  }, [dong]);
+  const cacTrang = Array.from({ length: Math.max(0, Math.min(d.to, soTrangGoc) - d.from + 1) }, (_, k) => d.from + k);
+  const nhom: number[][] = [];
+  cacTrang.forEach((p) => {
+    if (!nhom.length || cat.includes(p - 1)) nhom.push([p]);
+    else nhom[nhom.length - 1].push(p);
+  });
+  const mauTrang = (p: number) => MAU_FILE[nhom.findIndex((g) => g.includes(p)) % MAU_FILE.length];
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/70 p-4"
+      onMouseDown={(e) => e.target === e.currentTarget && dong()}
+    >
+      <div className="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-neutral-100 shadow-2xl">
+        <div className="flex flex-wrap items-center gap-3 border-b border-neutral-200 bg-white px-5 py-3">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-neutral-900">✂ Tách: {ten}</p>
+            <p className="text-xs text-neutral-500">
+              Trang {d.from}–{d.to} · {cacTrang.length} trang. Bấm <b>✂</b> giữa 2 trang để cắt / bỏ cắt — mọi trang đều
+              nằm trong một file, không trang nào bị mất.
+            </p>
+          </div>
+          <button type="button" onClick={dong} className="rounded-lg px-3 py-1.5 text-sm font-semibold text-neutral-600 hover:bg-neutral-100">
+            Huỷ
+          </button>
+          <button
+            type="button"
+            disabled={nhom.length < 2}
+            onClick={xacNhan}
+            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-40"
+          >
+            Tách thành {nhom.length} file
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-1.5 border-b border-neutral-200 bg-white px-5 py-2 text-xs">
+          {nhom.map((g, k) => (
+            <span key={k} className={`rounded-full px-2.5 py-0.5 font-semibold ${MAU_FILE[k % MAU_FILE.length]}`}>
+              File {k + 1}: trang {g[0]}
+              {g.length > 1 ? `–${g[g.length - 1]}` : ""}
+              {k === 0 ? " (giữ mục hiện tại)" : " (chọn mục sau)"}
+            </span>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-stretch gap-y-4 overflow-y-auto p-5">
+          {cacTrang.map((p, k) => (
+            <div key={p} className="flex items-stretch">
+              <figure className="w-40">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={`${API_URL}/split-tool/${jobId}/pages/${p}?dpi=60`} alt={`Trang ${p}`} className="w-full rounded bg-white shadow" />
+                <figcaption className={`mt-1 rounded text-center text-xs font-semibold ${mauTrang(p)}`}>Trang {p}</figcaption>
+              </figure>
+              {k < cacTrang.length - 1 && (
+                <button
+                  type="button"
+                  onClick={() => doiCat(p)}
+                  title={cat.includes(p) ? `Bỏ cắt giữa trang ${p} và ${p + 1}` : `Cắt giữa trang ${p} và ${p + 1}`}
+                  className={`mx-1.5 flex w-8 items-center justify-center rounded-lg border-2 border-dashed text-base transition-colors ${
+                    cat.includes(p)
+                      ? "border-red-500 bg-red-50 text-red-600"
+                      : "border-transparent text-neutral-300 hover:border-neutral-300 hover:text-neutral-500"
+                  }`}
+                >
+                  ✂
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
