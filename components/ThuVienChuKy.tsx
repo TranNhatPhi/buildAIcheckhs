@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { CatChuKy } from "@/components/CatChuKy";
 
 /** Một ảnh trong thư viện chữ ký của hồ sơ (backend imm5645 / imm1295 .anhChuKy). */
 export interface AnhChuKy {
@@ -41,13 +42,15 @@ export function ThuVienChuKy({
   chonAnh: (id: string) => void;
   doiAnh: (ds: AnhChuKy[]) => void; // đổi tên -> "chưa lưu"
   daLuu: (kq: KetQuaThuVien) => void; // backend đã lưu (thêm / xoá ảnh)
-  nutThem?: (chay: (fn: () => Promise<Response | null>) => Promise<void>, dangTai: boolean) => ReactNode;
+  nutThem?: (chay: (fn: () => Promise<Response | null>) => Promise<boolean>, dangTai: boolean) => ReactNode;
 }) {
   const [dangTai, setDangTai] = useState(false);
   const [loi, setLoi] = useState<string[]>([]);
+  const [moCat, setMoCat] = useState(false);
 
-  /** Gọi 1 API thêm ảnh (tải file / lấy từ form khác) rồi cập nhật thư viện + chọn ảnh mới nhất. */
-  async function chay(fn: () => Promise<Response | null>) {
+  /** Gọi 1 API thêm ảnh (tải file / cắt từ file / lấy từ form khác) rồi cập nhật thư viện + chọn ảnh mới nhất.
+   *  Trả true khi thêm được. */
+  async function chay(fn: () => Promise<Response | null>): Promise<boolean> {
     setLoi([]);
     setDangTai(true);
     try {
@@ -55,22 +58,23 @@ export function ThuVienChuKy({
       const d = r ? await r.json().catch(() => null) : null;
       if (!r?.ok || !d) {
         setLoi([typeof d?.detail === "string" ? d.detail : "Không thêm được ảnh chữ ký — thử lại."]);
-        return;
+        return false;
       }
       daLuu(d);
       setLoi(d.loi ?? []);
       const moi = (d.anhChuKy as AnhChuKy[]).filter((a) => !anhChuKy.some((x) => x.id === a.id));
       if (moi.length) chonAnh(moi[moi.length - 1].id);
+      return moi.length > 0;
     } finally {
       setDangTai(false);
     }
   }
 
-  function taiFile(files: File[]) {
-    if (!files.length) return;
+  function taiFile(files: File[]): Promise<boolean> {
+    if (!files.length) return Promise.resolve(false);
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
-    chay(() => fetch(`${apiGoc}/signature`, { method: "POST", body: fd }).catch(() => null));
+    return chay(() => fetch(`${apiGoc}/signature`, { method: "POST", body: fd }).catch(() => null));
   }
 
   async function xoaAnh(a: AnhChuKy) {
@@ -99,8 +103,23 @@ export function ThuVienChuKy({
             }}
           />
         </label>
+        <button
+          type="button"
+          onClick={() => setMoCat(true)}
+          disabled={dangTai}
+          className="rounded-xl border border-indigo-200 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-40"
+          title="Mở ảnh / PDF / Word có chữ ký, bôi khung quanh chữ ký để lấy ra"
+        >
+          ✂ Cắt chữ ký từ ảnh / PDF / Word
+        </button>
         {nutThem?.(chay, dangTai)}
       </div>
+      {moCat && (
+        <CatChuKy
+          dong={() => setMoCat(false)}
+          them={(anh, ten) => taiFile([new File([anh], `${ten}.png`, { type: "image/png" })])}
+        />
+      )}
       {loi.length > 0 && (
         <ul className="list-disc list-inside text-sm text-red-600">
           {loi.map((l) => (

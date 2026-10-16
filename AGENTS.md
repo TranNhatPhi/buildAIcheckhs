@@ -455,6 +455,16 @@ màu; `tachTheoDiemCat` tạo các đoạn NỐI LIỀN nên không rơi trang (
 thuộc file nào (`trangThieu`, vd bấm "Bỏ file này" nhầm — Docs gặp mất trang 3 bản Trần Văn Hùng) -> nút "↺ Khôi phục
 trang bị thiếu" ở khung cảnh báo, mỗi đoạn liền thành 1 file chèn đúng thứ tự. "Bỏ file này" giờ hỏi lại, nói rõ trang.
 
+## Cắt chữ ký từ ảnh / PDF / Word (16/10/2026)
+
+Nút "✂ Cắt chữ ký từ ảnh / PDF / Word" trong thư viện chữ ký dùng chung (`ThuVienChuKy` -> `components/CatChuKy.tsx`),
+có ở cả IMM5645e và IMM1295e. Chọn file -> POST `/signature-tools/preview` (ảnh từng trang JPEG ≤1400 px, tối đa 20
+trang; Word/Excel qua LibreOffice) -> kéo chuột bôi khung quanh 1 chữ ký -> POST `/signature-tools/crop` (file + page +
+x,y,w,h tỉ lệ; PDF/Word render RIÊNG vùng đó ở 300 DPI, ảnh cắt thẳng) trả PNG thô -> gửi vào POST
+`/imm5645|imm1295/{id}/signature` như ảnh tải lên (xoá nền, cắt sát, lưu thư viện). Khung không đóng sau khi thêm, tên tự
+tăng ("Hùng 1" -> "Hùng 2"). `routers/cat_chu_ky.py` KHÔNG lưu file gốc (ảnh mẫu Docs có cả email + mật khẩu) — giao
+diện gửi lại file mỗi lần cắt; chỉ vùng đã cắt được lưu.
+
 ## DeepSeek: max_tokens gồm cả phần "nghĩ"
 
 Model `DEEPSEEK_MODEL` (deepseek-v4-flash) NGHĨ trước khi trả lời và phần nghĩ ăn vào `max_tokens`. Đặt thấp là

@@ -32,6 +32,7 @@ from routers import (
     final_docs,
     imm5645,
     imm1295,
+    cat_chu_ky,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -61,6 +62,7 @@ app.include_router(split_tool.router)
 app.include_router(final_docs.router)
 app.include_router(imm5645.router)
 app.include_router(imm1295.router)
+app.include_router(cat_chu_ky.router)
 
 
 @app.middleware("http")
