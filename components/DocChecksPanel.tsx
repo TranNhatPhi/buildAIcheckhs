@@ -1,14 +1,127 @@
 "use client";
 
-import { useState } from "react";
-import type { DocChecksDTO, DocExpiryDTO } from "@/lib/client-types";
-import { API_URL } from "@/lib/format";
+import { useEffect, useState } from "react";
+import type { DataConflictDTO, DocChecksDTO, DocExpiryDTO, DocumentDTO } from "@/lib/client-types";
+import { API_URL, documentPageCount } from "@/lib/format";
 
 type Props = {
   caseId: string;
   checks: DocChecksDTO;
+  // Để bấm vào một dòng lệch là mở popup xem các file (cần số trang / loại file).
+  documents: DocumentDTO[];
   onChanged: () => void;
 };
+
+const LA_ANH_TRANG = /\.(pdf|docx?|odt|rtf|xlsx?|ods)$/i;
+
+/** Một file trong popup so sánh: giá trị đang lệch + ảnh từng trang (PDF / Word đã lưu ảnh trang) hoặc ảnh gốc. */
+function CotFile({ v, doc }: { v: { value: string; filename: string; documentId: string }; doc?: DocumentDTO }) {
+  const [loiTrang, setLoiTrang] = useState(false);
+  const soTrang = doc ? documentPageCount(doc) ?? 1 : 1;
+  const coAnhTrang = !!doc && (doc.mimeType === "application/pdf" || LA_ANH_TRANG.test(doc.originalFilename));
+  const urlFile = `${API_URL}/documents/${v.documentId}/file`;
+  return (
+    <div className="flex min-h-0 min-w-[300px] flex-1 flex-col overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
+      <div className="border-b border-neutral-200 bg-white px-3 py-2">
+        <p className="text-base font-bold text-orange-800">{hienGiaTri(v.value)}</p>
+        <p className="truncate text-xs text-neutral-600" title={v.filename}>
+          {v.filename}
+        </p>
+        <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] text-neutral-400">
+          <span className="truncate">
+            {doc?.matchedChecklistItem?.nameVi ?? "Chưa xếp mục"} · {soTrang} trang
+          </span>
+          <a href={urlFile} target="_blank" rel="noreferrer" className="shrink-0 font-semibold text-indigo-600 hover:underline">
+            Mở file gốc ↗
+          </a>
+        </div>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col items-center gap-3 overflow-y-auto p-3">
+        {!doc ? (
+          <p className="text-sm text-neutral-500">File không còn trong hồ sơ.</p>
+        ) : coAnhTrang && !loiTrang ? (
+          Array.from({ length: soTrang }, (_, k) => (
+            <figure key={k} className="w-full">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`${API_URL}/documents/${v.documentId}/pages/${k + 1}`}
+                alt={`Trang ${k + 1}`}
+                loading="lazy"
+                onError={() => setLoiTrang(true)}
+                className="w-full rounded bg-white shadow"
+              />
+              <figcaption className="mt-1 text-center text-[11px] text-neutral-400">Trang {k + 1}</figcaption>
+            </figure>
+          ))
+        ) : coAnhTrang ? (
+          <iframe src={urlFile} title={v.filename} className="h-[70vh] w-full rounded bg-white" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={urlFile} alt={v.filename} className="w-full rounded bg-white shadow" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+type GiaTriFile = DataConflictDTO["values"][number];
+
+/** Popup xem file, đặt cạnh nhau (file vừa bấm đứng đầu) — dùng cho cả mục LỆCH (nhiều file) và mục HẠN GIẤY TỜ (1
+ *  file). 16/10/2026 Docs "bấm vào ra popup để check cho dễ". */
+function PopupFile({
+  tieuDe,
+  moTa,
+  ds: dsGoc,
+  dau,
+  documents,
+  dong,
+  daCheck,
+}: {
+  tieuDe: string;
+  moTa: string;
+  ds: GiaTriFile[];
+  dau: string;
+  documents: DocumentDTO[];
+  dong: () => void;
+  daCheck: () => void;
+}) {
+  useEffect(() => {
+    const thoat = (e: KeyboardEvent) => e.key === "Escape" && dong();
+    window.addEventListener("keydown", thoat);
+    return () => window.removeEventListener("keydown", thoat);
+  }, [dong]);
+  const ds = [...dsGoc].sort((a, b) => Number(b.documentId === dau) - Number(a.documentId === dau));
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/70 p-4"
+      onMouseDown={(e) => e.target === e.currentTarget && dong()}
+    >
+      <div className="flex h-full max-h-[94vh] w-full max-w-7xl flex-col gap-3 overflow-hidden rounded-2xl bg-white p-4 shadow-2xl">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="mr-auto">
+            <h3 className="text-lg font-bold text-neutral-800">{tieuDe}</h3>
+            <p className="text-xs text-neutral-500">{moTa}</p>
+          </div>
+          <button
+            type="button"
+            onClick={daCheck}
+            className="rounded-full border border-emerald-300 bg-white px-3 py-1.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+          >
+            ✓ Đã check
+          </button>
+          <button type="button" onClick={dong} className="rounded-full px-3 py-1.5 text-sm text-neutral-500 hover:bg-neutral-100">
+            ✕ Đóng
+          </button>
+        </div>
+        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto">
+          {ds.map((v) => (
+            <CotFile key={v.documentId + v.value} v={v} doc={documents.find((d) => d.id === v.documentId)} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** "2026-03-01" -> "01/03/2026". Cắt chuỗi chứ KHÔNG dùng new Date(): chuỗi chỉ có ngày được
  *  trình duyệt hiểu là nửa đêm giờ UTC, đem về giờ máy có thể lùi mất một ngày — sai đúng vào
@@ -30,7 +143,17 @@ function moTaConLai(daysLeft: number) {
   return `còn ${daysLeft} ngày`;
 }
 
-function DongHan({ han, onChanged }: { han: DocExpiryDTO; onChanged: () => void }) {
+function DongHan({
+  han,
+  onChanged,
+  onXem,
+  onCheck,
+}: {
+  han: DocExpiryDTO;
+  onChanged: () => void;
+  onXem: () => void;
+  onCheck: () => void;
+}) {
   const [dangSua, setDangSua] = useState(false);
   const [ngay, setNgay] = useState(han.expiresAt);
   const [dangLuu, setDangLuu] = useState(false);
@@ -59,12 +182,19 @@ function DongHan({ han, onChanged }: { han: DocExpiryDTO; onChanged: () => void 
       }`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
+        <button
+          type="button"
+          onClick={onXem}
+          className="-mx-1 min-w-0 rounded px-1 text-left hover:bg-white/60"
+          title="Bấm để mở file xem ngày hết hạn"
+        >
           <p className="truncate text-sm font-semibold text-neutral-800">
-            {han.itemName ?? han.filename}
+            {han.itemName ?? han.filename} <span className="text-indigo-500">🔍</span>
           </p>
           <p className="mt-0.5 text-xs text-neutral-600">
-            {han.itemName && <span className="text-neutral-500">{han.filename} · </span>}
+            {han.itemName && (
+              <span className="text-neutral-500 underline decoration-dotted underline-offset-2">{han.filename} · </span>
+            )}
             Hết hạn {ngayVN(han.expiresAt)} —{" "}
             <strong className={quaHan ? "text-red-700" : "text-amber-700"}>
               {moTaConLai(han.daysLeft)}
@@ -73,16 +203,26 @@ function DongHan({ han, onChanged }: { han: DocExpiryDTO; onChanged: () => void 
                 ngày nhân viên đã tự đối chiếu với bản gốc. */}
             {han.source === "AI" ? " · AI đọc từ giấy tờ" : " · nhân viên đã sửa tay"}
           </p>
-        </div>
+        </button>
 
         {!dangSua && (
-          <button
-            type="button"
-            onClick={() => setDangSua(true)}
-            className="shrink-0 rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700 shadow-sm transition-colors hover:bg-neutral-100"
-          >
-            Sửa ngày
-          </button>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => setDangSua(true)}
+              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700 shadow-sm transition-colors hover:bg-neutral-100"
+            >
+              Sửa ngày
+            </button>
+            <button
+              type="button"
+              onClick={onCheck}
+              title="Đã kiểm tra — ẩn mục này (sửa ngày / thay file thì tự hiện lại)"
+              className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition-colors hover:bg-emerald-50"
+            >
+              ✓ Đã check
+            </button>
+          </div>
         )}
       </div>
 
@@ -135,11 +275,16 @@ function DongHan({ han, onChanged }: { han: DocExpiryDTO; onChanged: () => void 
  * Không có gì để báo thì KHÔNG hiện gì cả: một khung "mọi thứ đều ổn" nằm thường trực chỉ
  * làm nhân viên quen mắt bỏ qua đúng chỗ này, tới lúc có cảnh báo thật cũng không ai nhìn.
  */
-export function DocChecksPanel({ caseId, checks, onChanged }: Props) {
-  // Mục lệch vừa bấm ✓ — ẩn NGAY trên màn hình, không chờ tải lại hồ sơ.
+export function DocChecksPanel({ caseId, checks, documents, onChanged }: Props) {
+  // Popup xem file của một mục (lệch / hạn): khoá mục + các file + file vừa bấm (đứng đầu).
+  const [xem, setXem] = useState<{ key: string; tieuDe: string; moTa: string; ds: GiaTriFile[]; dau: string } | null>(null);
+  // Mục vừa bấm ✓ — ẩn NGAY trên màn hình, không chờ tải lại hồ sơ.
   const [daCheck, setDaCheck] = useState<string[]>([]);
   const conLech = checks.conflicts.filter((x) => !daCheck.includes(x.key));
-  const coHan = checks.expiries.length > 0;
+  const conHan = checks.expiries.filter((h) => !daCheck.includes(h.key));
+  const soQuaHan = conHan.filter((h) => h.state === "EXPIRED").length;
+  const soSapHet = conHan.length - soQuaHan;
+  const coHan = conHan.length > 0;
   const coBatNhat = conLech.length > 0;
 
   /** Bấm ✓: nhân viên đã đối chiếu xong mục này -> ẩn (lưu theo hồ sơ, máy khác / F5 cũng ẩn). File đổi làm giá
@@ -167,25 +312,38 @@ export function DocChecksPanel({ caseId, checks, onChanged }: Props) {
           <div className="mb-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <h2 className="text-base font-bold text-neutral-800">Hạn giấy tờ</h2>
             <span className="text-xs text-neutral-500">
-              {checks.expiredCount > 0 && (
-                <strong className="text-red-700">{checks.expiredCount} đã quá hạn</strong>
-              )}
-              {checks.expiredCount > 0 && checks.expiringSoonCount > 0 && " · "}
-              {checks.expiringSoonCount > 0 && (
+              {soQuaHan > 0 && <strong className="text-red-700">{soQuaHan} đã quá hạn</strong>}
+              {soQuaHan > 0 && soSapHet > 0 && " · "}
+              {soSapHet > 0 && (
                 <span className="text-amber-700">
-                  {checks.expiringSoonCount} sắp hết hạn (trong {checks.warnDays} ngày)
+                  {soSapHet} sắp hết hạn (trong {checks.warnDays} ngày)
                 </span>
               )}
             </span>
           </div>
           <ul className="space-y-2">
-            {checks.expiries.map((h) => (
-              <DongHan key={h.documentId} han={h} onChanged={onChanged} />
+            {conHan.map((h) => (
+              <DongHan
+                key={h.key}
+                han={h}
+                onChanged={onChanged}
+                onCheck={() => danhDauDaKiemTra(h.key)}
+                onXem={() =>
+                  setXem({
+                    key: h.key,
+                    tieuDe: `Hạn giấy tờ · ${h.itemName ?? h.filename}`,
+                    moTa: `Hết hạn ${ngayVN(h.expiresAt)} — ${moTaConLai(h.daysLeft)} (${h.source === "AI" ? "AI đọc" : "nhân viên sửa tay"}). Xem file để kiểm tra ngày.`,
+                    ds: [{ value: `Hết hạn ${ngayVN(h.expiresAt)}`, filename: h.filename, documentId: h.documentId }],
+                    dau: h.documentId,
+                  })
+                }
+              />
             ))}
           </ul>
           <p className="mt-2 text-xs text-neutral-500">
             Chỉ liệt kê giấy tờ đọc được ngày hết hạn. File không có ngày, hoặc AI không đọc
-            chắc chắn, sẽ không hiện ở đây — mở file để tự kiểm tra.
+            chắc chắn, sẽ không hiện ở đây — mở file để tự kiểm tra. Bấm vào một mục (🔍) để mở file; “✓ Đã check” để ẩn
+            mục đã kiểm tra (sửa ngày / thay file thì tự hiện lại).
           </p>
         </div>
       )}
@@ -217,8 +375,25 @@ export function DocChecksPanel({ caseId, checks, onChanged }: Props) {
                 <ul className="mt-1 space-y-0.5">
                   {x.values.map((v) => (
                     <li key={v.filename + v.value} className="text-xs text-neutral-700">
-                      <strong className="text-orange-800">{hienGiaTri(v.value)}</strong>
-                      <span className="text-neutral-500"> — {v.filename}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setXem({
+                            key: x.key,
+                            tieuDe: `${x.ownerLabel} · ${x.fieldLabel}`,
+                            moTa: `${x.values.length} file đang ghi khác nhau — đặt cạnh nhau để đối chiếu.`,
+                            ds: x.values,
+                            dau: v.documentId,
+                          })
+                        }
+                        disabled={!v.documentId}
+                        className="rounded px-1 -mx-1 text-left hover:bg-orange-100 disabled:hover:bg-transparent"
+                        title="Bấm để mở các file của mục này cạnh nhau"
+                      >
+                        <strong className="text-orange-800">{hienGiaTri(v.value)}</strong>
+                        <span className="text-neutral-500 underline decoration-dotted underline-offset-2"> — {v.filename}</span>
+                        <span className="ml-1 text-indigo-500">🔍</span>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -228,9 +403,25 @@ export function DocChecksPanel({ caseId, checks, onChanged }: Props) {
           <p className="mt-2 text-xs text-neutral-500">
             Chỉ so giữa các giấy tờ của cùng một người, và số CCCD chỉ so với số CCCD (số hộ
             chiếu của cùng người vốn khác số CCCD, không phải mâu thuẫn). Bấm “✓ Đã check” khi đã đối chiếu xong —
-            mục đó ẩn đi; nếu sau này file đổi làm giá trị lệch khác đi thì mục tự hiện lại.
+            mục đó ẩn đi; nếu sau này file đổi làm giá trị lệch khác đi thì mục tự hiện lại. Bấm vào một dòng (🔍) để mở
+            các file của mục đó cạnh nhau.
           </p>
         </div>
+      )}
+      {xem && !daCheck.includes(xem.key) && (
+        <PopupFile
+          tieuDe={xem.tieuDe}
+          moTa={xem.moTa}
+          ds={xem.ds}
+          dau={xem.dau}
+          documents={documents}
+          dong={() => setXem(null)}
+          daCheck={() => {
+            const k = xem.key;
+            setXem(null);
+            danhDauDaKiemTra(k);
+          }}
+        />
       )}
     </section>
   );

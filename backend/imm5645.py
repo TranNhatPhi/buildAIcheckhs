@@ -22,6 +22,7 @@ theo AcroForm — nên điền CẢ HAI (`dien_pdf`), không thì mở bằng Ad
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -32,6 +33,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import fitz
+import numpy as np
+from PIL import Image, ImageOps
 
 import llm
 
@@ -249,7 +252,9 @@ def chuan_hoa(d: dict) -> dict:
         "canhBao": [str(x) for x in (d.get("canhBao") or [])][:20],
         "nguonGiayTo": [str(x) for x in (d.get("nguonGiayTo") or [])][:40],
         "signDate": str(d.get("signDate") or "").strip(),
+        "anhChuKy": chuan_hoa_anh_chu_ky(d.get("anhChuKy")),
     }
+    ra["chuKy"] = chuan_hoa_chu_ky(d.get("chuKy"), [a["id"] for a in ra["anhChuKy"]])
     ra["applicant"]["accompany"] = ""
     for c in ra["children"]:
         if not c["relationship"]:
@@ -380,11 +385,35 @@ def _gia_tri_o(d: dict) -> dict:
 
 _XFA_NS = "{http://www.xfa.org/schema/xfa-data/1.0/}"
 
+# Nút "Save / Reset Form / Print Form" đầu mỗi trang của form IRCC — Docs yêu cầu bỏ khỏi file tải xuống (16/10/2026).
+_NUT_BAM = re.compile(r"^(Save|Reset|Print)Button\d+$")
 
-def dien_pdf(d: dict) -> bytes:
+
+def _bo_nut_bam(doc) -> None:
+    """Gỡ 3 nút ở CẢ HAI lớp: xoá widget AcroForm (trình duyệt vẽ theo lớp này) và ẩn field trong template XFA (Adobe
+    vẽ theo lớp này — chỉ xoá widget thì mở Adobe vẫn thấy nút)."""
+    for trang in doc:
+        for w in [w for w in trang.widgets() if _NUT_BAM.match(w.field_name.split(".")[-1].split("[")[0])]:
+            trang.delete_widget(w)
+    acro = int(doc.xref_get_key(doc.pdf_catalog(), "AcroForm")[1].split()[0])
+    phan = dict(re.findall(r"\((\w+)\)\s*(\d+) 0 R", doc.xref_get_key(acro, "XFA")[1]))
+    x_tpl = int(phan["template"])
+    tpl = doc.xref_stream(x_tpl).decode("utf-8")
+    moi, so = re.subn(
+        r'<field(?![^>]*\bpresence=)([^>]*\bname="(?:Save|Reset|Print)Button\d+")',
+        r'<field presence="hidden"\1',
+        tpl,
+    )
+    if so:
+        doc.update_stream(x_tpl, moi.encode("utf-8"))
+
+
+def dien_pdf(d: dict, anh_chu_ky: dict[str, bytes] | None = None) -> bytes:
+    """`anh_chu_ky` = {id ảnh: PNG} — chèn chữ ký ở các chỗ d["chuKy"] (mỗi chỗ dùng ảnh của nó)."""
     o = _gia_tri_o(d)
     doc = fitz.open(MAU)
     try:
+        _bo_nut_bam(doc)
         # --- AcroForm (trình duyệt, máy in). Form khai báo Courier New 8pt (tình trạng 6,1pt) nhưng PyMuPDF không có
         # Courier New -> vẽ bằng Helvetica; ép Courier (cùng mặt chữ) để giống bản Adobe / file mẫu Docs.
         for trang in doc:
@@ -429,6 +458,152 @@ def dien_pdf(d: dict) -> bytes:
             else:
                 nut.text = v or None
         doc.update_stream(x_ds, ET.tostring(goc, encoding="utf-8"))
+        if anh_chu_ky and d.get("chuKy"):
+            _chen_chu_ky(doc, anh_chu_ky, d["chuKy"])
         return doc.tobytes(garbage=1, deflate=True)
+    finally:
+        doc.close()
+
+
+# ---------------------------------------------------------------------------
+# 5. Chữ ký (Docs yêu cầu 16/10/2026: chọn ảnh chữ ký, kéo tới đúng chỗ rồi đưa vào PDF)
+# ---------------------------------------------------------------------------
+# NHIỀU ảnh chữ ký mỗi hồ sơ (Docs 16/10/2026: "úp nhiều file và nhiều chữ ký khác nhau" — đương đơn, bố, mẹ...).
+# Ảnh ở MinIO "<caseId>/imm5645-chu-ky/<id>.png" (PNG nền TRONG SUỐT, đã cắt sát nét) — trong thư mục hồ sơ nên xoá /
+# dọn hồ sơ là mất theo. Dữ liệu form: anhChuKy = [{id, ten}] (thư viện ảnh, tên sửa được); chuKy = [{page, x, y, w,
+# anh}] — page 0/1, x, y = góc trên trái, w = bề rộng, TỈ LỆ theo khổ trang (0..1), chiều cao suy từ tỉ lệ ảnh; anh = id.
+# Bản đầu (16/10 sáng) chỉ 1 ảnh "<caseId>/imm5645-chu-ky.png", chỗ ký không có "anh" — `KHOA_CU` để chuyển sang.
+
+def khoa_chu_ky(case_id: str, anh_id: str) -> str:
+    return f"{case_id}/imm5645-chu-ky/{anh_id}.png"
+
+
+def khoa_cu(case_id: str) -> str:
+    return f"{case_id}/imm5645-chu-ky.png"
+
+
+SO_CHU_KY_TOI_DA = 12
+SO_ANH_TOI_DA = 10
+_ID_ANH = re.compile(r"^[a-z0-9]{1,16}$")
+
+
+def chuan_hoa_anh_chu_ky(ds) -> list[dict]:
+    ra, da_co = [], set()
+    for x in ds if isinstance(ds, list) else []:
+        if isinstance(x, dict) and _ID_ANH.match(str(x.get("id", ""))) and x["id"] not in da_co:
+            da_co.add(x["id"])
+            ra.append({"id": x["id"], "ten": str(x.get("ten") or "").strip()[:40] or f"Chữ ký {len(ra) + 1}"})
+    return ra[:SO_ANH_TOI_DA]
+
+
+def chuan_hoa_chu_ky(ds, cac_anh: list[str]) -> list[dict]:
+    """Chỗ ký hợp lệ; bỏ chỗ dùng ảnh đã xoá. Chỗ ký đời đầu (không có "anh") -> ảnh đầu tiên."""
+    ra = []
+    for x in ds if isinstance(ds, list) else []:
+        if not isinstance(x, dict):
+            continue
+        try:
+            page, cx, cy, w = int(x.get("page", 0)), float(x["x"]), float(x["y"]), float(x["w"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        anh = str(x.get("anh") or (cac_anh[0] if cac_anh else ""))
+        if page not in (0, 1) or anh not in cac_anh:
+            continue
+        w = min(max(w, 0.03), 0.6)
+        ra.append({"page": page, "x": round(min(max(cx, 0.0), 1 - w), 4), "y": round(min(max(cy, 0.0), 0.98), 4),
+                   "w": round(w, 4), "anh": anh})
+    return ra[:SO_CHU_KY_TOI_DA]
+
+
+def xu_ly_chu_ky(content: bytes) -> bytes:
+    """Ảnh chữ ký (chụp / scan, nền giấy trắng hoặc xám, có thể lệch sáng) -> PNG nền TRONG SUỐT, cắt sát nét, giữ màu
+    mực. Nền ước lượng TỪNG VÙNG (lấy sáng nhất quanh mỗi điểm) nên ảnh chụp điện thoại bị tối góc vẫn sạch."""
+    import cv2
+
+    try:
+        anh = ImageOps.exif_transpose(Image.open(io.BytesIO(content)))
+        # PNG nền trong suốt (vd chữ ký VẼ trên giao diện): lót nền TRẮNG — convert("RGB") thẳng thì nền thành đen.
+        if anh.mode in ("RGBA", "LA", "P"):
+            anh = anh.convert("RGBA")
+            nen_trang = Image.new("RGBA", anh.size, (255, 255, 255, 255))
+            anh = Image.alpha_composite(nen_trang, anh)
+        anh = anh.convert("RGB")
+    except Exception as e:  # noqa: BLE001
+        raise ValueError("Không đọc được ảnh — chọn file JPG / PNG.") from e
+    if max(anh.size) > 2000:
+        anh.thumbnail((2000, 2000))
+    rgb = np.asarray(anh).astype(np.float32)
+    xam = rgb.mean(axis=2)
+    co = max(15, (min(xam.shape) // 15) | 1)
+    nen = cv2.dilate(xam, np.ones((co, co), np.uint8))  # nét mực mảnh bị "lấp" bởi nền sáng xung quanh
+    nen = cv2.GaussianBlur(nen, (co, co), 0)
+    muc = np.clip(nen - xam, 0, 255)
+    alpha = np.clip((muc - 18) * (255.0 / 70), 0, 255)
+    if (alpha > 80).sum() < 30:
+        raise ValueError("Không thấy nét chữ ký trong ảnh — chụp rõ hơn, nền sáng, mực đậm.")
+    ys, xs = np.where(alpha > 60)
+    dem = max(4, int(0.04 * max(np.ptp(xs), np.ptp(ys))))
+    y0, y1 = max(0, ys.min() - dem), min(xam.shape[0], ys.max() + dem + 1)
+    x0, x1 = max(0, xs.min() - dem), min(xam.shape[1], xs.max() + dem + 1)
+    # Mực đậm lên một chút (ảnh chụp thường nhạt) — giữ sắc màu (xanh / đen) của bút.
+    mau = np.clip(rgb * 0.75, 0, 255)
+    rgba = np.dstack([mau, alpha]).astype(np.uint8)[y0:y1, x0:x1]
+    out = Image.fromarray(rgba, "RGBA")
+    if out.width > 1000:
+        out = out.resize((1000, max(1, round(out.height * 1000 / out.width))), Image.LANCZOS)
+    buf = io.BytesIO()
+    out.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def ti_le_anh(png: bytes) -> float:
+    """rộng / cao."""
+    w, h = Image.open(io.BytesIO(png)).size
+    return w / max(1, h)
+
+
+# Dòng "Signature:" trên form (đo trên mau_form/imm5645e.pdf, khổ 612 x 792 pt): (trang, y của dòng kẻ).
+# "sectionC" = dòng ký Section D (CERTIFICATION) trang 2 — tên theo ô ngày SectionCdate của form.
+DONG_KY = {"note1": (0, 438.0), "note2": (0, 720.5), "sectionC": (1, 475.0)}
+RONG_MAC_DINH = 0.13  # ~80 pt — cỡ chữ ký trong file mẫu Docs đã nộp
+
+
+def chu_ky_mac_dinh(d: dict, ti_le: float, anh: str) -> list[dict]:
+    """Đặt chữ ký ở đúng các dòng KÝ như quy tắc ngày ký (_gia_tri_o): NOTE 1 khi không có vợ/chồng, NOTE 2 khi không có
+    con, Section C luôn ký — chân chữ ký chạm dòng kẻ, lệch trái như file mẫu Docs."""
+    dong = []
+    if not (d.get("spouse") or {}).get("name"):
+        dong.append("note1")
+    if not d.get("children"):
+        dong.append("note2")
+    dong.append("sectionC")
+    cao = RONG_MAC_DINH * 612 / ti_le  # pt
+    ra = []
+    for k in dong:
+        trang, y = DONG_KY[k]
+        ra.append({"page": trang, "x": 0.3, "y": round(max(0.0, (y - cao * 0.75) / 792), 4), "w": RONG_MAC_DINH,
+                   "anh": anh})
+    return ra
+
+
+def _chen_chu_ky(doc, anh_chu_ky: dict[str, bytes], cac_cho: list[dict]) -> None:
+    ti_le = {k: ti_le_anh(v) for k, v in anh_chu_ky.items()}
+    for c in cac_cho:
+        png = anh_chu_ky.get(c.get("anh", ""))
+        if png is None or c["page"] >= len(doc):
+            continue
+        trang = doc[c["page"]]
+        W, H = trang.rect.width, trang.rect.height
+        x, y, w = c["x"] * W, c["y"] * H, c["w"] * W
+        trang.insert_image(fitz.Rect(x, y, x + w, y + w / ti_le[c["anh"]]), stream=png, overlay=True)
+
+
+def anh_trang(d: dict, so_trang: int, dpi: int = 100) -> bytes:
+    """Ảnh 1 trang PDF đã điền (KHÔNG có chữ ký — giao diện tự đặt chữ ký lên trên để kéo)."""
+    doc = fitz.open(stream=dien_pdf(d), filetype="pdf")
+    try:
+        if not 0 <= so_trang < len(doc):
+            raise ValueError("Không có trang này.")
+        return doc[so_trang].get_pixmap(dpi=max(40, min(dpi, 150))).tobytes("png")
     finally:
         doc.close()

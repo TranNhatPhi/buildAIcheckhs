@@ -118,6 +118,8 @@ TEN_NHOM = {
 class GiaTriLech:
     value: str  # nguyên văn như trên giấy tờ, KHÔNG phải bản đã chuẩn hoá
     filename: str
+    # Để bấm vào mở popup xem file (16/10/2026). KHÔNG đưa vào khoa_bat_nhat — mục đã "✓ Đã check" giữ nguyên.
+    document_id: str = ""
 
 
 @dataclass
@@ -164,7 +166,7 @@ def _gom_lech(
             continue
         # Giữ file ĐẦU TIÊN gặp cho mỗi giá trị khác nhau — mục đích là chỉ ra CÓ hai giá trị
         # khác nhau và xem ở đâu, không phải liệt kê hết mọi file trùng lặp.
-        theo_khoa.setdefault(khoa, GiaTriLech(value=str(tho), filename=doc.originalFilename))
+        theo_khoa.setdefault(khoa, GiaTriLech(value=str(tho), filename=doc.originalFilename, document_id=doc.id))
 
     if len(theo_khoa) < 2:
         return None
@@ -229,6 +231,17 @@ def doc_da_kiem_tra(case) -> set[str]:
     except ValueError:
         return set()
     return {str(x) for x in ds} if isinstance(ds, list) else set()
+
+
+def khoa_han(h: HanGiayTo) -> str:
+    """Khoá "đã check" của một mục HẠN GIẤY TỜ (16/10/2026, cùng cột Case.conflictsChecked với điểm lệch). Kèm ngày hết
+    hạn: sửa ngày / thay file -> khoá đổi -> mục tự hiện lại."""
+    return f"han::{h.document_id}::{h.expires_at.isoformat()}"
+
+
+def bo_han_da_kiem_tra(han: list[HanGiayTo], case) -> list[HanGiayTo]:
+    da = doc_da_kiem_tra(case)
+    return [h for h in han if khoa_han(h) not in da]
 
 
 def bo_da_kiem_tra(bat_nhat: list[DiemBatNhat], case) -> list[DiemBatNhat]:

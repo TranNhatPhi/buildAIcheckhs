@@ -241,6 +241,7 @@ class SavingsAssessmentDTO(BaseModel):
 class DocExpiryDTO(BaseModel):
     """Một giấy tờ đã hết hạn hoặc sắp hết hạn."""
 
+    key: str  # doc_checks.khoa_han — gửi lại khi bấm ✓ "Đã check"
     documentId: str
     filename: str
     itemName: str | None
@@ -253,6 +254,7 @@ class DocExpiryDTO(BaseModel):
 class ConflictValueDTO(BaseModel):
     value: str
     filename: str
+    documentId: str = ""  # bấm vào để mở popup xem file
 
 
 class DataConflictDTO(BaseModel):

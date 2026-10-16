@@ -381,7 +381,7 @@ def get_case(case_id: str, db: Session = Depends(get_db)):
     )
     threshold = compute_financial_threshold_vnd(case.maritalStatus, case.numberOfChildren)
     items_by_id = {i.id: i for i in checklist_items}
-    han = danh_gia_han(list(case.documents), items_by_id)
+    han = doc_checks.bo_han_da_kiem_tra(danh_gia_han(list(case.documents), items_by_id), case)
     bat_nhat = doc_checks.bo_da_kiem_tra(doi_chieu_cheo(list(case.documents)), case)
 
     dto = CaseDetailDTO(
@@ -449,20 +449,25 @@ class DaKiemTraLechRequest(BaseModel):
 
 @router.post("/{case_id}/conflicts/checked")
 def danh_dau_lech_da_kiem_tra(case_id: str, body: DaKiemTraLechRequest, db: Session = Depends(get_db)):
-    """Bấm ✓ cạnh một mục "Thông tin lệch nhau giữa các giấy tờ" -> mục đó ẩn (nhân viên đã đối chiếu xong).
-    Khoá có kèm các giá trị lệch nên file đổi giá trị thì mục tự hiện lại."""
+    """Bấm ✓ cạnh một mục "Thông tin lệch nhau giữa các giấy tờ" HOẶC "Hạn giấy tờ" (khoá "han::...") -> mục đó ẩn
+    (nhân viên đã đối chiếu xong). Khoá kèm giá trị lệch / ngày hết hạn nên file đổi thì mục tự hiện lại."""
     case = db.get(Case, case_id)
     if not case or case.deletedAt is not None:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
-    hien_co = {doc_checks.khoa_bat_nhat(d): d for d in doi_chieu_cheo(list(case.documents))}
-    d = hien_co.get(body.key)
-    if d is None:
-        raise HTTPException(status_code=400, detail="Mục lệch này không còn — tải lại trang.")
-    # Chỉ giữ khoá của các điểm lệch CÒN tồn tại để danh sách không phình mãi.
+    hien_co = {doc_checks.khoa_bat_nhat(d): f"{d.owner_label} · {d.field_label}" for d in doi_chieu_cheo(list(case.documents))}
+    items_by_id = {i.id: i for i in db.scalars(select(ChecklistItem)).all()}
+    hien_co |= {
+        doc_checks.khoa_han(h): f"Hạn giấy tờ · {h.item_name or h.filename} ({h.expires_at.isoformat()})"
+        for h in danh_gia_han(list(case.documents), items_by_id)
+    }
+    mo_ta = hien_co.get(body.key)
+    if mo_ta is None:
+        raise HTTPException(status_code=400, detail="Mục này không còn — tải lại trang.")
+    # Chỉ giữ khoá của các mục CÒN tồn tại để danh sách không phình mãi.
     da = (doc_checks.doc_da_kiem_tra(case) & set(hien_co)) | {body.key}
     case.conflictsChecked = json.dumps(sorted(da), ensure_ascii=False)
     db.commit()
-    activity.ghi("CONFLICT_CHECKED", case=case, detail=f"{d.owner_label} · {d.field_label}")
+    activity.ghi("CONFLICT_CHECKED", case=case, detail=mo_ta)
     return {"ok": True}
 
 

@@ -372,6 +372,18 @@ Family Information (IMM 5645E) từ giấy tờ hồ sơ, theo quy tắc `imm564
   NOTE 1/NOTE 2 chỉ ghi ngày khi đúng là không có vợ/chồng / con. Anh chị em thêm người là con của bố/mẹ trong hộ
   CT07 mà PTTKH sót; địa chỉ con / anh chị em cùng nơi -> địa chỉ CT07 (tên xã mới sau sáp nhập).
 - MODEL: bước đọc dùng `deepseek-v4-pro` (`imm5645.MODEL_AI`, đổi qua env IMM5645_DEEPSEEK_MODEL) — Docs yêu cầu 14/10/2026; mọi chỗ khác vẫn `DEEPSEEK_MODEL` (flash). Pro chậm hơn: Hồ Sỹ Hội 98 giây (flash 17 giây), kết quả tương đương.
+- KHÔNG NÚT (16/10/2026, Docs yêu cầu): `_bo_nut_bam` gỡ "Save / Reset Form / Print Form" ở cả 2 trang — xoá widget
+  AcroForm (trình duyệt) VÀ đặt presence="hidden" cho Save/Reset/PrintButtonN trong template XFA (Adobe).
+- CHỮ KÝ (16/10/2026): `components/ChuKyImm5645.tsx` — THƯ VIỆN nhiều ảnh chữ ký mỗi hồ sơ (đương đơn, bố, mẹ...):
+  tải nhiều file một lần (khung VẼ chữ ký đã làm rồi GỠ 16/10 theo Docs). `imm5645.xu_ly_chu_ky`: PNG trong suốt lót
+  nền TRẮNG trước; nền ước lượng từng vùng (dilate + blur, ảnh chụp tối góc vẫn sạch); alpha theo độ đậm
+  mực; cắt sát. MinIO `<caseId>/imm5645-chu-ky/<id>.png`. Dữ liệu: `anhChuKy=[{id,ten}]` (tên sửa được),
+  `chuKy=[{page,x,y,w,anh}]` (tỉ lệ khổ trang; chưa có chỗ nào thì ảnh đầu tự đặt ở dòng ký theo quy tắc ngày ký,
+  `chu_ky_mac_dinh` / `DONG_KY`). Giao diện: ảnh trang ĐÃ LƯU (`GET /page/{n}`) + chữ ký đè lên: kéo để đổi chỗ, kéo
+  4 GÓC để to nhỏ (góc đối diện đứng yên, giữ tỉ lệ), bấm chọn -> thanh công cụ đổi ảnh / −/+ / ✕. `dien_pdf(d,
+  {id: png})` chèn từng chỗ đúng ảnh. Xoá ảnh bỏ luôn các chỗ dùng nó. Đọc lại bằng AI giữ thư viện + chỗ ký. API:
+  POST `/imm5645/{id}/signature` (files[]), GET/DELETE `/imm5645/{id}/signature/{anhId}`. Bản đầu (1 ảnh
+  `<caseId>/imm5645-chu-ky.png`) đã chuyển hết 16/10 (Trâm, Hồ Sỹ Hội).
 - FONT: widget ép `text_font="Cour"` (PyMuPDF không có Courier New -> trước vẽ Helvetica), giữ cỡ form (8 / 6,1pt).
 - LỌC `kiem_tra` (chạy mỗi lần đọc / lưu / xem / tải): TỰ SỬA nghề nghiệp là ngày/số (lỗi có thật trong file mẫu đã
   nộp: "Ho Sy Giao" occupation "2004-09-17"), bỏ anh chị em trùng đương đơn / trùng nhau; BÁO thiếu tên / ngày sinh /
@@ -394,6 +406,16 @@ Application for Work Permit Made Outside of Canada (IMM 1295E) — làm giống 
   258...); ô ngày điền kèm ô ẩn YYYY/MM/DD. File gốc có chữ ký chứng thực DocMDP + UR3 -> gỡ `/Perms`, `/V` ô chữ ký,
   `SigFlags` (không gỡ thì Adobe báo tài liệu bị sửa sau chứng thực). API tải PDF là `attachment`; nhân viên mở bằng
   Adobe Reader rồi bấm Validate trong form để tạo mã vạch.
+- Passport câu 5 (hộ chiếu Đài Loan có mã định danh, `TaiwanPIN`) và câu 6 (hộ chiếu Israel, `IsraelPassportIndicator`):
+  `passportTaiwan` / `passportIsrael`, mặc định "N" (16/10/2026 — trước đó bỏ trống, Docs báo không có ô tick).
+- CHỮ KÝ (16/10/2026, "đưa chức năng chữ ký qua bên 1295"): `components/ChuKyImm1295.tsx` + thư viện DÙNG CHUNG
+  `components/ThuVienChuKy.tsx` (IMM5645 cũng dùng). Ảnh MinIO `<caseId>/imm1295-chu-ky/<id>.png` (xử lý bằng
+  `imm5645.xu_ly_chu_ky`); `anhChuKy=[{id,ten}]`, MỘT chỗ ký `chuKy={anh,x,y,w}` (MM trong Page4.Consent0), `signDate`
+  -> ô `Page4.Consent0.C1CertificateIssueDate`. Form XFA THUẦN nên không chèn ảnh vào trang PDF (Adobe không vẽ) mà
+  chèn `<draw name="ChuKyTay"><value><image contentType="image/png">base64` vào TEMPLATE ngay sau ô ký `TextField2`
+  (`_chen_chu_ky`, kiểm tra XML hợp lệ). Không dựng được ảnh trang -> giao diện vẽ MÔ PHỎNG đúng mm vùng SIGNATURE
+  (`VUNG_KY`, `O_KY`, `O_NGAY_KY` gửi qua GET `vungKy`). Ảnh đầu tự đặt trong ô ký + ngày ký hôm nay. Nút "Lấy chữ ký
+  từ IMM5645e" = POST `/imm1295/{id}/signature/from-5645` (chép ảnh, bỏ trùng tên). Đọc lại bằng AI giữ chữ ký.
 - `kiem_tra`: thiếu ô bắt buộc, ngày sai dạng / không có thật, hộ chiếu hết hạn / hết hạn trước ngày cấp, CCCD không
   12 số, email / SĐT sai, kết hôn thiếu tên vợ chồng, câu lý lịch "Có" thiếu chi tiết, quá độ dài ô (maxChars của
   template, `DO_DAI`), quốc gia không có trong danh sách form, nam giới nhắc hỏi nghĩa vụ quân sự (câu 4), phần việc
@@ -409,6 +431,14 @@ Application for Work Permit Made Outside of Canada (IMM 1295E) — làm giống 
 {key}. Lưu `Case.conflictsChecked` (JSON list khoá). Khoá = `doc_checks.khoa_bat_nhat` = owner + trường + CÁC GIÁ TRỊ
 đang lệch -> upload / sửa file làm giá trị đổi thì mục tự hiện lại. Chi tiết hồ sơ lọc bằng `bo_da_kiem_tra`; lúc lưu
 chỉ giữ khoá của điểm lệch còn tồn tại. Ghi nhật ký CONFLICT_CHECKED.
+Bấm một dòng giá trị (🔍) -> `PopupLech`: các file của mục đó CẠNH NHAU (file vừa bấm đầu), mỗi cột giá trị lệch tô đỏ
++ ảnh từng trang (`/documents/{id}/pages/{n}`, lỗi thì iframe file gốc; ảnh rời thì `/file`) + "Mở file gốc", có nút
+"✓ Đã check" ngay trong popup. Cần `documentId` trong `ConflictValueDTO` (doc_checks.GiaTriLech.document_id — KHÔNG vào
+khoá đã check) và prop `documents` từ CaseDetail (16/10/2026).
+"Hạn giấy tờ" làm TƯƠNG TỰ (16/10/2026): bấm mục (🔍) -> cùng popup `PopupFile` (1 file); nút "✓ Đã check" cạnh
+"Sửa ngày", khoá `doc_checks.khoa_han` = `han::<docId>::<ngày hết hạn>` lưu chung cột conflictsChecked, cùng API
+`/conflicts/checked` (API nhận cả khoá lệch lẫn khoá hạn). Sửa ngày / thay file -> khoá đổi -> mục hiện lại. Số "đã quá
+hạn / sắp hết hạn" ở khung tính trên mục CÒN hiện.
 
 ## PP-OCRv5 — đã thử rồi GỠ (15/10/2026)
 

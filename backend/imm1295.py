@@ -17,6 +17,7 @@ nhân viên nhập tay.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -29,7 +30,7 @@ from pathlib import Path
 import fitz
 
 import llm
-from imm5645 import _dia_chi, bo_dau, ten_chuan
+from imm5645 import _dia_chi, bo_dau, chuan_hoa_anh_chu_ky, ten_chuan, ti_le_anh
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,10 @@ O_THANG = ("eduFrom", "eduTo")
 O_QUOC_GIA = ("birthCountry", "citizenship", "corCountry", "passportCountry", "nationalIdCountry", "addressCountry",
               "eduCountry")
 # Có / không -> mặc định (theo giá trị sẵn trong file mẫu).
+# passportTaiwan / passportIsrael: Passport câu 5, 6 (hộ chiếu Đài Loan có mã định danh / hộ chiếu Israel) — khách Việt
+# luôn "N"; trước 16/10/2026 bỏ trống nên Validate trong Adobe báo thiếu.
 O_CO_KHONG = {"aliasUsed": "N", "prevMarried": "N", "languageTest": "N", "hasNationalId": "Y", "hasEducation": "N",
+              "passportTaiwan": "N", "passportIsrael": "N",
               "bgTb": "N", "bgDisorder": "N", "bgOverstay": "N", "bgRefused": "N", "bgApplied": "N",
               "bgCriminal": "N", "bgMilitary": "N", "bgViolentOrg": "N", "bgIllTreatment": "N"}
 
@@ -384,6 +388,9 @@ def chuan_hoa(d: dict) -> dict:
     ra["nguon"] = [str(x) for x in (d.get("nguon") or []) if x][:30] if isinstance(d.get("nguon"), list) else []
     ra["canhBao"] = [str(x) for x in (d.get("canhBao") or [])][:20]
     ra["nguonGiayTo"] = [str(x) for x in (d.get("nguonGiayTo") or [])][:40]
+    ra["anhChuKy"] = chuan_hoa_anh_chu_ky(d.get("anhChuKy"))
+    ra["chuKy"] = chuan_hoa_vi_tri_ky(d.get("chuKy"), [a["id"] for a in ra["anhChuKy"]])
+    ra["signDate"] = _ngay(d.get("signDate"))
     ra["kiemTra"] = kiem_tra(ra)
     return ra
 
@@ -500,6 +507,10 @@ def kiem_tra(d: dict) -> list[str]:
             loi.append(f"Lý lịch câu {nhan}: chọn 'Có' nhưng chưa ghi chi tiết.")
     if d["sex"] == "Male" and d["bgMilitary"] == "N":
         loi.append("Nam giới: hỏi lại khách đã đi nghĩa vụ quân sự / công an / dân quân chưa (câu 4) — đang để 'Không'.")
+    if d.get("signDate") and not _NGAY.match(d["signDate"]):
+        loi.append(f"Ngày ký '{d['signDate']}' chưa đúng dạng YYYY-MM-DD.")
+    if d.get("chuKy") and not d.get("signDate"):
+        loi.append("Đã đặt chữ ký nhưng chưa có ngày ký.")
     if d["workPermitType"] == "LMOS" and not d["lmia"]:
         loi.append("Loại giấy phép LMIA nhưng chưa có số LMIA.")
     if not (d["employerName"] and d["jobTitle"]):
@@ -587,6 +598,8 @@ def _gia_tri_o(d: dict) -> dict:
     o[f"{pp}.ExpiryDate"] = d["passportExpiry"]
     o.update(_tach_ngay(pp, d["passportIssue"], "IssueYYYY", "IssueMM", "IssueDD"))
     o.update(_tach_ngay(pp, d["passportExpiry"], "expiryYYYY", "expiryMM", "expiryDD"))
+    o[f"{pp}.TaiwanPIN"] = d["passportTaiwan"]
+    o[f"{pp}.IsraelPassportIndicator"] = d["passportIsrael"]
 
     co_cccd = d["hasNationalId"] == "Y"
     o["Page2.natID.q1.natIDIndicator"] = d["hasNationalId"]
@@ -668,6 +681,8 @@ def _gia_tri_o(d: dict) -> dict:
     o[f"{bg}.PageWrapper.Military.militaryServiceDetails"] = d["bgMilitaryDetails"]
     o[f"{bg}.PageWrapper.Occupation.Choice"] = d["bgViolentOrg"]
     o[f"{bg}.PageWrapper.GovPosition.Choice"] = d["bgIllTreatment"]
+    # Ngày ký cạnh ô chữ ký (SIGNATURE, trang 4).
+    o["Page4.Consent0.C1CertificateIssueDate"] = d.get("signDate", "")
     return o
 
 
@@ -683,7 +698,8 @@ def _tim_nut(goc, duong: str):
     return nut
 
 
-def dien_pdf(d: dict) -> bytes:
+def dien_pdf(d: dict, anh_chu_ky: dict[str, bytes] | None = None) -> bytes:
+    """`anh_chu_ky` = {id ảnh: PNG} — có chỗ ký d["chuKy"] thì chèn ảnh đó vào template XFA (`_chen_chu_ky`)."""
     o = _gia_tri_o(d)
     doc = fitz.open(MAU)
     try:
@@ -701,6 +717,9 @@ def dien_pdf(d: dict) -> bytes:
         if thieu:
             logger.warning("IMM1295: không thấy ô dữ liệu %s", thieu)
         doc.update_stream(x_ds, ET.tostring(goc, encoding="utf-8"))
+        ky = d.get("chuKy")
+        if ky and anh_chu_ky and ky["anh"] in anh_chu_ky:
+            _chen_chu_ky(doc, anh_chu_ky[ky["anh"]], ky)
         # Gỡ chữ ký chứng thực (DocMDP) + quyền mở rộng (UR3) của file gốc: dữ liệu đã đổi nên chữ ký chắc chắn hỏng,
         # để lại thì Adobe báo "tài liệu đã bị thay đổi sau khi chứng thực".
         cat = doc.pdf_catalog()
@@ -714,3 +733,73 @@ def dien_pdf(d: dict) -> bytes:
         return doc.tobytes(garbage=1, deflate=True)
     finally:
         doc.close()
+
+
+
+# ---------------------------------------------------------------------------
+# 5. Chữ ký (Docs 16/10/2026: "đưa chức năng chữ ký qua bên 1295")
+# ---------------------------------------------------------------------------
+# Thư viện ảnh như IMM5645 (xử lý ảnh dùng chung imm5645.xu_ly_chu_ky): MinIO "<caseId>/imm1295-chu-ky/<id>.png",
+# anhChuKy = [{id, ten}]. Form chỉ có MỘT chỗ ký (SIGNATURE, trang 4) -> chuKy = {anh, x, y, w} hoặc null, đơn vị MM
+# trong subform Page4.Consent0 (gốc toạ độ của ô ký TextField2 và ô ngày C1CertificateIssueDate).
+#
+# Form XFA THUẦN: trang do Adobe dựng từ template lúc mở, chèn ảnh vào trang PDF (cách IMM5645) sẽ KHÔNG hiện. Chèn
+# thẳng 1 <draw> ảnh PNG (base64) vào template, ngay SAU ô TextField2 (vẽ đè lên ô ký, không bị nền ô che).
+
+def khoa_chu_ky(case_id: str, anh_id: str) -> str:
+    return f"{case_id}/imm1295-chu-ky/{anh_id}.png"
+
+
+# Toạ độ (mm) trong Page4.Consent0, đo trên template mau_form/imm1295e.pdf.
+O_KY = {"x": 2.672, "y": 19.975, "w": 101.6, "h": 11.536, "chuThich": 2.9388}  # ô ký, chú thích chiếm phần trên
+O_NGAY_KY = {"x": 145.483, "y": 20.412, "w": 45.539, "h": 9.921}
+# Vùng được kéo chữ ký (giao diện vẽ mô phỏng đúng vùng này): cả bề ngang Consent0, quanh dòng ký.
+VUNG_KY = {"x": 0.0, "y": 12.0, "w": 200.66, "h": 30.0}
+CAO_MAC_DINH = 8.0  # mm — vừa lòng ô ký (11,5 mm trừ chú thích)
+
+
+def chuan_hoa_vi_tri_ky(x, cac_anh: list[str]) -> dict | None:
+    if not isinstance(x, dict):
+        return None
+    try:
+        cx, cy, w = float(x["x"]), float(x["y"]), float(x["w"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    anh = str(x.get("anh") or "")
+    if anh not in cac_anh:
+        return None
+    w = min(max(w, 8.0), 120.0)
+    return {"anh": anh, "w": round(w, 2),
+            "x": round(min(max(cx, VUNG_KY["x"]), VUNG_KY["x"] + VUNG_KY["w"] - w), 2),
+            "y": round(min(max(cy, VUNG_KY["y"]), VUNG_KY["y"] + VUNG_KY["h"] - 2), 2)}
+
+
+def vi_tri_mac_dinh(ti_le: float, anh: str) -> dict:
+    """Chữ ký nằm trong ô ký, dưới dòng chú thích, lệch trái một chút như ký tay."""
+    w = min(CAO_MAC_DINH * ti_le, 70.0)
+    cao = w / ti_le
+    tren = O_KY["y"] + O_KY["chuThich"]
+    return {"anh": anh, "x": round(O_KY["x"] + 6, 2), "y": round(tren + max(0.0, (O_KY["h"] - O_KY["chuThich"] - cao) / 2), 2),
+            "w": round(w, 2)}
+
+
+def _chen_chu_ky(doc, png: bytes, ky: dict) -> None:
+    acro = int(doc.xref_get_key(doc.pdf_catalog(), "AcroForm")[1].split()[0])
+    x_tpl = int(dict(re.findall(r"\((\w+)\)\s*(\d+) 0 R", doc.xref_get_key(acro, "XFA")[1]))["template"])
+    tpl = doc.xref_stream(x_tpl).decode("utf-8")
+    i = tpl.find('name="TextField2"')
+    cuoi = tpl.find("</field", i)
+    cuoi = tpl.find(">", cuoi) + 1
+    if i < 0 or cuoi <= 0:
+        logger.warning("IMM1295: không thấy ô ký TextField2 trong template — bỏ qua chữ ký")
+        return
+    cao = ky["w"] / ti_le_anh(png)
+    draw = (
+        f'<draw name="ChuKyTay" x="{ky["x"]}mm" y="{ky["y"]}mm" w="{ky["w"]}mm" h="{round(cao, 2)}mm">'
+        '<ui><imageEdit/></ui>'
+        f'<value><image contentType="image/png" aspect="fit">{base64.b64encode(png).decode()}</image></value>'
+        "</draw>"
+    )
+    moi = tpl[:cuoi] + draw + tpl[cuoi:]
+    ET.fromstring(moi.encode("utf-8"))  # template phải còn là XML hợp lệ — hỏng thì ném lỗi, không trả PDF hỏng
+    doc.update_stream(x_tpl, moi.encode("utf-8"))

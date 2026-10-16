@@ -5,6 +5,8 @@ import { API_URL, gioNgayVN, normalizeSearchText } from "@/lib/format";
 import { FORM_INPUT, FORM_LABEL } from "@/lib/formStyles";
 import { docJson, ghiJson } from "@/lib/luuTam";
 import type { CaseListItemDTO } from "@/lib/client-types";
+import { ChuKyImm1295, type ViTriKy, type VungKy } from "@/components/ChuKyImm1295";
+import type { AnhChuKy } from "@/components/ThuVienChuKy";
 
 interface NuocTruoc {
   country: string;
@@ -29,6 +31,10 @@ type DuLieu = {
   canhBao: string[];
   nguon: string[];
   nguonGiayTo: string[];
+  // Chữ ký (ChuKyImm1295): thư viện ảnh, chỗ ký duy nhất (mm trong Page4.Consent0), ngày ký.
+  anhChuKy?: AnhChuKy[];
+  chuKy?: ViTriKy | null;
+  signDate?: string;
   // Backend `imm1295.kiem_tra`: chỗ cần xem lại (đã tự sửa lỗi chắc chắn).
   kiemTra?: string[];
 } & Record<string, unknown>;
@@ -197,6 +203,18 @@ const PHAN: { tieuDe: string; cau: Cau[] }[] = [
       { so: "2", ten: "Country or territory of issue", o: [{ k: "passportCountry", nhan: "Nước cấp", loai: "quocgia" }] },
       { so: "3", ten: "Issue date", o: [{ k: "passportIssue", nhan: "Ngày cấp", loai: "ngay" }] },
       { so: "4", ten: "Expiry date", o: [{ k: "passportExpiry", nhan: "Ngày hết hạn", loai: "ngay" }] },
+      {
+        so: "5",
+        ten: "For this trip, will you use a passport issued by the Ministry of Foreign Affairs in Taiwan that includes your personal identification number?",
+        o: [{ k: "passportTaiwan", nhan: "Hộ chiếu Đài Loan có mã định danh?", loai: "ck" }],
+        cot: 2,
+      },
+      {
+        so: "6",
+        ten: "For this trip, will you use a National Israeli passport?",
+        o: [{ k: "passportIsrael", nhan: "Hộ chiếu Israel?", loai: "ck" }],
+        cot: 2,
+      },
     ],
   },
   {
@@ -455,6 +473,8 @@ export function DienFormImm1295() {
   const [data, setData] = useState<DuLieu | null>(null);
   const [giayTo, setGiayTo] = useState<string[]>([]);
   const [quocGia, setQuocGia] = useState<string[]>([]);
+  const [soChuKy5645, setSoChuKy5645] = useState(0);
+  const [vungKy, setVungKy] = useState<VungKy | null>(null);
   const [capNhat, setCapNhat] = useState<string | null>(null);
   const [daSua, setDaSua] = useState(false);
   const [dangDoc, setDangDoc] = useState(false);
@@ -480,6 +500,8 @@ export function DienFormImm1295() {
         setData(d.data);
         setGiayTo(d.giayTo ?? []);
         setQuocGia(d.quocGia ?? []);
+        setSoChuKy5645(d.soChuKy5645 ?? 0);
+        setVungKy(d.vungKy ?? null);
         setCapNhat(d.updatedAt);
       })
       .catch(() => setLoi("Không tải được dữ liệu — thử lại sau."));
@@ -788,6 +810,27 @@ export function DienFormImm1295() {
               </div>
             </section>
           ))}
+          <ChuKyImm1295
+            caseId={caseId}
+            anhChuKy={data.anhChuKy ?? []}
+            chuKy={data.chuKy ?? null}
+            signDate={data.signDate ?? ""}
+            soChuKy5645={soChuKy5645}
+            vungKy={vungKy}
+            doiChuKy={(v) => doi({ chuKy: v })}
+            doiAnh={(ds) => doi({ anhChuKy: ds })}
+            doiNgay={(v) => doi({ signDate: v })}
+            daLuu={(kq) => {
+              // Backend đã lưu thư viện + chỗ ký + ngày ký — chỉ cập nhật 3 phần đó, ô khác đang sửa dở giữ nguyên.
+              setData((cu) =>
+                cu
+                  ? ({ ...cu, anhChuKy: kq.anhChuKy, chuKy: (kq.chuKy as ViTriKy | null) ?? null, signDate: (kq.signDate as string) ?? cu.signDate } as DuLieu)
+                  : cu,
+              );
+              if (kq.updatedAt) setCapNhat(kq.updatedAt);
+            }}
+          />
+
           <div className="sticky bottom-4 flex flex-wrap items-center gap-3 rounded-2xl border-2 border-indigo-200 bg-white/95 px-4 py-3 shadow-lg">
             <span className="mr-auto text-sm text-neutral-600">
               {daSua ? "Có thay đổi chưa lưu." : "Đã lưu."} PDF mở bằng Adobe Acrobat Reader.

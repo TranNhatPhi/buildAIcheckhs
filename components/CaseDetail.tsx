@@ -822,7 +822,7 @@ export function CaseDetail({ caseId, initialData }: Props) {
 
       {/* Đặt TRƯỚC mọi thứ khác trong phần thân: giấy tờ đã quá hạn làm hồ sơ trông đủ mà
           thực chất không dùng được — nhân viên phải thấy trước khi kịp nghĩ hồ sơ đã xong. */}
-      <DocChecksPanel caseId={caseId} checks={data.docChecks} onChanged={refetch} />
+      <DocChecksPanel caseId={caseId} checks={data.docChecks} documents={data.case.documents} onChanged={refetch} />
 
       <GeneralNotesBanner />
 

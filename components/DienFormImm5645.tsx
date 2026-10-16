@@ -5,6 +5,7 @@ import { API_URL, gioNgayVN, normalizeSearchText } from "@/lib/format";
 import { FORM_INPUT, FORM_LABEL } from "@/lib/formStyles";
 import { docJson, ghiJson } from "@/lib/luuTam";
 import type { CaseListItemDTO } from "@/lib/client-types";
+import { ChuKyImm5645, type AnhChuKy, type ChoKy } from "@/components/ChuKyImm5645";
 
 interface Nguoi {
   name: string;
@@ -30,6 +31,9 @@ interface DuLieu {
   canhBao: string[];
   nguonGiayTo: string[];
   signDate: string;
+  // Thư viện ảnh chữ ký + chỗ đặt (ChuKyImm5645) — tỉ lệ theo khổ trang.
+  anhChuKy?: AnhChuKy[];
+  chuKy?: ChoKy[];
   // Backend `imm5645.kiem_tra`: chỗ cần xem lại (đã tự sửa lỗi chắc chắn).
   kiemTra?: string[];
 }
@@ -449,6 +453,20 @@ export function DienFormImm5645() {
               />
             </label>
           </section>
+
+          <ChuKyImm5645
+            caseId={caseId}
+            anhChuKy={data.anhChuKy ?? []}
+            chuKy={data.chuKy ?? []}
+            phienBan={capNhat}
+            doiChuKy={(ds) => doi({ chuKy: ds })}
+            doiAnh={(ds) => doi({ anhChuKy: ds })}
+            daLuu={(kq) => {
+              // Backend đã lưu thư viện ảnh + chỗ ký — chỉ cập nhật 2 phần đó, các ô khác đang sửa dở giữ nguyên.
+              setData((cu) => (cu ? { ...cu, anhChuKy: kq.anhChuKy, chuKy: kq.chuKy } : cu));
+              if (kq.updatedAt) setCapNhat(kq.updatedAt);
+            }}
+          />
 
           <div className="sticky bottom-4 flex flex-wrap items-center gap-3 rounded-2xl border-2 border-indigo-200 bg-white/95 px-4 py-3 shadow-lg">
             <span className="mr-auto text-sm text-neutral-600">

@@ -63,6 +63,8 @@ export interface DocumentDTO {
 }
 
 export interface DocExpiryDTO {
+  /** Gửi lại khi bấm ✓ "Đã check" (POST /cases/{id}/conflicts/checked). */
+  key: string;
   documentId: string;
   filename: string;
   itemName: string | null;
@@ -79,7 +81,7 @@ export interface DataConflictDTO {
   owner: string;
   ownerLabel: string;
   fieldLabel: string;
-  values: { value: string; filename: string }[];
+  values: { value: string; filename: string; documentId: string }[];
 }
 
 export interface DocChecksDTO {

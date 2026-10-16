@@ -10,7 +10,7 @@ from completeness import (
     FinancialThreshold,
     SavingsAssessment,
 )
-from doc_checks import NGAY_CANH_BAO_HAN, DiemBatNhat, HanGiayTo, khoa_bat_nhat
+from doc_checks import NGAY_CANH_BAO_HAN, DiemBatNhat, HanGiayTo, khoa_bat_nhat, khoa_han
 from schemas import (
     ChecklistItemStatusDTO,
     ChecklistSummaryDTO,
@@ -67,6 +67,7 @@ def doc_checks_to_dto(
     return DocChecksDTO(
         expiries=[
             DocExpiryDTO(
+                key=khoa_han(h),
                 documentId=h.document_id,
                 filename=h.filename,
                 itemName=h.item_name,
@@ -83,7 +84,7 @@ def doc_checks_to_dto(
                 owner=d.owner,
                 ownerLabel=d.owner_label,
                 fieldLabel=d.field_label,
-                values=[ConflictValueDTO(value=v.value, filename=v.filename) for v in d.values],
+                values=[ConflictValueDTO(value=v.value, filename=v.filename, documentId=v.document_id) for v in d.values],
             )
             for d in bat_nhat
         ],
